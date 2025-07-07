@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { db, sql, gte, lte, and, eq, sum, avg, max, min } from '../../clients/drizzle';
+import { db, sql, gte, lte, and, eq, sum, max, min } from '../../clients/drizzle';
 import { redis } from '../../clients/redis';
 import { logs } from '../../db/schema/logs'
 import { createHash } from 'node:crypto';

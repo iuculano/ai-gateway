@@ -46,13 +46,11 @@ app.openapi(HealthRoutes.readyz, async (c) => {
 
   // Watch this return type, the zod 'literal' types do truly mean a string
   // literal. You will need to cast it as const or you'll get a type error.
-  return c.json(
-    {
-      status: allHealthy ? 'ok' as const : 'degraded' as const,
-      checks,
-    },
-    allHealthy ? 200 : 503
-  );
+  return c.json({
+    status: allHealthy ? 'ok' as const : 'degraded' as const,
+    checks,
+  }, 
+  allHealthy ? 200 : 503);
 });
 
 export default app;

@@ -22,10 +22,8 @@ export const getModelRequest = z.object({
 export const getModelResponse = modelShape;
 
 export const listModelsRequest = z.object({
-  model: z.string().optional(),
+  name: z.string().optional(),
   provider: z.string().optional(),
-  status: z.string().optional(),
-  tags: z.record(z.string(), z.any()).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
   after_id: z.string().uuid().optional(), // UUIDv7 cursor
 });
@@ -36,9 +34,9 @@ export const listModelsResponse = z.object({
 });
 
 
-
 export default {
   getModelRequest,
   getModelResponse,
+  listModelsRequest,
   listModelsResponse,
 };

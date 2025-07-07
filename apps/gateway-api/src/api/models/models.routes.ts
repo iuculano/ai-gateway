@@ -23,6 +23,9 @@ const getModel = createRoute({
 const listModels = createRoute({
   method: 'get',
   path: '/models',
+  request: {
+    query: Schemas.listModelsRequest
+  },
   responses: {
     200: {
       description: 'Models retrieved successfully',

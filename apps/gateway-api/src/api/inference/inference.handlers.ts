@@ -1,4 +1,4 @@
-import { OpenAPIHono } from '@hono/zod-openapi';;
+/*import { OpenAPIHono } from '@hono/zod-openapi';;
 import { nats, jsonCodec } from '../../clients/nats';
 
 import Routes from './inference.routes';
@@ -10,7 +10,10 @@ app.openapi(Routes.postInference, async (c) => {
   const headers = c.req.valid('header');
   const data = c.req.valid('json');
 
-  //Service.submitInference(data);
+  const result = await Service.submitInference({
+    api_key: headers['ai-api-key'],
+    ...data
+  });
 
   return c.json({
     inference_id: '0197dc75-4c45-76f5-9763-114e4ddaa661',
@@ -19,3 +22,4 @@ app.openapi(Routes.postInference, async (c) => {
 });
 
 export default app;
+*/

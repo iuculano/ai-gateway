@@ -1,6 +1,5 @@
 import { z } from '@hono/zod-openapi';
 
-
 const analyticsRequest = z.object({
   start_date: z.string().datetime().optional(),
   end_date: z.string().datetime().optional(),

@@ -6,7 +6,7 @@ import Service from './logs.services';
 const app = new OpenAPIHono();
 
 app.openapi(Routes.getLogs, async (c) => {
-  let data = c.req.valid('query');
+  const data = c.req.valid('query');
 
   const result = await Service.queryLogs(data);
 

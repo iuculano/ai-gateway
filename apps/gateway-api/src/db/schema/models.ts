@@ -1,9 +1,7 @@
-import { pgTable, uuid, text, numeric, boolean, integer, jsonb, timestamp, check } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, numeric, jsonb, timestamp, check } from 'drizzle-orm/pg-core';
 import { uuidv7 } from 'uuidv7';
 import { sql } from 'drizzle-orm';
 
-export const models = pgTable('models', {
-  id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
 
   // Originally, this was used because a provider exclusively held the base url...
   // But that's currently really all it was used for.
@@ -15,16 +13,16 @@ export const models = pgTable('models', {
   //   .notNull()
   //   .references(() => providers.id, { onDelete: 'restrict' }), // FK to providers.id
 
+// Representation of an LLM that is available to inference.
+// Provider must be set to a supported provider.
+export const models = pgTable('models', {
+  id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
   name: text('name').notNull(), // e.g., 'gpt-4-turbo'
   provider: text('provider').notNull(),
-
   cost_input: numeric('cost_input', { precision: 10, scale: 4 }).notNull().default('0'),
   cost_output: numeric('cost_output', { precision: 10, scale: 4 }).notNull().default('0'),
-
-  // add other fields as needed
-  config: jsonb('config').$type<Record<string, any>>().default({}),
-  tags: jsonb('tags').$type<Record<string, any>>().default({}),
-
+  config: jsonb('config').$type<Record<string, unknown>>().default({}),
+  tags: jsonb('tags').$type<Record<string, unknown>>().default({}),
   created_at: timestamp('created_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),
   updated_at: timestamp('updated_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),
 }, (table) => [
