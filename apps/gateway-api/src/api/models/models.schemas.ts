@@ -5,10 +5,8 @@ const modelShape = z.object({
   id: z.string().uuid(),
   name: z.string(),
   provider: z.string(),
-
   cost_input: z.number(),
   cost_output: z.number(),
-
   config: z.record(z.string(), z.any()).nullable(),
   tags: z.record(z.string(), z.any()).nullable(),
   created_at: z.string().datetime(),
@@ -16,7 +14,7 @@ const modelShape = z.object({
 });
 
 export const getModelRequest = z.object({
-  model_id: z.string().uuid(),
+  id: z.string().uuid(),
 });
 
 export const getModelResponse = modelShape;

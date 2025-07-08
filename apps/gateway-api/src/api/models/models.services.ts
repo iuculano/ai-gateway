@@ -10,7 +10,7 @@ type GetModelRequest = z.infer<typeof Schemas.getModelRequest>;
 type GetModelResponse = z.infer<typeof Schemas.getModelResponse>
 
 async function getModel(request: GetModelRequest) : Promise<GetModelResponse> {
-  const cacheKey = 'models:' + createHash('sha1').update(request.model_id).digest('hex');
+  const cacheKey = 'models:' + createHash('sha1').update(request.id).digest('hex');
 
   const cached = await redis.get(cacheKey);
   if (cached) {
@@ -19,7 +19,7 @@ async function getModel(request: GetModelRequest) : Promise<GetModelResponse> {
 
   const result = await db.select()
     .from(models)
-    .where(eq(models.id, request.model_id));
+    .where(eq(models.id, request.id));
 
   // Drizzle treats numeric as a string to avoid precision nonsense.
   // We only use 4 decimal places of precision and JS Number is guaranteed to
@@ -55,18 +55,18 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
 
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
-  const rows = await db.select()
+  const result = await db.select()
     .from(models)
     .where(whereClause)
     .orderBy(desc(models.id))
     .limit(request.limit);
 
-  const nextCursor = rows.length === (request.limit ?? 50)
-    ? rows[rows.length - 1].id
+  const nextCursor = result.length === (request.limit ?? 50)
+    ? result[result.length - 1].id
     : null;
 
   // Write through to Redis cache
-  const coerced = Schemas.listModelsResponse.parse({ data: rows, next: nextCursor });
+  const coerced = Schemas.listModelsResponse.parse({ data: result, next: nextCursor });
   await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
 
   return coerced;

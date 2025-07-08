@@ -4,7 +4,7 @@ import Schemas from './models.schemas';
 
 const getModel = createRoute({
   method: 'get',
-  path: '/models/:model_id',
+  path: '/models/:id',
   request: {
     params: Schemas.getModelRequest,
   },

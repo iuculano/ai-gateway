@@ -1,19 +1,37 @@
 import { createRoute } from '@hono/zod-openapi';
 import Schemas from './logs.schemas';
 
-// Example: your logsQuerySchema should match the query params you support
-const getLogs = createRoute({
+
+const getLog = createRoute({
   method: 'get',
-  path: '/logs',
+  path: '/logs/:id',
   request: {
-    query: Schemas.getLogsRequest,
+    params: Schemas.getLogRequest,
   },
   responses: {
     200: {
       description: 'Logs retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.getLogsResponse,
+          schema: Schemas.getLogResponse,
+        },
+      },
+    },
+  },
+});
+
+const listLogs = createRoute({
+  method: 'get',
+  path: '/logs',
+  request: {
+    query: Schemas.listLogsRequest,
+  },
+  responses: {
+    200: {
+      description: 'Logs retrieved successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.listLogsResponse,
         },
       },
     },
@@ -21,5 +39,6 @@ const getLogs = createRoute({
 });
 
 export default {
-  getLogs,
+  getLog,
+  listLogs
 }

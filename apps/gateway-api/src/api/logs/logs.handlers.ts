@@ -5,12 +5,19 @@ import Service from './logs.services';
 
 const app = new OpenAPIHono();
 
-app.openapi(Routes.getLogs, async (c) => {
-  const data = c.req.valid('query');
-
-  const result = await Service.queryLogs(data);
+app.openapi(Routes.getLog, async (c) => {
+  const params = c.req.valid('param');
+  const result = await Service.getLog(params);
 
   return c.json(result, 200);
 });
+
+app.openapi(Routes.listLogs, async (c) => {
+  const query = c.req.valid('query');
+  const result = await Service.listLogs(query);
+
+  return c.json(result, 200);
+});
+
 
 export default app;

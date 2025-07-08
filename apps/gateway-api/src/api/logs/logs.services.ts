@@ -6,12 +6,40 @@ import { createHash } from 'node:crypto';
 import Schemas from './logs.schemas';
 
 
-type LogsRequest = z.infer<typeof Schemas.getLogsRequest>;
-type LogsResponse = z.infer<typeof Schemas.getLogsResponse>
+type GetLogRequest = z.infer<typeof Schemas.getLogRequest>;
+type GetLogResponse = z.infer<typeof Schemas.getLogResponse>;
 
-async function queryLogs(params: LogsRequest) : Promise<LogsResponse> {
+async function getLog(request: GetLogRequest) : Promise<GetLogResponse> {
+  const cacheKey = 'logs:' + createHash('sha1').update(request.id).digest('hex');
+
+  const cached = await redis.get(cacheKey);
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
+  const result = await db.select()
+    .from(logs)
+    .where(eq(logs.id, request.id));
+
+  // Drizzle treats numeric as a string to avoid precision nonsense.
+  // We only use 4 decimal places of precision and JS Number is guaranteed to
+  // have enough precision for what we're returning.
+  // 
+  // Just let Zod coerce the object Drizzle returned into its actual Zod 
+  // schema shape.
+  const coerced = Schemas.getLogResponse.parse(result[0]);
+  await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
+
+  return coerced;
+}
+
+
+type ListLogsRequest = z.infer<typeof Schemas.listLogsRequest>;
+type ListLogsResponse = z.infer<typeof Schemas.listLogsResponse>;
+
+async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
   // Hash the payload to create a unique cache key for Redis
-  const keyBase = JSON.stringify(params);
+  const keyBase = JSON.stringify(request);
   const cacheKey = 'logs:' + createHash('sha1').update(keyBase).digest('hex');
 
   // See if the data is already cached in Redis
@@ -21,34 +49,33 @@ async function queryLogs(params: LogsRequest) : Promise<LogsResponse> {
   }
 
   const conditions = [
-    params.model     ? eq(logs.model, params.model) : undefined,
-    params.provider  ? eq(logs.provider, params.provider) : undefined,
-    params.status    ? eq(logs.status, params.status) : undefined,
-    params.tags      ? sql`${logs.tags} @> ${JSON.stringify(params.tags)}` : undefined,
-    params.after_id  ? lt(logs.id, params.after_id) : undefined,
+    request.model    ? eq(logs.model, request.model) : undefined,
+    request.provider ? eq(logs.provider, request.provider) : undefined,
+    request.status   ? eq(logs.status, request.status) : undefined,
+    request.tags     ? sql`${logs.tags} @> ${JSON.stringify(request.tags)}` : undefined,
+    request.after_id ? lt(logs.id, request.after_id) : undefined,
   ].filter(x => x !== undefined);
 
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
-  const rows = await db.select()
+  const result = await db.select()
     .from(logs)
     .where(whereClause)
     .orderBy(desc(logs.id))
-    .limit(params.limit ?? 50);
+    .limit(request.limit);
 
-  const nextCursor = rows.length === (params.limit ?? 50)
-    ? rows[rows.length - 1].id
+  const nextCursor = result.length === (request.limit)
+    ? result[result.length - 1].id
     : null;
 
   // Write through to Redis cache
-  await redis.set(cacheKey, JSON.stringify({ data: rows, next: nextCursor }), { EX: 60 });
+  const coerced = Schemas.listLogsResponse.parse({ data: result, next: nextCursor });
+  await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
 
-  return {
-    data: rows,
-    next: nextCursor,
-  };
+  return coerced;
 }
 
 export default {
-  queryLogs
+  getLog,
+  listLogs
 }
