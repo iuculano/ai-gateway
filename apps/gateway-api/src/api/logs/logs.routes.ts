@@ -3,7 +3,7 @@ import Schemas from './logs.schemas';
 
 
 const getLog = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/logs/:id',
   request: {
     params: Schemas.getLogRequest,
@@ -21,7 +21,7 @@ const getLog = createRoute({
 });
 
 const listLogs = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/logs',
   request: {
     query: Schemas.listLogsRequest,

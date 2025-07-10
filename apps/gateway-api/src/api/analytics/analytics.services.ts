@@ -1,8 +1,7 @@
 import { z } from '@hono/zod-openapi';
-import { db, sql, gte, lte, and, eq, sum, max, min } from '../../clients/drizzle';
-import { redis } from '../../clients/redis';
-import { logs } from '../../db/schema/logs'
-import { createHash } from 'node:crypto';
+import { and, db, eq, gte, lte, max, min, sql, sum } from '../../clients/drizzle';
+import { createCacheKey, redis } from '../../clients/redis';
+import { logs } from '../../db/schema/logs';
 import Schemas from './analytics.schemas';
 
 
@@ -11,8 +10,7 @@ type AnalyticsResponse = z.infer<typeof Schemas.analyticsResponse>;
 
 async function queryAnalytics(params: AnalyticsRequest) : Promise<AnalyticsResponse> {
   // Hash the payload to create a unique cache key for Redis
-  const keyBase = JSON.stringify(params);
-  const cacheKey = 'analytics:' + createHash('sha1').update(keyBase).digest('hex');
+  const cacheKey = await createCacheKey('analytics:', params);
 
   // See if the data is already cached in Redis
   const cached = await redis.get(cacheKey);
@@ -21,14 +19,14 @@ async function queryAnalytics(params: AnalyticsRequest) : Promise<AnalyticsRespo
   }
 
   // Cache miss,
-    const conditions = [
-      params.start_date     ? gte(logs.created_at, params.start_date) : undefined,
-      params.end_date       ? lte(logs.created_at, params.end_date) : undefined,
-      params.model          ? eq(logs.model, params.model) : undefined,
-      params.provider       ? eq(logs.provider, params.provider) : undefined,
-      params.status         ? eq(logs.status, params.status) : undefined,
-      params.tags           ? sql`${logs.tags} @> ${JSON.stringify(params.tags)}` : undefined,
-    ].filter(x => x !== undefined);
+  const conditions = [
+    params.start_date ? gte(logs.created_at, params.start_date) : undefined,
+    params.end_date   ? lte(logs.created_at, params.end_date) : undefined,
+    params.model      ? eq(logs.model, params.model) : undefined,
+    params.provider   ? eq(logs.provider, params.provider) : undefined,
+    params.status     ? eq(logs.status, params.status) : undefined,
+    params.tags       ? sql`${logs.tags} @> ${JSON.stringify(params.tags)}` : undefined,
+  ].filter(x => x !== undefined);
 
 
   const query = db.select({
@@ -45,12 +43,15 @@ async function queryAnalytics(params: AnalyticsRequest) : Promise<AnalyticsRespo
 
   const data = (await (conditions.length > 0
     ? query.where(and(...conditions))
-    : query
-  ))[0];
+    : query // Should this even be allowed? 
+            // Probably need to set some defaults because this can pull a TON
+            // of data if no filters are applied
+  ));
 
-  // Write through to Redis cache
-  await redis.set(cacheKey, JSON.stringify(data), { EX: 60 });
-  return data;
+  const result = Schemas.analyticsResponse.parse(data[0]);
+
+  await redis.set(cacheKey, JSON.stringify(result), { EX: 60 });
+  return result;
 }
 
 export default {

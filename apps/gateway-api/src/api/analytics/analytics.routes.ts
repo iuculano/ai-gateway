@@ -3,7 +3,7 @@ import Schemas from './analytics.schemas';
 
 
 const postAnalytics = createRoute({
-  method: 'post',
+  method: 'post' as const,
   path: '/analytics',
   request: {
     body: {

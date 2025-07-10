@@ -3,7 +3,6 @@ import {
   connect, 
   ConnectionOptions,
   JSONCodec,
-  Stream,
   StringCodec
 } from 'nats';
 
@@ -19,9 +18,7 @@ const jetstreamManager = await nats.jetstreamManager();
 const jetstream = nats.jetstream();
 
 // Ensure the stream exists
-let stream: Stream;
-
-type ConsumerDefinition = {
+interface ConsumerDefinition {
   name: string,
   subject: string,
 }
@@ -47,6 +44,7 @@ for (const consumer of consumers) {
     });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   catch (err) {
     // Already exists, ignore
   }

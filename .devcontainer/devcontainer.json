@@ -14,7 +14,9 @@
 		"vscode": {
 			"extensions": [
 				"Pandy.bun",
-				"oderwat.indent-rainbow"
+				"oderwat.indent-rainbow",
+				"YoavBls.pretty-ts-errors",
+				"oven.bun-vscode"
 			]
 		}
 	}

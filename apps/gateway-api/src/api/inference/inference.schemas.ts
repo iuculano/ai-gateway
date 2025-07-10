@@ -11,7 +11,7 @@ const inferenceHeaders = z.object({
 
 
 const inferenceRequest = z.object({
-  model: z.string(),
+  model_id: z.string().uuid(),
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string(),

@@ -3,7 +3,7 @@ import Schemas from './health.schemas';
 
 
 const livez = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/livez',
   responses: {
     200: {
@@ -18,7 +18,7 @@ const livez = createRoute({
 });
 
 const healthz = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/healthz',
   responses: {
     200: {
@@ -33,7 +33,7 @@ const healthz = createRoute({
 });
 
 const readyz = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/readyz',
   responses: {
     200: {

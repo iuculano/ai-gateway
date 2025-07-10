@@ -13,6 +13,7 @@ const readyzResponse = z.object({
   status: z.union([z.literal('ok'), z.literal('degraded')]),
   checks: z.object({
     db: z.boolean(),
+    db_tables: z.boolean(),
     redis: z.boolean(),
     nats: z.boolean(),
   }),

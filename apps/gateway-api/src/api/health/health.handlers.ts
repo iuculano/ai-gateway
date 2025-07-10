@@ -1,46 +1,31 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { db } from '../../clients/drizzle';
-import { nats } from '../../clients/nats';
-import { redis } from '../../clients/redis';
-import HealthRoutes from './health.routes';
+import Routes from './health.routes';
+import Services from './health.services';
 
 
 const app = new OpenAPIHono();
 
-app.openapi(HealthRoutes.livez, async (c) => {
+app.openapi(Routes.livez, async (c) => {
   return c.json({ 
     status: 'alive' as const 
   }, 200);
 });
 
-app.openapi(HealthRoutes.healthz, async (c) => {
+app.openapi(Routes.healthz, async (c) => {
   return c.json({ 
     status: 'ok' as const 
   }, 200);
 });
 
-app.openapi(HealthRoutes.readyz, async (c) => {
+app.openapi(Routes.readyz, async (c) => {
+  const tables = ['logs', 'models', 'settings'];
+
   const checks = {
-    db: false,
-    redis: false,
-    nats: false,
+    db: await Services.checkPostgres(),
+    db_tables: await Services.checkPostgresTables(tables),
+    redis: await Services.checkRedis(),
+    nats: await Services.checkNats(),
   };
-
-  // Just try to do some kind of no-op to find a sign of life.
-  try {
-    await db.execute('SELECT 1');
-    checks.db = true;
-
-    await redis.ping();
-    checks.redis = true;
-
-    await nats.flush();
-    checks.nats = true;
-  } 
-  
-  catch {
-    // Bailing is enough, we'll fail below.
-  }
 
   const allHealthy = Object.values(checks).every(Boolean);
 

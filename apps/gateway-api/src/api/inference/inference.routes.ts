@@ -3,7 +3,7 @@ import Schemas from './inference.schemas';
 
 
 const postInference = createRoute({
-  method: 'post',
+  method: 'post' as const,
   path: '/inference',
   request: {
     headers: Schemas.inferenceHeaders,

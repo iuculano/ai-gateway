@@ -1,6 +1,6 @@
 import { z } from '@hono/zod-openapi';
 import { db, sql, and, eq, desc, lt } from '../../clients/drizzle';
-import { redis } from '../../clients/redis';
+import { redis, createCacheKey } from '../../clients/redis';
 import { logs } from '../../db/schema/logs'
 import { createHash } from 'node:crypto';
 import Schemas from './logs.schemas';
@@ -10,7 +10,7 @@ type GetLogRequest = z.infer<typeof Schemas.getLogRequest>;
 type GetLogResponse = z.infer<typeof Schemas.getLogResponse>;
 
 async function getLog(request: GetLogRequest) : Promise<GetLogResponse> {
-  const cacheKey = 'logs:' + createHash('sha1').update(request.id).digest('hex');
+  const cacheKey = await createCacheKey('logs:', request.id);
 
   const cached = await redis.get(cacheKey);
   if (cached) {
@@ -64,9 +64,10 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
     .orderBy(desc(logs.id))
     .limit(request.limit);
 
-  const nextCursor = result.length === (request.limit)
-    ? result[result.length - 1].id
-    : null;
+  const nextCursor =
+    result.length === request.limit
+      ? result[result.length - 1]?.id ?? null
+      : null;
 
   // Write through to Redis cache
   const coerced = Schemas.listLogsResponse.parse({ data: result, next: nextCursor });
