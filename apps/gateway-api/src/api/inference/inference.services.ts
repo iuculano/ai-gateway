@@ -7,30 +7,15 @@ import {
 
 import Schemas from './inference.schemas';
 import ModelService from '../models/models.services';
-import { createHash } from 'node:crypto';
 
 import { LRUCache } from 'lru-cache';
 
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAzure } from '@ai-sdk/azure';
-import { LanguageModel } from 'ai';
+import { generateText, streamText, type LanguageModel } from 'ai';
+import { createCacheKey } from '../../clients/redis';
+import { HTTPException } from 'hono/http-exception';
 
-type ProviderType =
-  | 'openai'
-  | 'anthropic'
-  | 'azure'
-  | 'meta'
-  | 'huggingface'
-  | 'xai';
-
-interface Provider {
-  type: ProviderType
-  modelId: string; // Technically this is optional, but I use it for cost estimation
-  apiKey: string;
-  baseUrl?: string;
-  instance: LanguageModel;
-
-}
 
 type SubmitInferenceResponse = z.infer<typeof Schemas.inferenceRequest>;
 type SubmitInferenceRequest = SubmitInferenceResponse & { 
@@ -44,56 +29,76 @@ const providerCache = new LRUCache<string, LanguageModel>({
 });
 
 async function submitInference(request: SubmitInferenceRequest): Promise<void> {
+  // Try to find a registered model
   const model = await ModelService.getModel({
     id: request.model_id
   });
 
-  const keyBase = JSON.stringify({
-    model_id: request.model_id,
-    api_key: request.api_key,
-    base_url: request.base_url,
+  if (!model) {
+    throw new HTTPException(422, {
+      cause: `Model with ID ${request.model_id} not found`,
+    });
+  }
+
+  // Try to find an instantiated model instance in the cache
+  // Note that this is a local, in-memory cache - not Redis
+  const cacheKey = await createCacheKey('inference:', {
+    modelId: request.model_id,
+    apiKey: request.api_key,
+    baseUrl: request.base_url ?? null,
   });
 
-  const cacheKey = createHash('sha1').update(keyBase).digest('hex');
-
-
-  let instance;
-  let factory;
-  switch(model.provider) {
-    case 'openai':
-      factory = createOpenAI({
-        apiKey: request.api_key,
-        baseURL: request.base_url,
-      });
-
-      instance = factory(model.id);
-      break;
-
-    case 'azure':
-      factory = createAzure({
-        apiKey: request.api_key,
-        baseURL: request.base_url,
-      });
-
-      instance = factory(model.id);
-      break;
-  }
-
+  // Need to be careful here, these providers need to stay relatively in
+  // lockstep version wise - the LanguageModel interface needs to line
+  // up between them
+  let instance = providerCache.get(cacheKey);
   if (!instance) {
-    throw new Error(`Unsupported provider: ${model.provider}`);
+    let factory;
+    switch(model.provider) {
+      case 'openai':
+        factory = createOpenAI({
+          apiKey: request.api_key,
+          baseURL: request.base_url,
+        });
+
+        instance = factory(model.name);
+        break;
+
+      case 'azure':
+        factory = createAzure({
+          apiKey: request.api_key,
+          baseURL: request.base_url,
+
+        });
+
+        instance = factory(model.name);
+        break;
+
+      default:
+        throw new HTTPException(400, {
+          cause: `Unsupported model provider: ${model.provider}`,
+        });
+    }
   }
 
-  
+  // Should have a valid LanguageModel instance now
+  providerCache.set(cacheKey, instance);
 
-  const cachedInstance = providerCache.get(cacheKey);
-  if (!cachedInstance) {
-    providerCache.set(cacheKey, instance as any);
+  if (!request.stream) {
+    const response = await generateText({
+      model: instance,
+      messages: request.messages,
+      ...(request.temperature ? { temperature: request.temperature } : {}),
+      ...(request.top_p ? { topP: request.top_p } : {}),
+      ...(request.max_tokens ? { maxTokens: request.max_tokens } : {}),
+    });
+
+    const test = 1;
   }
+}
 
-  //providerCache.set(cacheKey, provider);
 
-
-  jetstream.publish('gateway-api.inference', jsonCodec.encode(request));
+  //jetstream.publish('gateway-api.inference', jsonCodec.encode(request));
 }
 
 export default {

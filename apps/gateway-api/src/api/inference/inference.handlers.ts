@@ -1,8 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi';;
 import Routes from './inference.routes';
 import Services from './inference.services';
+import { zodExceptionHook } from '../../middleware/error-handler';
 
-const app = new OpenAPIHono();
+
+const app = new OpenAPIHono({
+  defaultHook: zodExceptionHook
+});
 
 app.openapi(Routes.postInference, async (c) => {
   const headers = c.req.valid('header');
