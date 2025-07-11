@@ -76,7 +76,20 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
   return coerced;
 }
 
+type CreateLogRequest = z.infer<typeof Schemas.createLogRequest>;
+type CreateLogResponse = z.infer<typeof Schemas.createLogResponse>;
+
+async function createLog(request: CreateLogRequest) : Promise<CreateLogResponse> {
+  const result = await db.insert(logs)
+    .values(request)
+    .returning();
+
+  const coerced = Schemas.createLogResponse.parse(result[0]);
+  return coerced;
+}
+
 export default {
   getLog,
-  listLogs
+  listLogs,
+  createLog,
 }

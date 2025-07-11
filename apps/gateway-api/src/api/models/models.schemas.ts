@@ -31,10 +31,19 @@ export const listModelsResponse = z.object({
   next: z.string().uuid().nullable().optional(),
 });
 
+export const createModelRequest = modelShape.omit({ 
+  id: true, 
+  created_at: true,
+  updated_at: true,
+});
+
+export const createModelResponse = modelShape;
 
 export default {
   getModelRequest,
   getModelResponse,
   listModelsRequest,
   listModelsResponse,
+  createModelRequest,
+  createModelResponse,
 };

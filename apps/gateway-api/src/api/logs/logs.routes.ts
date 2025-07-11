@@ -38,7 +38,33 @@ const listLogs = createRoute({
   },
 });
 
+const createLog = createRoute({
+  method: 'post' as const,
+  path: '/logs',
+  request: {
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.createLogRequest,
+        },
+      },
+    }
+  },
+  responses: {
+    201: {
+      description: 'Log created successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.createLogResponse,
+        },
+      },
+    },
+  },
+});
+
 export default {
   getLog,
-  listLogs
+  listLogs,
+  createLog,
 }

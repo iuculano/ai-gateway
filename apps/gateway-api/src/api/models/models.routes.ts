@@ -3,7 +3,7 @@ import Schemas from './models.schemas';
 
 
 const getModel = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/models/:id',
   request: {
     params: Schemas.getModelRequest,
@@ -21,7 +21,7 @@ const getModel = createRoute({
 });
 
 const listModels = createRoute({
-  method: 'get',
+  method: 'get' as const,
   path: '/models',
   request: {
     query: Schemas.listModelsRequest
@@ -38,7 +38,33 @@ const listModels = createRoute({
   },
 });
 
+const createModel = createRoute({
+  method: 'post' as const,
+  path: '/models',
+  request: {
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.createModelRequest,
+        },
+      },
+    }
+  },
+  responses: {
+    201: {
+      description: 'Model created successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.createModelResponse,
+        },
+      },
+    },
+  },
+});
+
 export default {
   getModel,
   listModels,
+  createModel,
 }

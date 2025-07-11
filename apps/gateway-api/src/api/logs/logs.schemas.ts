@@ -35,9 +35,19 @@ export const listLogsResponse = z.object({
   next: z.string().uuid().nullable().optional(),
 });
 
+export const createLogRequest = logShape.omit({ 
+  id: true, 
+  created_at: true,
+  updated_at: true,
+});
+
+export const createLogResponse = logShape;
+
 export default {
   getLogRequest,
   getLogResponse,
   listLogsRequest,
   listLogsResponse,
+  createLogRequest,
+  createLogResponse,
 };

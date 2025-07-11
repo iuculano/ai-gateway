@@ -1,9 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import Routes from './models.routes';
 import Service from './models.services';
+import { zodExceptionHook } from '../../middleware/error-handler';
 
 
-const app = new OpenAPIHono();
+const app = new OpenAPIHono({
+  defaultHook: zodExceptionHook
+});
 
 app.openapi(Routes.getModel, async (c) => {
   const params = c.req.valid('param');

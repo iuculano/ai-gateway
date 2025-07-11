@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception';
 import { z } from '@hono/zod-openapi';
 import { db, and, eq, desc, lt } from '../../clients/drizzle';
 import { redis } from '../../clients/redis';
@@ -20,6 +21,16 @@ async function getModel(request: GetModelRequest) : Promise<GetModelResponse> {
   const result = await db.select()
     .from(models)
     .where(eq(models.id, request.id));
+
+  if (result.length === 0) {
+    throw new HTTPException(404);
+  }
+
+  if (result.length > 1) {
+    throw new HTTPException(500, {
+      cause: 'Multiple models found with the same ID',
+    });
+  }
 
   // Drizzle treats numeric as a string to avoid precision nonsense.
   // We only use 4 decimal places of precision and JS Number is guaranteed to
@@ -61,8 +72,8 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
     .orderBy(desc(models.id))
     .limit(request.limit);
 
-  const nextCursor = result.length === (request.limit ?? 50)
-    ? result[result.length - 1].id
+  const nextCursor = result.length === (request.limit)
+    ? result[result.length - 1]?.id ?? null
     : null;
 
   // Write through to Redis cache
@@ -72,7 +83,20 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
   return coerced;
 }
 
+type CreateModelRequest = z.infer<typeof Schemas.createModelRequest>;
+type CreateModelResponse = z.infer<typeof Schemas.createModelResponse>;
+
+async function createModel(request: CreateModelRequest) : Promise<CreateModelResponse> {
+  const result = await db.insert(models)
+    .values(request)
+    .returning();
+
+  const coerced = Schemas.createModelResponse.parse(result[0]);
+  return coerced;
+}
+
 export default {
   getModel,
-  listModels
+  listModels,
+  createModel,
 }
