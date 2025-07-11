@@ -22,4 +22,11 @@ app.openapi(Routes.listModels, async (c) => {
   return c.json(result, 200);
 });
 
+app.openapi(Routes.createModel, async (c) => {
+  const json = c.req.valid('json');
+  const result = await Service.createModel(json);
+
+  return c.json(result, 201);
+});
+
 export default app;

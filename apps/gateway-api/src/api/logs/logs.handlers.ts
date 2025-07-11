@@ -22,5 +22,11 @@ app.openapi(Routes.listLogs, async (c) => {
   return c.json(result, 200);
 });
 
+app.openapi(Routes.createLog, async (c) => {
+  const json = c.req.valid('json');
+  const result = await Service.createLog(json);
+
+  return c.json(result, 201);
+});
 
 export default app;
