@@ -19,8 +19,8 @@ export const models = pgTable('models', {
   id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
   name: text('name').notNull(), // e.g., 'gpt-4-turbo'
   provider: text('provider').notNull(),
-  cost_input: numeric('cost_input', { precision: 10, scale: 4 }).notNull().default('0'),
-  cost_output: numeric('cost_output', { precision: 10, scale: 4 }).notNull().default('0'),
+  cost_input: numeric('cost_input', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
+  cost_output: numeric('cost_output', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
   config: jsonb('config').$type<Record<string, unknown>>().default({}),
   tags: jsonb('tags').$type<Record<string, unknown>>().default({}),
   created_at: timestamp('created_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),

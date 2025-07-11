@@ -11,7 +11,7 @@ export const logs = pgTable('logs', {
   prompt_tokens: integer('prompt_tokens'),
   completion_tokens: integer('completion_tokens'),
   response_time_ms: integer('response_time_ms'),
-  cost: numeric('cost', { precision: 10, scale: 4 }).notNull().default('0'),
+  cost: numeric('cost', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
   tags: jsonb('tags').$type<Record<string, unknown>>(),
   created_at: timestamp('created_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),
   updated_at: timestamp('updated_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),

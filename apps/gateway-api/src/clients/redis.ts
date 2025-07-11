@@ -9,6 +9,8 @@ const redis = await createClient()
 // Try to restrict the types to JSON-compatible values
 type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
 interface JsonObject { [key: string]: JsonValue }
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 interface JsonArray extends Array<JsonValue> {}
 
 async function createCacheKey(prefix: string, data: JsonValue): Promise<string> {
