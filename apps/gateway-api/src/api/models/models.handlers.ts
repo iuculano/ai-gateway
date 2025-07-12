@@ -4,13 +4,11 @@ import Service from './models.services';
 import { zodExceptionHook } from '../../middleware/error-handler';
 
 
-const app = new OpenAPIHono({
-  defaultHook: zodExceptionHook
-});
+const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
 app.openapi(Routes.getModel, async (c) => {
   const params = c.req.valid('param');
-  const result = await Service.getModel(params);
+  const result = await Service.getModel(params.id);
 
   return c.json(result, 200);
 });

@@ -5,7 +5,6 @@ import { STATUS_CODES } from 'node:http';
 import logger from '../clients/pino';
 
 
-
 // Just mimic what the OpenAPIHono does expects for the defaultHook
 type ErrorHook = {
   target: keyof ValidationTargets;
@@ -18,15 +17,24 @@ type ErrorHook = {
   data: any;
 });
 
-// Basically, this just acts as a hook that runs after the Zod validation and
-// throws a typical HTTPException if something went wrong.
-//
-// For whatever reason, the OpenAPIHono doesn't throw an HTTPException
-// automatically when Zod validation fails, so we have to do it ourselves.
-//
-// This must be used as the defaultHook for the child OpenAPIHono instances.
-// You cannot assign it to the topmost instance, it'll never be called.
-// https://github.com/honojs/middleware/tree/main/packages/zod-openapi#handling-validation-errors
+/**
+ * Hook to handle Zod validation errors after validation in OpenAPIHono routes.
+ *
+ * For whatever reason, the OpenAPIHono doesn't throw an HTTPException
+ * automatically when Zod validation fails, so we have to do it ourselves.
+ *
+ * This must be used as the defaultHook for the CHILD OpenAPIHono instances!
+ * Assigning it to the top most OpenAPIHono instance will not work.
+ *
+ * https://github.com/honojs/middleware/tree/main/packages/zod-openapi#handling-validation-errors
+ *
+ * @param result
+ * The result object from Zod validation, containing success status and
+ * error/data.
+ *
+ * @throws {HTTPException}
+ * If validation fails with a ZodError.
+ */
 export function zodExceptionHook(result: ErrorHook) {
   if (!result.success && result.error instanceof z.ZodError) {
     // If it's a ZodError, just pass it along as the cause
@@ -37,11 +45,21 @@ export function zodExceptionHook(result: ErrorHook) {
   }
 }
 
+/**
+ * Middleware for handling errors.
+ *
+ * - Zod validation errors will be returned as a formatted response.
+ * - For unhandled errors, a generic 500 Internal Server Error response is
+ *   returned.
+ *
+ * @returns
+ * An async middleware function.
+ */
 export function errorHandler() {
   return async (err: Error, c: Context)=> {
     const requestId = c.var?.requestId;
-    const childLogger = logger.child({ 
-      'id    ': requestId, 
+    const childLogger = logger.child({
+      'id    ': requestId,
       'path  ': c.req.path,
       'method': c.req.method,
     });
@@ -57,10 +75,10 @@ export function errorHandler() {
           err.status
         );
       }
-      
+
       // We probably raised the HTTPException ourselves - return the
       // exception status code and log the error
-      childLogger.error({ 
+      childLogger.error({
         'code  ': err.status,
         'status': STATUS_CODES[err.status],
          ...(err.cause ? { cause: err.cause } as object : {}), // gross

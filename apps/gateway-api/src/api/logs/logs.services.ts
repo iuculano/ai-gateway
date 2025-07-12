@@ -1,17 +1,34 @@
-import { z } from '@hono/zod-openapi';
+import { HTTPException } from 'hono/http-exception';
 import { db, sql, and, eq, desc, lt } from '../../clients/drizzle';
 import { redis, createCacheKey } from '../../clients/redis';
 import { logs } from '../../db/schema/logs'
-import { createHash } from 'node:crypto';
-import Schemas from './logs.schemas';
+import { s3 } from '../../clients/s3';
+import Schemas, {
+  type GetLogResponse,
+  type GetLogDataResponse,
+  type ListLogsRequest,
+  type ListLogsResponse,
+  type CreateLogRequest,
+  type CreateLogResponse,
+  type UpdateLogRequest,
+  type UpdateLogResponse,
+} from './logs.schemas';
 
 
-type GetLogRequest = z.infer<typeof Schemas.getLogRequest>;
-type GetLogResponse = z.infer<typeof Schemas.getLogResponse>;
-
-async function getLog(request: GetLogRequest) : Promise<GetLogResponse> {
-  const cacheKey = await createCacheKey('logs:', request.id);
-
+/**
+ * Retrieves a single log by its ID.
+ *
+ * @param id
+ * The ID of the log to retrieve.
+ *
+ * @returns
+ * A promise that resolves to the log data.
+ *
+ * @throws {HTTPException}
+ * If the log is not found or if multiple logs are found.
+ */
+async function getLog(id: string) : Promise<GetLogResponse> {
+  const cacheKey = await createCacheKey('logs:', id);
   const cached = await redis.get(cacheKey);
   if (cached) {
     return JSON.parse(cached);
@@ -19,30 +36,60 @@ async function getLog(request: GetLogRequest) : Promise<GetLogResponse> {
 
   const result = await db.select()
     .from(logs)
-    .where(eq(logs.id, request.id));
+    .where(eq(logs.id, id));
 
-  // Drizzle treats numeric as a string to avoid precision nonsense.
-  // We only use 4 decimal places of precision and JS Number is guaranteed to
-  // have enough precision for what we're returning.
-  // 
-  // Just let Zod coerce the object Drizzle returned into its actual Zod 
-  // schema shape.
-  const coerced = Schemas.getLogResponse.parse(result[0]);
-  await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
+  if (!result[0]) {
+    throw new HTTPException(404);
+  }
 
-  return coerced;
+  // Just in case someone manages to find a colliding UUID...
+  if (result.length > 1) {
+    throw new HTTPException(500, {
+      message: 'Returned more than one model for ID',
+    });
+  }
+
+  const parsed = Schemas.getLogResponse.parse(result[0]);
+  await redis.set(cacheKey, JSON.stringify(parsed), {
+    expiration: { type: 'EX', value: 60 }
+  });
+
+  return parsed;
 }
 
+/**
+ * Retrieves the input and output data for a log entry - effectively the
+ * "payload" of the inference request and response.
+ *
+ * @param request
+ * The request object containing the filter criteria.
+ *
+ * @returns
+ * A promise that resolves to the log data.
+ *
+ * @throws {HTTPException}
+ * If the log is not found or if multiple logs are found.
+ */
+async function getLogData(id: string): Promise<GetLogDataResponse> {
+  const key = `/v1/logs/${id}.json.gz`;
+  const buffer = await s3.file(key).arrayBuffer();
 
-type ListLogsRequest = z.infer<typeof Schemas.listLogsRequest>;
-type ListLogsResponse = z.infer<typeof Schemas.listLogsResponse>;
+  const decompressed = Bun.gunzipSync(new Uint8Array(buffer));
+  const jsonStr = Buffer.from(decompressed).toString('utf8'); // Or: new TextDecoder().decode(decompressed)
+  return JSON.parse(jsonStr);
+}
 
+/**
+ * Retrieves a list of models, filtered by the given criteria.
+ *
+ * @param request
+ * The request object containing the filter criteria.
+ *
+ * @returns
+ * A promise that resolves to the log data.
+ */
 async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
-  // Hash the payload to create a unique cache key for Redis
-  const keyBase = JSON.stringify(request);
-  const cacheKey = 'logs:' + createHash('sha1').update(keyBase).digest('hex');
-
-  // See if the data is already cached in Redis
+  const cacheKey = await createCacheKey('logs:', request);
   const cached = await redis.get(cacheKey);
   if (cached) {
     return JSON.parse(cached);
@@ -70,26 +117,56 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
       : null;
 
   // Write through to Redis cache
-  const coerced = Schemas.listLogsResponse.parse({ data: result, next: nextCursor });
-  await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
+  const parsed = Schemas.listLogsResponse.parse({ data: result, next: nextCursor });
+  await redis.set(cacheKey, JSON.stringify(parsed), { EX: 60 });
 
-  return coerced;
+  return parsed;
 }
 
-type CreateLogRequest = z.infer<typeof Schemas.createLogRequest>;
-type CreateLogResponse = z.infer<typeof Schemas.createLogResponse>;
-
+/**
+ * Creates a new log entry in the database.
+ *
+ * @param request
+ * The request object containing the log data to be created.
+ *
+ * @returns
+ * A promise that resolves to the created log data.
+ */
 async function createLog(request: CreateLogRequest) : Promise<CreateLogResponse> {
   const result = await db.insert(logs)
     .values(request)
     .returning();
 
-  const coerced = Schemas.createLogResponse.parse(result[0]);
-  return coerced;
+  const parsed = Schemas.createLogResponse.parse(result[0]);
+  return parsed;
+}
+
+/**
+ * Updates an existing log entry in the database.
+ *
+ * @param id
+ * The ID of the log to update.
+ *
+ * @param payload
+ * The update payload containing the fields to be updated.
+ *
+ * @returns
+ * A promise that resolves to the updated log data.
+ */
+async function updateLog(id: string, payload: UpdateLogRequest) : Promise<UpdateLogResponse> {
+  const result = await db.update(logs)
+    .set(payload)
+    .where(eq(logs.id, id))
+    .returning();
+
+  const parsed = Schemas.updateLogResponse.parse(result[0]);
+  return parsed;
 }
 
 export default {
   getLog,
+  getLogData,
   listLogs,
   createLog,
+  updateLog,
 }

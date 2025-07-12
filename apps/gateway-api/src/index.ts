@@ -4,11 +4,12 @@ import healthHandlers from './api/health/health.handlers';
 import analyticsHandlers from './api/analytics/analytics.handlers';
 import logsHandlers from './api/logs/logs.handlers';
 import modelsHandlers from './api/models/models.handlers';
+import inferenceHandlers from './api/inference/inference.handlers';
 
 // Middleware
 import { secureHeaders } from 'hono/secure-headers'
 import { requestId } from 'hono/request-id'
-import { requestLogger } from './middleware/request-log';
+import { requestLogger } from './middleware/request-logger';
 import { errorHandler } from './middleware/error-handler';
 
 
@@ -26,13 +27,14 @@ app.doc('/open-api.json', {
   },
 });
 
-app.get('/docs', swaggerUI({ 
-  url: '/open-api.json' 
+app.get('/docs', swaggerUI({
+  url: '/open-api.json'
 }));
 
 app.route('/', healthHandlers);
 app.route('/v1', analyticsHandlers);
 app.route('/v1', logsHandlers);
 app.route('/v1', modelsHandlers);
+app.route('/v1', inferenceHandlers);
 
 export default app;

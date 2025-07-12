@@ -63,8 +63,35 @@ const createModel = createRoute({
   },
 });
 
+const updateModel = createRoute({
+  method: 'patch' as const,
+  path: '/models/:id',
+  request: {
+    params: Schemas.getModelRequest,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.updateModelRequest,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Logs retrieved successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.updateModelResponse,
+        },
+      },
+    },
+  },
+});
+
 export default {
   getModel,
   listModels,
   createModel,
+  updateModel,
 }

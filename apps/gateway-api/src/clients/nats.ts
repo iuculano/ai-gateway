@@ -1,9 +1,9 @@
 import { 
   AckPolicy,
   connect, 
-  ConnectionOptions,
   JSONCodec,
-  StringCodec
+  StringCodec,
+  type ConnectionOptions,
 } from 'nats';
 
 const options: ConnectionOptions = {

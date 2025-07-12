@@ -1,5 +1,6 @@
 import { z } from '@hono/zod-openapi';
 
+
 const inferenceHeaders = z.object({
   'ai-api-key': z.string(),
   'ai-base-url': z.string().url().optional(),
@@ -22,19 +23,27 @@ const inferenceRequest = z.object({
   stream: z.boolean().optional().default(false),
 });
 
-const inferenceResponseStreaming = z.object({
-  inference_id: z.string().uuid(),
-  status: z.literal('queued'),
+const inferenceResponse = z.object({
+  id: z.string().uuid(),
+  text: z.string(),
+  reasoning: z.string().optional(),
+  sources: z.array(z.string()).optional(),
+  usage: z.object({
+    prompt_tokens: z.number(),
+    completion_tokens: z.number(),
+    total_tokens: z.number(),
+  }),
+  reponse_time_ms: z.number().optional(),
 });
 
-const inferenceResponseNonStreaming = z.object({
-  inference_id: z.string().uuid(),
-  status: z.literal('queued'),
+const inferenceObjectData = z.object({
+  request: inferenceRequest,
+  response: inferenceResponse,
 });
 
 export default {
   inferenceHeaders,
   inferenceRequest,
-  inferenceResponseStreaming,
-  inferenceResponseNonStreaming,
+  inferenceResponse,
+  inferenceObjectData,
 };

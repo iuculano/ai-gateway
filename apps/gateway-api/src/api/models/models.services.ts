@@ -1,18 +1,31 @@
 import { HTTPException } from 'hono/http-exception';
-import { z } from '@hono/zod-openapi';
 import { db, and, eq, desc, lt } from '../../clients/drizzle';
-import { redis } from '../../clients/redis';
+import { createCacheKey, redis } from '../../clients/redis';
 import { models } from '../../db/schema/models'
-import { createHash } from 'node:crypto';
-import Schemas from './models.schemas';
+import Schemas, {
+  type GetModelResponse,
+  type ListModelsRequest,
+  type ListModelsResponse,
+  type CreateModelRequest,
+  type CreateModelResponse,
+  type UpdateModelRequest,
+  type UpdateModelResponse,
+} from './models.schemas';
 
-
-type GetModelRequest = z.infer<typeof Schemas.getModelRequest>;
-type GetModelResponse = z.infer<typeof Schemas.getModelResponse>
-
-async function getModel(request: GetModelRequest) : Promise<GetModelResponse> {
-  const cacheKey = 'models:' + createHash('sha1').update(request.id).digest('hex');
-
+/**
+ * Retrieves a single model by its ID.
+ *
+ * @param id
+ * The ID of the model to retrieve.
+ *
+ * @returns
+ * A promise that resolves to the model data.
+ *
+ * @throws {HTTPException}
+ * If the model is not found or if multiple models are found.
+ */
+async function getModel(id: string) : Promise<GetModelResponse> {
+  const cacheKey = await createCacheKey('models:', id);
   const cached = await redis.get(cacheKey);
   if (cached) {
     return JSON.parse(cached);
@@ -20,39 +33,43 @@ async function getModel(request: GetModelRequest) : Promise<GetModelResponse> {
 
   const result = await db.select()
     .from(models)
-    .where(eq(models.id, request.id));
+    .where(eq(models.id, id));
 
-  if (result.length === 0) {
+  if (!result[0]) {
     throw new HTTPException(404);
   }
 
+  // Just in case someone manages to find a colliding UUID...
   if (result.length > 1) {
     throw new HTTPException(500, {
-      cause: 'Multiple models found with the same ID',
+      message: 'Returned more than one model for ID',
     });
   }
 
-  // Drizzle treats numeric as a string to avoid precision nonsense.
-  // We only use 4 decimal places of precision and JS Number is guaranteed to
-  // have enough precision for what we're returning.
-  // 
-  // Just let Zod coerce the object Drizzle returned into its actual Zod 
-  // schema shape.
-  const coerced = Schemas.getModelResponse.parse(result[0]);
-  await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
+  // I'm wondering if I even need to cache here - the query is very cheap.
+  // This endpoint is called on every inference, though, maybe worth it?
+  const parsed = Schemas.getModelResponse.parse(result[0]);
+  await redis.set(cacheKey, JSON.stringify(parsed), {
+    expiration: { type: 'EX', value: 15 }
+  });
 
-  return coerced;
+  return parsed;
 }
 
-type ListModelsRequest = z.infer<typeof Schemas.listModelsRequest>;
-type ListModelsResponse = z.infer<typeof Schemas.listModelsResponse>;
-
+/**
+ * Retrieves a list of models, filtered by the given criteria..
+ *
+ * @param request
+ * The request object containing the filter criteria.
+ *
+ * @returns
+ * A promise that resolves to the model data.
+ *
+ * @throws {HTTPException}
+ * If the model is not found or if multiple models are found.
+ */
 async function listModels(request: ListModelsRequest) : Promise<ListModelsResponse> {
-  // Hash the payload to create a unique cache key for Redis
-  const keyBase = JSON.stringify(request);
-  const cacheKey = 'models:' + createHash('sha1').update(keyBase).digest('hex');
-
-  // See if the data is already cached in Redis
+  const cacheKey = await createCacheKey('models:', request);
   const cached = await redis.get(cacheKey);
   if (cached) {
     return JSON.parse(cached);
@@ -76,27 +93,75 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
     ? result[result.length - 1]?.id ?? null
     : null;
 
-  // Write through to Redis cache
-  const coerced = Schemas.listModelsResponse.parse({ data: result, next: nextCursor });
-  await redis.set(cacheKey, JSON.stringify(coerced), { EX: 60 });
+  const parsed = Schemas.listModelsResponse.parse({ data: result, next: nextCursor });
+  await redis.set(cacheKey, JSON.stringify(parsed), {
+    expiration: { type: 'EX', value: 30 },
+  });
 
-  return coerced;
+  return parsed;
 }
 
-type CreateModelRequest = z.infer<typeof Schemas.createModelRequest>;
-type CreateModelResponse = z.infer<typeof Schemas.createModelResponse>;
-
+/**
+ * Creates a new model in the database.
+ *
+ * @param request
+ * The request object containing the model data to create.
+ *
+ * @returns
+ * A promise that resolves to the created model data.
+ *
+ * @throws {HTTPException}
+ * If the model creation fails.
+ */
 async function createModel(request: CreateModelRequest) : Promise<CreateModelResponse> {
   const result = await db.insert(models)
     .values(request)
     .returning();
 
-  const coerced = Schemas.createModelResponse.parse(result[0]);
-  return coerced;
+  if (!result[0]) {
+    throw new HTTPException(500, {
+      message: 'Failed to create model',
+    });
+  }
+
+  const parsed = Schemas.createModelResponse.parse(result[0]);
+  return parsed;
+}
+
+/**
+ * Updates an existing model in the database.
+ *
+ * @param id
+ * The ID of the model to update.
+ *
+ * @param request
+ * The request object containing the updated model data.
+ *
+ * @returns
+ * A promise that resolves to the updated model data.
+ *
+ * @throws {HTTPException}
+ * If the model update fails.
+ */
+async function updateModel(id: string, request: UpdateModelRequest) : Promise<UpdateModelResponse> {
+  const result = await db.update(models)
+    .set(request)
+    .where(eq(models.id, id))
+    .returning();
+
+  if (!result[0]) {
+    throw new HTTPException(500, {
+      message: 'Failed to update model',
+    });
+  }
+
+  const parsed = Schemas.updateModelResponse.parse(result[0]);
+  return parsed;
 }
 
 export default {
   getModel,
   listModels,
   createModel,
+  updateModel,
 }

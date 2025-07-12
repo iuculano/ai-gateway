@@ -23,8 +23,8 @@ export const models = pgTable('models', {
   cost_output: numeric('cost_output', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
   config: jsonb('config').$type<Record<string, unknown>>().default({}),
   tags: jsonb('tags').$type<Record<string, unknown>>().default({}),
-  created_at: timestamp('created_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),
-  updated_at: timestamp('updated_at', { withTimezone: false, mode: 'string' }).notNull().defaultNow(),
+  created_at: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
 }, (table) => [
   check("provider_check", sql`${table.provider} IN ('openai', 'anthropic', 'azure', 'local')`),
 ]);
