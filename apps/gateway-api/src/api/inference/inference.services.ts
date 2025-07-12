@@ -1,38 +1,43 @@
-import { z } from '@hono/zod-openapi';
-import Schemas from './inference.schemas';
 import ModelService from '../models/models.services';
-
+import Schemas, {
+  type InferenceHeaders,
+  type InferenceRequest,
+  type InferenceResponse,
+} from './inference.schemas';
 import { LRUCache } from 'lru-cache';
-
-import { createOpenAI } from '@ai-sdk/openai';
 import { createAzure } from '@ai-sdk/azure';
+import { createOpenAI } from '@ai-sdk/openai';
 import { generateText, type LanguageModel } from 'ai';
-import { createCacheKey } from '../../clients/redis';
 import { HTTPException } from 'hono/http-exception';
-
-import LogsService from '../logs/logs.services';
+import { createCacheKey } from '../../clients/redis';
 import { s3 } from '../../clients/s3';
+import LogsService from '../logs/logs.services';
 
-
-type InferenceRequest = z.infer<typeof Schemas.inferenceRequest>;
-type SubmitInferenceRequest = InferenceRequest & { 
-  api_key: string
-  base_url?: string 
-};
-
-type InferenceResponse = z.infer<typeof Schemas.inferenceResponse>;
 
 const providerCache = new LRUCache<string, LanguageModel>({
   max: 100,
   ttl: 1000 * 60 * 60, // 1 hour
 });
 
-async function submitInference(request: SubmitInferenceRequest): Promise<InferenceResponse> {
+/**
+ * Submits a logged inference request to a language model provider.
+ *
+ * @param headers The headers containing authentication and configuration for
+ * the model provider.
+ *
+ * @param request The inference request payload, including model ID and prompt
+ * details.
+ *
+ * @returns
+ * A promise that resolves to the inference response.
+ *
+ * @throws {HTTPException}
+ * If the model is not found, the provider is unsupported, or inference fails.
+ */
+async function submitInference(headers: InferenceHeaders, request: InferenceRequest): Promise<InferenceResponse> {
   // Try to find a registered model - this returns information on the model
   // such as cost. It does not return the actual LanguageModel instance.
-  const model = await ModelService.getModel({
-    id: request.model_id
-  });
+  const model = await ModelService.getModel(request.model_id);
 
   if (!model) {
     throw new HTTPException(422, {
@@ -42,10 +47,13 @@ async function submitInference(request: SubmitInferenceRequest): Promise<Inferen
 
   // Try to find an instantiated model instance in the cache.
   // Note that this is a local, in-memory cache - not Redis.
+  const apiKey = headers['ai-api-key'];
+  const baseUrl = headers['ai-base-url'];
+
   const cacheKey = await createCacheKey('inference:', {
     modelId: request.model_id,
-    apiKey: request.api_key,
-    baseUrl: request.base_url ?? null,
+    apiKey: apiKey,
+    baseUrl: baseUrl ?? null,
   });
 
   // Need to be careful here, these providers need to stay relatively in
@@ -57,8 +65,8 @@ async function submitInference(request: SubmitInferenceRequest): Promise<Inferen
     switch(model.provider) {
       case 'openai':
         factory = createOpenAI({
-          apiKey: request.api_key,
-          baseURL: request.base_url,
+          apiKey: headers['ai-api-key'],
+          baseURL: headers['ai-base-url'],
         });
 
         instance = factory(model.name);
@@ -66,9 +74,8 @@ async function submitInference(request: SubmitInferenceRequest): Promise<Inferen
 
       case 'azure':
         factory = createAzure({
-          apiKey: request.api_key,
-          baseURL: request.base_url,
-
+          apiKey: headers['ai-api-key'],
+          baseURL: headers['ai-base-url'],
         });
 
         instance = factory(model.name);
@@ -81,75 +88,75 @@ async function submitInference(request: SubmitInferenceRequest): Promise<Inferen
     }
   }
 
-  // Should have a valid LanguageModel instance now
+  // Should have a valid LanguageModel instance now. If we already had one, this
+  // will be a no-op.
   providerCache.set(cacheKey, instance);
 
-  let objectData;
+  // Start the inference request.
+  let llmResponse;
   if (!request.stream) {
-    const response = await generateText({
+    llmResponse = await generateText({
       model: instance,
       messages: request.messages,
       ...(request.temperature ? { temperature: request.temperature } : {}),
       ...(request.top_p ? { topP: request.top_p } : {}),
       ...(request.max_tokens ? { maxTokens: request.max_tokens } : {}),
     });
+  };
 
-    // Write the first part of the log to the database so we can get an ID.
-    // This will be missing the object_reference initially.
-    const log = await LogsService.createLog({
-      model: model.name,
-      provider: model.provider,
-      status: 'success',
-      prompt_tokens: response.usage.promptTokens,
-      completion_tokens: response.usage.completionTokens,
-    });
-
-    // The actual object data that will be written to storage.
-    objectData = Schemas.inferenceObjectData.parse({
-      request: {
-        model_id: request.model_id,
-        messages: request.messages,
-        temperature: request.temperature,
-        top_p: request.top_p,
-        max_tokens: request.max_tokens,
-      },
-
-      response: {
-        id: log.id,
-        text: response.text,
-        reasoning: response.reasoning,
-        sources: response.sources,
-        usage: {
-          prompt_tokens: response.usage.promptTokens,
-          completion_tokens: response.usage.completionTokens,
-          total_tokens: response.usage.totalTokens,
-        },
-        reponse_time_ms: undefined,
-      }
-    });
-
-    // Compress and 
-    const data = Buffer.from(JSON.stringify(objectData));
-    const compressed = Bun.gzipSync(data);
-
-    const s3Key = `/v1/logs/${log.id}.json.gz`;
-    s3.file(s3Key).write(compressed);
-
-    await LogsService.updateLog(log.id, {
-      object_reference: `/v1/logs/${log.id}.json.gz`,
+  // TODO add better error handling here.
+  if (!llmResponse) {
+    throw new HTTPException(500, {
+      message: 'Failed to generate response from model',
     });
   }
 
-  if (objectData) {
-    const parsed = Schemas.inferenceResponse.parse(objectData.response);
-    return parsed;
-  }
-}
+  // Write the first part of the log to the database so we can get an ID.
+  // This will be missing a few things initially.
+  //
+  // If we haven't thrown yet, the request was at least passably successful...
+  const log = await LogsService.createLog({
+    model: model.name,
+    provider: model.provider,
+    status: 'incomplete',
+  });
 
+  // Try to build a valid response up front.
+  const response = Schemas.inferenceResponse.parse({
+    id: log.id,
+    text: llmResponse.text,
+    reasoning: llmResponse.reasoning,
+    sources: llmResponse.sources,
+    usage: {
+      prompt_tokens: llmResponse.usage.promptTokens,
+      completion_tokens: llmResponse.usage.completionTokens,
+      total_tokens: llmResponse.usage.totalTokens,
+    },
+    response_time_ms: undefined,
+  });
+
+  // The actual object data that will be written to object storage. This is
+  // currently pretty naive and doesn't do anything like batching into a bigger
+  // object.
+  const objectData = Schemas.inferenceObjectData.parse({
+    request: request,
+    response: response,
+  });
+
+  // Compress and write it out to object storage.
+  const data = Buffer.from(JSON.stringify(objectData));
+  const compressed = Bun.gzipSync(data);
+
+  const s3Key = `/v1/logs/${log.id}.json.gz`;
+  s3.file(s3Key).write(compressed);
+
+  await LogsService.updateLog(log.id, {
+    object_reference: `/v1/logs/${log.id}.json.gz`,
+  });
+
+  return response;
+};
 
 export default {
   submitInference
 }
-
-// Create a provider
-// Create a model, bind a provider to it

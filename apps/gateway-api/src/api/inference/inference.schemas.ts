@@ -10,7 +10,6 @@ const inferenceHeaders = z.object({
   'ai-cache-ttl': z.number().optional(),
 });
 
-
 const inferenceRequest = z.object({
   model_id: z.string().uuid(),
   messages: z.array(z.object({
@@ -40,6 +39,11 @@ const inferenceObjectData = z.object({
   request: inferenceRequest,
   response: inferenceResponse,
 });
+
+export type InferenceHeaders = z.infer<typeof inferenceHeaders>;
+export type InferenceRequest = z.infer<typeof inferenceRequest>;
+export type InferenceResponse = z.infer<typeof inferenceResponse>;
+export type InferenceObjectData = z.infer<typeof inferenceObjectData>;
 
 export default {
   inferenceHeaders,

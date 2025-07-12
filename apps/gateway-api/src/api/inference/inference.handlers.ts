@@ -8,13 +8,9 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
 app.openapi(Routes.postInference, async (c) => {
   const headers = c.req.valid('header');
-  const data = c.req.valid('json');
+  const json = c.req.valid('json');
 
-  const result = await Services.submitInference({
-    api_key: headers['ai-api-key'],
-    base_url: headers['ai-base-url'],
-    ...data
-  });
+  const result = await Services.submitInference(headers, json);
 
   return c.json(result, 200);
 });
