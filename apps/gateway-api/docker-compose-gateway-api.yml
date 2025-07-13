@@ -1,0 +1,7 @@
+services:
+  gateway-api:
+    image:          gateway-api:latest
+    container_name: gateway-api
+    restart:        unless-stopped
+    ports:
+      - "3000:3000"
