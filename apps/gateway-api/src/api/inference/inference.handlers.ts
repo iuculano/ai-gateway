@@ -23,6 +23,8 @@ app.openapi(Routes.postInference, async (c) => {
       for await (const chunk of stream) {
         await sse.writeSSE({ data: chunk });
       }
+
+      await sse.writeSSE({ data: '[DONE]' });
     });
   }
 });

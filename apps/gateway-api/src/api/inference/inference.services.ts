@@ -67,6 +67,7 @@ async function getCallableModel(modelId: string, apiKey: string, baseUrl?: strin
         factory = createOpenAI({
           apiKey: apiKey,
           baseURL: baseUrl,
+          compatibility: 'strict',
         });
 
         instance = factory(model.name);
@@ -216,7 +217,7 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
       completion_tokens: llmResponse.usage.completionTokens,
       total_tokens: llmResponse.usage.totalTokens,
     },
-    response_time_ms: null,
+    response_time_ms: undefined,
   });
 
   await completeLog(logId, request, response);

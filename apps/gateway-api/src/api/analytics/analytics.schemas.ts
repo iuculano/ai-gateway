@@ -15,12 +15,12 @@ const analyticsResponse = z.object({
   total_logs: z.number(),
   successful_logs: z.number(),
   error_logs: z.number(),
-  total_tokens: z.number(),
-  total_prompt_tokens: z.number(),
-  total_completion_tokens: z.number(),
-  average_latency_ms: z.number(),
-  maximum_latency_ms: z.number(),
-  minimum_latency_ms: z.number(),
+  total_tokens: z.number().nullable(),
+  total_prompt_tokens: z.number().nullable(),
+  total_completion_tokens: z.number().nullable(),
+  average_latency_ms: z.number().nullable(),
+  maximum_latency_ms: z.number().nullable(),
+  minimum_latency_ms: z.number().nullable(),
 });
 
 export type AnalyticsRequest = z.infer<typeof analyticsRequest>;
