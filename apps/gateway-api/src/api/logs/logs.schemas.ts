@@ -46,7 +46,7 @@ const getLogDataResponse = z.object({
       completion_tokens: z.number(),
       total_tokens: z.number(),
     }),
-    reponse_time_ms: z.number().optional(),
+    response_time_ms: z.number().optional(),
   }),
 });
 

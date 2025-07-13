@@ -23,13 +23,8 @@ const postInference = createRoute({
         'application/json': {
           schema: Schemas.inferenceResponse,
         },
-      },
-    },
 
-    202: {
-      description: 'Inference request submitted',
-      content: {
-        'application/json': {
+        'application/event-stream': {
           schema: Schemas.inferenceResponse,
         },
       },
