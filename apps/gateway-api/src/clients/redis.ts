@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
 import { createClient } from 'redis';
+import { environment } from '../utils/environment';
 
 
-const redis = await createClient()
-  .on('error', (err) => console.log('Redis Client Error', err))
-  .connect();
+const redis = await createClient({
+  url: environment.REDIS_URL || 'redis://localhost:6379',
+  password: environment.REDIS_PASSWORD,
+  username: environment.REDIS_USERNAME,
+  database: environment.REDIS_DB,
+})
+.on('error', (err) => console.log('Redis Client Error', err))
+.connect();
 
 
 // Try to restrict the types to JSON-compatible values

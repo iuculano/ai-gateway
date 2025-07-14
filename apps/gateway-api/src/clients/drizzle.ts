@@ -1,9 +1,9 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import {
   sql,
-  gte, 
-  gt, 
-  lte, 
+  gte,
+  gt,
+  lte,
   lt,
   eq,
   not,
@@ -16,11 +16,12 @@ import {
   min,
   max,
 } from 'drizzle-orm';
+import { environment } from '../utils/environment';
 
-// what the fuck
-const db = drizzle(process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/ai_gateway');
+// This file formatting is ridiculous
+const db = drizzle(environment.POSTGRES_URL);
 
-export { 
+export {
   db,
   sql,
   gte,
