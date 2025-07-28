@@ -75,8 +75,8 @@ async function getLogData(id: string): Promise<GetLogDataResponse> {
   const buffer = await s3.file(key).arrayBuffer();
 
   const decompressed = Bun.gunzipSync(new Uint8Array(buffer));
-  const jsonStr = Buffer.from(decompressed).toString('utf8'); // Or: new TextDecoder().decode(decompressed)
-  return JSON.parse(jsonStr);
+  const jsonString = Buffer.from(decompressed).toString('utf8');
+  return JSON.parse(jsonString);
 }
 
 /**

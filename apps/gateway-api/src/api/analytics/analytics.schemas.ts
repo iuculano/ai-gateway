@@ -18,6 +18,7 @@ const analyticsResponse = z.object({
   total_tokens: z.number().nullable(),
   total_prompt_tokens: z.number().nullable(),
   total_completion_tokens: z.number().nullable(),
+  cost_estimate: z.number().min(0).nullable(),
   average_latency_ms: z.number().nullable(),
   maximum_latency_ms: z.number().nullable(),
   minimum_latency_ms: z.number().nullable(),

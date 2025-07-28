@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, jsonb, timestamp, numeric } from 'drizzle-orm/pg-core';
 import { uuidv7 } from 'uuidv7';
 
 
@@ -10,6 +10,7 @@ export const logs = pgTable('logs', {
   status: text('status').notNull(),
   prompt_tokens: integer('prompt_tokens'),
   completion_tokens: integer('completion_tokens'),
+  estimated_cost: numeric('estimated_cost', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
   response_time_ms: integer('response_time_ms'),
   object_reference: text('object_reference'),
   tags: jsonb('tags').$type<Record<string, unknown>>(),

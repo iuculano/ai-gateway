@@ -216,6 +216,11 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
       prompt_tokens: llmResponse.usage.promptTokens,
       completion_tokens: llmResponse.usage.completionTokens,
       total_tokens: llmResponse.usage.totalTokens,
+
+      // TODO: Try to cope with cached tokens?
+      // This might currently land as a bit more expensive than it is in
+      // actuality.
+      cost_estimate: (llmResponse.usage.promptTokens * model.info.cost_input) + (llmResponse.usage.completionTokens * model.info.cost_output),
     },
     response_time_ms: undefined,
   });

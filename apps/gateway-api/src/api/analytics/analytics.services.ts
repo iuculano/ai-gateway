@@ -43,6 +43,7 @@ async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResp
     total_tokens: sql<number>`SUM(${logs.prompt_tokens} + ${logs.completion_tokens})`.mapWith(Number),
     total_prompt_tokens: sum(logs.prompt_tokens).mapWith(Number),
     total_completion_tokens: sum(logs.completion_tokens).mapWith(Number),
+    cost_estimate: sum(logs.estimated_cost).mapWith(Number),
     average_latency_ms: sql<number>`ROUND(AVG(${logs.response_time_ms}))`.mapWith(Number),
     maximum_latency_ms: max(logs.response_time_ms).mapWith(Number),
     minimum_latency_ms: min(logs.response_time_ms).mapWith(Number),
