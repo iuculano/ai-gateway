@@ -25,7 +25,6 @@ app.openapi(Routes.readyz, async (c) => {
     db: await Services.checkPostgres(),
     db_tables: await Services.checkPostgresTables(tables),
     redis: await Services.checkRedis(),
-    nats: await Services.checkNats(),
   };
 
   const allHealthy = Object.values(checks).every(Boolean);

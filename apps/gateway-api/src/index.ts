@@ -13,7 +13,8 @@ import { requestLogger } from './middleware/request-logger';
 import { errorHandler } from './middleware/error-handler';
 
 
-const app = new OpenAPIHono();
+export const app = new OpenAPIHono();
+
 app.onError(errorHandler());
 app.use('*', secureHeaders());
 app.use('*', requestId());

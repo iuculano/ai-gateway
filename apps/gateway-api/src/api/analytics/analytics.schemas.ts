@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { normalizeTimestamp } from '../../utils/zod';
+import { normalizeTimestamp } from '@lib/zod';
 
 
 const analyticsRequest = z.object({

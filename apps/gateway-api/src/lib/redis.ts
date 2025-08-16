@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createClient } from 'redis';
-import { environment } from '../utils/environment';
+import { environment } from '@lib/environment';
 
 
 const redis = await createClient({

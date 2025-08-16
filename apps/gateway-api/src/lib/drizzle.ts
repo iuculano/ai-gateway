@@ -16,7 +16,7 @@ import {
   min,
   max,
 } from 'drizzle-orm';
-import { environment } from '../utils/environment';
+import { environment } from '@lib/environment';
 
 // This file formatting is ridiculous
 const db = drizzle(environment.POSTGRES_URL);

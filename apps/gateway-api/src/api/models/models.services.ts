@@ -1,7 +1,7 @@
 import { HTTPException } from 'hono/http-exception';
-import { db, and, eq, desc, lt } from '../../clients/drizzle';
-import { createCacheKey, redis } from '../../clients/redis';
-import { models } from '../../db/schema/models'
+import { db, and, eq, desc, lt } from '@lib/drizzle';
+import { createCacheKey, redis } from '@lib/redis';
+import { models } from '@db/schemas/models';
 import Schemas, {
   type GetModelResponse,
   type ListModelsRequest,

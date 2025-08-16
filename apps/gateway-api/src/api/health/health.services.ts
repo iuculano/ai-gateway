@@ -1,6 +1,5 @@
-import { db } from '../../clients/drizzle';
-import { nats } from '../../clients/nats';
-import { redis } from '../../clients/redis';
+import { db } from '@lib/drizzle';
+import { redis } from '@lib/redis';
 
 
 /**
@@ -36,19 +35,24 @@ async function checkPostgresTables(requiredTables: string[]): Promise<boolean> {
   try {
     requiredTables = requiredTables || [];
 
-    // Assume that the database connection is valid
+    // Assume that the database connection is valid and just grab the table
+    // names.
     const result = await db.execute(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
     );
 
-    const rows = result.map((row) => row.table_name);
+    const rows = result.map((row) => row.table_name as string);
     const allExists = requiredTables.every(table => rows.includes(table));
 
     return allExists;
   }
 
   catch {
-    return requiredTables.length === 0;
+    // If drizzle threw an exception, we probably have a connection issue and
+    // have failed the earlier checkPostgres() check.
+    //
+    // We can still just return false in this case.
+    return false;
   }
 }
 
@@ -69,26 +73,8 @@ async function checkRedis(): Promise<boolean> {
   }
 }
 
-/**
- * Checks the connectivity to the NATS server by flushing the connection.
- *
- * @returns
- * A promise that resolves to `true` if NATS is reachable, otherwise `false`.
- */
-async function checkNats(): Promise<boolean> {
-  try {
-    await nats.flush();
-    return true;
-  }
-
-  catch {
-    return false;
-  }
-}
-
 export default {
   checkPostgres,
   checkPostgresTables,
   checkRedis,
-  checkNats,
 }

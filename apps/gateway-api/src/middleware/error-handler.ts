@@ -2,7 +2,31 @@ import { type Context, type ValidationTargets,} from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from '@hono/zod-openapi';
 import { STATUS_CODES } from 'node:http';
-import logger from '../clients/pino';
+import logger from '@lib/pino';
+
+
+// Helper for bashing the 'cause' of an HTTPException into the shape we want.
+type DetailRecord = Record<string, unknown>;
+
+export function wrapCauseAsDetails(cause: unknown): DetailRecord[] | undefined {
+  let detail: DetailRecord;
+
+  if (cause && cause instanceof Error) {
+    detail = {
+      cause: cause.cause,
+    };
+
+    // Include the stack trace in development mode
+    if (process.env.NODE_ENV === 'development' && cause.stack) {
+      detail.stack = cause.stack;
+    }
+
+    return [detail];
+  }
+
+  return [];
+}
+
 
 
 // Just mimic what the OpenAPIHono does expects for the defaultHook
@@ -36,8 +60,8 @@ type ErrorHook = {
  * If validation fails with a ZodError.
  */
 export function zodExceptionHook(result: ErrorHook) {
+  // Propagate the error if it is a ZodError, we've failed validation somewhere
   if (!result.success && result.error instanceof z.ZodError) {
-    // If it's a ZodError, just pass it along as the cause
     throw new HTTPException(400, {
       message: result.error.message || 'Bad Request',
       cause: result.error,
@@ -64,16 +88,24 @@ export function errorHandler() {
       'method': c.req.method,
     });
 
+    let formattedError: HttpError;
+
     if (err instanceof HTTPException) {
-      // Check if Zod has raised an error, return its details
-      if (err.cause instanceof z.ZodError) {
-        return c.json(
-          {
-            error: 'Validation failed',
-            details: (err.cause as z.ZodError).errors, // Detailed Zod errors
+        formattedError = {
+          error: {
+            code: err.status,
+            status: STATUS_CODES[err.status] ?? 'Unknown',
+            message: err.message || 'An error occurred',
           },
-          err.status
-        );
+        };
+      
+      // zodExceptionHook() may have thrown the error - in which case it will
+      // set the ZodError as the cause
+      if (err.cause instanceof z.ZodError) {
+        formattedError.error.details = err.cause.errors.map(issue => ({
+          field: issue.path.join('.'),
+          issue: issue.message,
+        }));
       }
 
       // We probably raised the HTTPException ourselves - return the
@@ -81,15 +113,19 @@ export function errorHandler() {
       childLogger.error({
         'code  ': err.status,
         'status': STATUS_CODES[err.status],
-         ...(err.cause ? { cause: err.cause } as object : {}), // gross
+        //...(err.cause ? { cause: err.cause } as object : {}), // gross
       }, err.message || 'HTTP Exception');
 
-      return err.getResponse();
+      return c.json(formattedError, err.status);
     }
 
     // Log other errors as internal server errors, something raised in an
     // unexpected way
     childLogger?.error({ err }, 'Unhandled exception');
-    return c.json({ error: 'Internal Server Error' }, 500);
+    return c.json({ error: {
+      code: 500,
+      status: STATUS_CODES[500],
+      message: 'An unexpected error occurred',
+    }}, 500);
   };
 }

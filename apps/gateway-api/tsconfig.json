@@ -8,6 +8,7 @@
 
     "moduleResolution": "node10",
     "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
     "noEmit": true,
 
     "strict": true,
@@ -19,5 +20,14 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
+
+    "noErrorTruncation": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@db/*": ["src/db/*"],
+      "@lib/*": ["src/lib/*"],
+      "@middleware/*": ["src/middleware/*"]
+    },
   },
 }

@@ -1,5 +1,7 @@
-import { pino, type Logger, type LoggerOptions } from 'pino';
-import { environment } from '../utils/environment';
+// Pino seems to have some issues with ESM imports
+import pino from 'pino';
+import { type Logger, type LoggerOptions } from 'pino';
+import { environment } from '@lib/environment';
 
 let logger: Logger;
 

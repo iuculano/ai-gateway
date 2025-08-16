@@ -2,7 +2,7 @@ import { z } from '@hono/zod-openapi'
 
 
 const environmentSchema = z.object({
-  NODE_ENV: z.enum(['development', 'production']).default('development'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().regex(/^\d+$/).default('3000'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'trace']).default('info'),
 
@@ -16,7 +16,6 @@ const environmentSchema = z.object({
   REDIS_USERNAME: z.string().optional(),
   REDIS_DB: z.number().int().optional(),
 
-  // S3
   S3_ENDPOINT: z.string().url().optional(),
   S3_ACCESS_KEY: z.string().optional(),
   S3_SECRET_KEY: z.string().optional(),

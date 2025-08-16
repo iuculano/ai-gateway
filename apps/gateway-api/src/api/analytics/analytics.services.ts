@@ -1,6 +1,6 @@
-import { and, db, eq, gte, lte, max, min, sql, sum } from '../../clients/drizzle';
-import { createCacheKey, redis } from '../../clients/redis';
-import { logs } from '../../db/schema/logs';
+import { and, db, eq, gte, lte, max, min, sql, sum } from '@lib/drizzle';
+import { createCacheKey, redis } from '@lib/redis';
+import { logs } from '../../db/schemas/logs';
 import Schemas, {
   type AnalyticsRequest,
   type AnalyticsResponse,
@@ -16,14 +16,14 @@ import Schemas, {
  * @returns
  * A promise that resolves to the analytics response.
  */
-async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResponse> {
+async function queryAnalytics(request: AnalyticsRequest) : Promise<Result<AnalyticsResponse, HttpError>> {
   // Hash the payload to create a unique cache key for Redis
   const cacheKey = await createCacheKey('analytics:', request);
 
   // See if the data is already cached in Redis
   const cached = await redis.get(cacheKey);
   if (cached) {
-    return JSON.parse(cached);
+    return ok(JSON.parse(cached));
   }
 
   const conditions = [

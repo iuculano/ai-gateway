@@ -1,8 +1,8 @@
 import { S3Client } from 'bun';
-import { type ObjectStorageClient } from './object-storage';
+import { type ObjectStorageClient } from '@lib/object-storage';
 
 
-export interface S3ObjectStorageClientOptions {
+export interface BlobObjectStorageClientOptions {
   endpoint?: string;
   region?: string;
   bucket: string;
@@ -10,10 +10,10 @@ export interface S3ObjectStorageClientOptions {
   secretAccessKey?: string;
 }
 
-export class S3ObjectStorageClient implements ObjectStorageClient {
+export class BlobObjectStorageClient implements ObjectStorageClient {
   private s3: S3Client;
 
-  constructor(options: S3ObjectStorageClientOptions) {
+  constructor(options: BlobObjectStorageClientOptions) {
     this.s3 = new S3Client({
       region: options.region || 'us-east-1',
       endpoint: options.endpoint,

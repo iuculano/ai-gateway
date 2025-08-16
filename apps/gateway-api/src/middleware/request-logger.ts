@@ -3,7 +3,7 @@ import {
   type Next,
 } from 'hono';
 
-import logger from '../clients/pino';
+import logger from '@lib/pino';
 
 
 /**

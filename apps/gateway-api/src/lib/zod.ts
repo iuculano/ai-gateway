@@ -1,10 +1,6 @@
 /**
  * Normalizes a Postgres timestamp string to ISO 8601 format.
  *
- *
- *
- *
- *
  * @param input
  * The value to normalize. If not a string, it is returned unchanged.
  *

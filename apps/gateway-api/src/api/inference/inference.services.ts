@@ -9,8 +9,8 @@ import { createAzure } from '@ai-sdk/azure';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText, streamText, type LanguageModel } from 'ai';
 import { HTTPException } from 'hono/http-exception';
-import { createCacheKey } from '../../clients/redis';
-import { s3 } from '../../clients/s3';
+import { createCacheKey } from '@lib/redis';
+import { s3 } from '@lib/s3';
 import LogsService from '../logs/logs.services';
 import { type GetModelResponse } from '../models/models.schemas';
 

@@ -1,8 +1,8 @@
 import { HTTPException } from 'hono/http-exception';
-import { db, sql, and, eq, desc, lt } from '../../clients/drizzle';
-import { redis, createCacheKey } from '../../clients/redis';
-import { logs } from '../../db/schema/logs'
-import { s3 } from '../../clients/s3';
+import { db, sql, and, eq, desc, lt } from '@lib/drizzle';
+import { redis, createCacheKey } from '@lib/redis';
+import { logs } from '../../db/schemas/logs'
+import { s3 } from '@lib/s3';
 import Schemas, {
   type GetLogResponse,
   type GetLogDataResponse,
