@@ -57,6 +57,53 @@ async function getModel(id: string) : Promise<GetModelResponse> {
 }
 
 /**
+ * Retrieves a single model by its ID.
+ *
+ * @param id
+ * The ID of the model to retrieve.
+ *
+ * @returns
+ * A promise that resolves to the model data.
+ *
+ * @throws {HTTPException}
+ * If the model is not found or if multiple models are found.
+ */
+async function getModelBySlug(slug: string) : Promise<GetModelResponse> {
+  // If we have an invalid slug, just act like it doesn't exist
+  const split = slug.split('/');
+  if (split.length !== 2) {
+    throw new HTTPException(404);
+  }
+
+
+  const cacheKey = await createCacheKey('models:', slug);
+  const cached = await redis.get(cacheKey);
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
+  const result = await db.select()
+    .from(models)
+    .where(and(
+      eq(models.provider, split[0] as string), 
+      eq(models.name, split[1] as string),
+    ));
+
+  if (!result[0]) {
+    throw new HTTPException(404);
+  }
+
+  // I'm wondering if I even need to cache here - the query is very cheap.
+  // This endpoint is called on every inference, though, maybe worth it?
+  const parsed = Schemas.getModelResponse.parse(result[0]);
+  await redis.set(cacheKey, JSON.stringify(parsed), {
+    expiration: { type: 'EX', value: 15 }
+  });
+
+  return parsed;
+}
+
+/**
  * Retrieves a list of models, filtered by the given criteria..
  *
  * @param request
@@ -161,6 +208,7 @@ async function updateModel(id: string, request: UpdateModelRequest) : Promise<Up
 
 export default {
   getModel,
+  getModelBySlug,
   listModels,
   createModel,
   updateModel,
