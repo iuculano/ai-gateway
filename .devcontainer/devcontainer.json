@@ -16,7 +16,8 @@
 			"extensions": [
 				"oderwat.indent-rainbow",
 				"YoavBls.pretty-ts-errors",
-				"oven.bun-vscode"
+				"oven.bun-vscode",
+				"ms-azuretools.vscode-containers"
 			]
 		}
 	}
