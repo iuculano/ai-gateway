@@ -1,21 +1,20 @@
 import { z } from '@hono/zod-openapi';
-import { normalizeTimestamp } from '@lib/zod';
 
 
 const modelShape = z.object({
-  id: z.string().uuid(),
+  id: z.uuidv7(),
   name: z.string(),
   provider: z.string(),
-  cost_input: z.coerce.number(),
-  cost_output: z.coerce.number(),
-  config: z.record(z.string(), z.any()).optional().nullable(),
-  tags: z.record(z.string(), z.any()).optional().nullable(),
-  created_at: z.preprocess(normalizeTimestamp, z.iso.datetime().optional()),
-  updated_at: z.preprocess(normalizeTimestamp, z.iso.datetime().optional()),
+  cost_input: z.coerce.number().nonnegative(),
+  cost_output: z.coerce.number().nonnegative(),
+  config: z.record(z.string(), z.unknown()).optional(),
+  tags: z.record(z.string(), z.unknown()).optional(),
+  created_at: z.date().transform((date) => date.toISOString()),
+  updated_at: z.date().transform((date) => date.toISOString()),
 });
 
 const getModelRequest = z.object({
-  id: z.string().uuid(),
+  id: z.uuidv7(),
 });
 
 const getModelResponse = modelShape;
@@ -24,12 +23,12 @@ const listModelsRequest = z.object({
   name: z.string().optional(),
   provider: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-  after_id: z.string().uuid().optional(), // UUIDv7 cursor
+  after_id: z.uuidv7().optional(), // UUIDv7 cursor
 });
 
 const listModelsResponse = z.object({
   data: z.array(modelShape),
-  next: z.string().uuid().nullable().optional(),
+  next: z.uuidv7().nullable(),
 });
 
 const createModelRequest = modelShape.omit({ 

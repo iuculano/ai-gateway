@@ -1,6 +1,5 @@
 import { HTTPException } from 'hono/http-exception';
 import { db, and, eq, desc, lt } from '@lib/drizzle';
-import { createCacheKey, redis } from '@lib/redis';
 import { models } from '@db/schemas/models';
 import Schemas, {
   type GetModelResponse,
@@ -25,12 +24,6 @@ import Schemas, {
  * If the model is not found or if multiple models are found.
  */
 async function getModel(id: string) : Promise<GetModelResponse> {
-  const cacheKey = await createCacheKey('models:', id);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-
   const result = await db.select()
     .from(models)
     .where(eq(models.id, id));
@@ -39,20 +32,7 @@ async function getModel(id: string) : Promise<GetModelResponse> {
     throw new HTTPException(404);
   }
 
-  // Just in case someone manages to find a colliding UUID...
-  if (result.length > 1) {
-    throw new HTTPException(500, {
-      message: 'Returned more than one model for ID',
-    });
-  }
-
-  // I'm wondering if I even need to cache here - the query is very cheap.
-  // This endpoint is called on every inference, though, maybe worth it?
   const parsed = Schemas.getModelResponse.parse(result[0]);
-  await redis.set(cacheKey, JSON.stringify(parsed), {
-    expiration: { type: 'EX', value: 15 }
-  });
-
   return parsed;
 }
 
@@ -75,13 +55,6 @@ async function getModelBySlug(slug: string) : Promise<GetModelResponse> {
     throw new HTTPException(404);
   }
 
-
-  const cacheKey = await createCacheKey('models:', slug);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-
   const result = await db.select()
     .from(models)
     .where(and(
@@ -96,10 +69,6 @@ async function getModelBySlug(slug: string) : Promise<GetModelResponse> {
   // I'm wondering if I even need to cache here - the query is very cheap.
   // This endpoint is called on every inference, though, maybe worth it?
   const parsed = Schemas.getModelResponse.parse(result[0]);
-  await redis.set(cacheKey, JSON.stringify(parsed), {
-    expiration: { type: 'EX', value: 15 }
-  });
-
   return parsed;
 }
 
@@ -116,12 +85,6 @@ async function getModelBySlug(slug: string) : Promise<GetModelResponse> {
  * If the model is not found or if multiple models are found.
  */
 async function listModels(request: ListModelsRequest) : Promise<ListModelsResponse> {
-  const cacheKey = await createCacheKey('models:', request);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-
   const conditions = [
     request.name     ? eq(models.name, request.name) : undefined,
     request.provider ? eq(models.provider, request.provider) : undefined,
@@ -141,10 +104,6 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
     : null;
 
   const parsed = Schemas.listModelsResponse.parse({ data: result, next: nextCursor });
-  await redis.set(cacheKey, JSON.stringify(parsed), {
-    expiration: { type: 'EX', value: 30 },
-  });
-
   return parsed;
 }
 
@@ -196,10 +155,9 @@ async function updateModel(id: string, request: UpdateModelRequest) : Promise<Up
     .where(eq(models.id, id))
     .returning();
 
+  // Almost guaranteed that the model doesn't exist.
   if (!result[0]) {
-    throw new HTTPException(500, {
-      message: 'Failed to update model',
-    });
+    throw new HTTPException(404);
   }
 
   const parsed = Schemas.updateModelResponse.parse(result[0]);
