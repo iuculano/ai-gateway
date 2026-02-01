@@ -287,7 +287,7 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
     response_time_ms: (responseTimestampEnd - responseTimestampStart),
   }
 
-  completeLog(log, request, response)
+  await completeLog(log, request, response)
   return response;
 }
 
