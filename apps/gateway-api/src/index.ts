@@ -20,7 +20,7 @@ app.use('*', secureHeaders());
 app.use('*', requestId());
 app.use('*', requestLogger());
 
-app.doc('/open-api.json', {
+app.doc31('/open-api.json', {
   openapi: '3.1.0',
   info: {
     version: '1.0.0',

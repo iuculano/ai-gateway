@@ -12,3 +12,7 @@ export const httpError = z.object({
 }).strict();
 
 export type HttpError = z.infer<typeof httpError>;
+
+export default {
+  httpError,
+};

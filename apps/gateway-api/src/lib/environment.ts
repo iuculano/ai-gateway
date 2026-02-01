@@ -3,10 +3,10 @@ import { z } from '@hono/zod-openapi'
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().regex(/^\d+$/).default('3000'),
+  PORT: z.string().regex(/^\d+$/).default('8080'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'trace']).default('info'),
 
-  POSTGRES_URL: z.string().url().default('postgresql://localhost:5432'),
+  POSTGRES_ENDPOINT: z.string().default('localhost:5432'),
   POSTGRES_DATABASE: z.string().default('ai_gateway'),
   POSTGRES_USERNAME: z.string().default('postgres'),
   POSTGRES_PASSWORD: z.string().default('postgres'),

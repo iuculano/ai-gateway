@@ -1,4 +1,4 @@
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { drizzle } from 'drizzle-orm/bun-sql';
 import {
   sql,
   gte,
@@ -19,7 +19,7 @@ import {
 import { environment } from '@lib/environment';
 
 // This file formatting is ridiculous
-const db = drizzle(environment.POSTGRES_URL);
+const db = drizzle(`postgres://${environment.POSTGRES_USERNAME}:${environment.POSTGRES_PASSWORD}@${environment.POSTGRES_ENDPOINT}/${environment.POSTGRES_DATABASE}`);
 
 export {
   db,
