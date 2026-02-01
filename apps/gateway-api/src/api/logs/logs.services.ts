@@ -71,18 +71,18 @@ async function getLog(id: string) : Promise<GetLogResponse> {
  * If the log is not found or if multiple logs are found.
  */
 async function getLogData(id: string): Promise<GetLogDataResponse> {
-  const cacheKey = await createCacheKey('logs-data:', id);
+  const cacheKey = await createCacheKey('logs:', id);
   const cached = await redis.get(cacheKey);
   if (cached) {
     return JSON.parse(cached);
   }
 
   const key = `/v1/logs/${id}.json.gz`;
-  const buffer = await s3.file(key).arrayBuffer();
+  const buffer = await s3.file(key).bytes();
 
-  const decompressed = Bun.gunzipSync(new Uint8Array(buffer));
+  const decompressed = Bun.gunzipSync(buffer);
   const jsonString = Buffer.from(decompressed).toString('utf8');
-  await redis.set(cacheKey, JSON.stringify(jsonString), {
+  await redis.set(cacheKey, jsonString, {
     expiration: { type: 'EX', value: 60 * 15 }
   });
 
