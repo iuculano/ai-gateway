@@ -177,7 +177,9 @@ async function completeLog(id: string, request: InferenceRequest, response: Infe
     status: 'complete',
     input_tokens: response.usage.input_tokens,
     output_tokens: response.usage.output_tokens,
-    estimated_cost: response.usage.estimated_cost,
+    input_cost: response.usage.input_cost,
+    output_cost: response.usage.output_cost,
+    response_time_ms: response.response_time_ms,
     object_reference: `/v1/logs/${id}.json.gz`,
   });
 }
@@ -277,12 +279,11 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
     throw new HTTPException(500);
   }
 
-  let estimatedCost = 0;
+  let inputCost = 0;
+  let outputCost = 0;
   if (llmResponse.usage && (llmResponse.usage.inputTokens && llmResponse.usage.outputTokens)) {
-    const input = llmResponse.usage.inputTokens * (callableModel.info.cost_input / 1000000);
-    const output = llmResponse.usage.outputTokens * (callableModel.info.cost_output / 1000000);
-
-    estimatedCost = input + output;
+    inputCost = llmResponse.usage.inputTokens * (callableModel.info.cost_input / 1000000);
+    outputCost = llmResponse.usage.outputTokens * (callableModel.info.cost_output / 1000000);
   }
 
   const response: InferenceResponse = {
@@ -294,8 +295,8 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
     usage: {
       input_tokens: llmResponse.usage.inputTokens ?? 0,
       output_tokens: llmResponse.usage.outputTokens ?? 0,
-      total_tokens: llmResponse.usage.totalTokens ?? 0,
-      estimated_cost: estimatedCost,
+      input_cost: inputCost,
+      output_cost: outputCost,
     },
     response_time_ms: (responseTimestampEnd - responseTimestampStart),
   }
@@ -338,6 +339,13 @@ async function callModelStreaming(headers: InferenceHeaders, request: InferenceR
 
     // Log callback
     onFinish: async (result) => {
+      let inputCost = 0;
+      let outputCost = 0;
+      if (result.usage && (result.usage.inputTokens && result.usage.outputTokens)) {
+        inputCost = result.usage.inputTokens * (callableModel.info.cost_input / 1000000);
+        outputCost = result.usage.outputTokens * (callableModel.info.cost_output / 1000000);
+      }
+
       await completeLog(log, request, {
         id: log,
         model: callableModel.info.name,
@@ -347,7 +355,8 @@ async function callModelStreaming(headers: InferenceHeaders, request: InferenceR
         usage: {
           input_tokens: result.usage.inputTokens ?? 0,
           output_tokens: result.usage.outputTokens ?? 0,
-          total_tokens: result.usage.totalTokens ?? 0,
+          input_cost: inputCost,
+          output_cost: outputCost,
         },
         response_time_ms: undefined,
       });

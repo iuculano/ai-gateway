@@ -63,8 +63,8 @@ const inferenceResponse = z.object({
   usage: z.object({
     input_tokens: z.number(),
     output_tokens: z.number(),
-    total_tokens: z.number(),
-    estimated_cost: z.number().min(0).optional(),
+    input_cost: z.number().min(0).optional(),
+    output_cost: z.number().min(0).optional(),
   }),
   response_time_ms: z.number().optional(),
 });
