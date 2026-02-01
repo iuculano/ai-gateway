@@ -8,7 +8,8 @@ const logShape = z.object({
   status: z.string(),
   input_tokens: z.number().optional().nullable(),
   output_tokens: z.number().optional().nullable(),
-  estimated_cost: z.number().optional(),
+  input_cost: z.number().optional(),
+  output_cost: z.number().optional(),
   response_time_ms: z.number().optional().nullable(),
   object_reference: z.string().optional().nullable(), // Reference to the object in the provider's system
   tags: z.record(z.string(), z.any()).optional().nullable(),

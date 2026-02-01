@@ -27,8 +27,8 @@ async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResp
   }
 
   const conditions = [
-    request.start_date ? gte(logs.created_at, request.start_date) : undefined,
-    request.end_date   ? lte(logs.created_at, request.end_date) : undefined,
+    request.start_date ? gte(logs.created_at, new Date(request.start_date)) : undefined,
+    request.end_date   ? lte(logs.created_at, new Date(request.end_date)) : undefined,
     request.model      ? eq(logs.model, request.model) : undefined,
     request.provider   ? eq(logs.provider, request.provider) : undefined,
     request.status     ? eq(logs.status, request.status) : undefined,
@@ -37,16 +37,30 @@ async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResp
 
 
   const query = db.select({
-    total_logs: sql<number>`COUNT (*)`.mapWith(Number),
+    total_logs: sql<number>`COUNT(*)`.mapWith(Number),
     successful_logs: sql<number>`COUNT(*) FILTER (WHERE ${logs.status} = 'success')`.mapWith(Number),
     error_logs: sql<number>`COUNT(*) FILTER (WHERE ${logs.status} != 'success')`.mapWith(Number),
-    total_tokens: sql<number>`SUM(${logs.prompt_tokens} + ${logs.completion_tokens})`.mapWith(Number),
-    total_prompt_tokens: sum(logs.prompt_tokens).mapWith(Number),
-    total_completion_tokens: sum(logs.completion_tokens).mapWith(Number),
-    cost_estimate: sum(logs.estimated_cost).mapWith(Number),
+
+    total_tokens: sql<number>`COALESCE(SUM(${logs.input_tokens}), 0) + COALESCE(SUM(${logs.output_tokens}), 0)`.mapWith(Number),
+    total_input_tokens: sql<number>`COALESCE(SUM(${logs.input_tokens}), 0)`.mapWith(Number),
+    total_output_tokens: sql<number>`COALESCE(SUM(${logs.output_tokens}), 0)`.mapWith(Number),
+
+    average_input_tokens: sql<number>`ROUND(AVG(${logs.input_tokens}))`.mapWith(Number),
+    average_output_tokens: sql<number>`ROUND(AVG(${logs.output_tokens}))`.mapWith(Number),
+
+    average_output_tokens_per_second: sql<number>`ROUND(AVG(${logs.output_tokens}::numeric / NULLIF(${logs.response_time_ms}, 0) * 1000), 2)`.mapWith(Number),
+
+    cost_total: sum(logs.estimated_cost).mapWith(Number),
+    cost_input: sql<number>`0`.mapWith(Number),  // Not tracked separately in logs table
+    cost_output: sql<number>`0`.mapWith(Number), // Not tracked separately in logs table
+
     average_latency_ms: sql<number>`ROUND(AVG(${logs.response_time_ms}))`.mapWith(Number),
     maximum_latency_ms: max(logs.response_time_ms).mapWith(Number),
     minimum_latency_ms: min(logs.response_time_ms).mapWith(Number),
+
+    p50_latency_ms: sql<number>`PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY ${logs.response_time_ms})`.mapWith(Number),
+    p95_latency_ms: sql<number>`PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ${logs.response_time_ms})`.mapWith(Number),
+    p99_latency_ms: sql<number>`PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ${logs.response_time_ms})`.mapWith(Number),
   }).from(logs);
 
   const data = (await (conditions.length > 0
