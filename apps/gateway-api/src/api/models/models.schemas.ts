@@ -10,8 +10,8 @@ const modelShape = z.object({
   cost_output: z.coerce.number(),
   config: z.record(z.string(), z.any()).optional().nullable(),
   tags: z.record(z.string(), z.any()).optional().nullable(),
-  created_at: z.preprocess(normalizeTimestamp, z.string().datetime().optional()),
-  updated_at: z.preprocess(normalizeTimestamp, z.string().datetime().optional()),
+  created_at: z.preprocess(normalizeTimestamp, z.iso.datetime().optional()),
+  updated_at: z.preprocess(normalizeTimestamp, z.iso.datetime().optional()),
 });
 
 const getModelRequest = z.object({

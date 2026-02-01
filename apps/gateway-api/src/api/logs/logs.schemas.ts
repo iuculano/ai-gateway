@@ -3,7 +3,7 @@ import { normalizeTimestamp } from '@lib/zod';
 
 
 const logShape = z.object({
-  id: z.string().uuid(),
+  id: z.uuidv7(),
   model: z.string(),
   provider: z.string(),
   status: z.string(),
@@ -17,7 +17,7 @@ const logShape = z.object({
 });
 
 const getLogRequest = z.object({
-  id: z.string().uuid(),
+  id: z.uuidv7(),
 });
 
 const getLogResponse = logShape;
@@ -25,7 +25,7 @@ const getLogResponse = logShape;
 // Be careful of this, it's duplicated from inference.schemas.ts
 const getLogDataResponse = z.object({
   request: z.object({
-    model_id: z.string().uuid(),
+    model_id: z.string().uuidv7(),
     messages: z.array(z.object({
       role: z.enum(['user', 'assistant']),
       content: z.string(),
