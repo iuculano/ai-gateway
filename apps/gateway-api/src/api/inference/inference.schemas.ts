@@ -54,7 +54,7 @@ const inferenceRequest = z.union([
 ]);
 
 const inferenceResponse = z.object({
-  id: z.string().uuid(),
+  id: z.uuidv7(),
   model: z.string(),
   provider: z.string(),
   text: z.string(),
