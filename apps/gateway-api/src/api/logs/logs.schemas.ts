@@ -25,7 +25,7 @@ const getLogResponse = logShape;
 // Be careful of this, it's duplicated from inference.schemas.ts
 const getLogDataResponse = z.object({
   request: z.object({
-    model_id: z.string().uuidv7(),
+    model_id: z.uuidv7(),
     messages: z.array(z.object({
       role: z.enum(['user', 'assistant']),
       content: z.string(),
@@ -37,7 +37,7 @@ const getLogDataResponse = z.object({
   }),
 
   response: z.object({
-    id: z.string().uuid(),
+    id: z.uuidv7(),
     text: z.string(),
     reasoning: z.string().optional(),
     sources: z.array(z.string()).optional(),
@@ -57,14 +57,14 @@ const listLogsRequest = z.object({
   status: z.string().optional(),
   tags: z.record(z.string(), z.any()).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-  after_id: z.string().uuid().optional(), // UUIDv7 cursor
+  after_id: z.uuidv7().optional(), // UUIDv7 cursor
 });
 
 const listLogsResponse = z.object({
   data: z.array(logShape.omit({
     object_reference: true, // Internal
   })),
-  next: z.string().uuid().nullable().optional(),
+  next: z.uuidv7().nullable().optional(),
 });
 
 const createLogRequest = logShape.omit({
