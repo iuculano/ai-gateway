@@ -175,8 +175,9 @@ async function completeLog(id: string, request: InferenceRequest, response: Infe
 
   await LogsService.updateLog(id, {
     status: 'complete',
-    prompt_tokens: response.usage.input_tokens,
-    completion_tokens: response.usage.output_tokens,
+    input_tokens: response.usage.input_tokens,
+    output_tokens: response.usage.output_tokens,
+    estimated_cost: response.usage.estimated_cost,
     object_reference: `/v1/logs/${id}.json.gz`,
   });
 }
@@ -276,6 +277,14 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
     throw new HTTPException(500);
   }
 
+  let estimatedCost = 0;
+  if (llmResponse.usage && (llmResponse.usage.inputTokens && llmResponse.usage.outputTokens)) {
+    const input = llmResponse.usage.inputTokens * (callableModel.info.cost_input / 1000000);
+    const output = llmResponse.usage.outputTokens * (callableModel.info.cost_output / 1000000);
+
+    estimatedCost = input + output;
+  }
+
   const response: InferenceResponse = {
     id: log,
     model: callableModel.info.name,
@@ -286,6 +295,7 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
       input_tokens: llmResponse.usage.inputTokens ?? 0,
       output_tokens: llmResponse.usage.outputTokens ?? 0,
       total_tokens: llmResponse.usage.totalTokens ?? 0,
+      estimated_cost: estimatedCost,
     },
     response_time_ms: (responseTimestampEnd - responseTimestampStart),
   }
