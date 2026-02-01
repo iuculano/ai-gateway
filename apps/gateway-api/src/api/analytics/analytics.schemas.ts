@@ -3,12 +3,12 @@ import { normalizeTimestamp } from '@lib/zod';
 
 
 const analyticsRequest = z.object({
-  start_date: z.preprocess(normalizeTimestamp, z.string().datetime().optional()),
-  end_date: z.preprocess(normalizeTimestamp, z.string().datetime().optional()),
+  start_date: z.preprocess(normalizeTimestamp, z.iso.datetime().optional()),
+  end_date: z.preprocess(normalizeTimestamp, z.iso.datetime().optional()),
   model: z.string().optional(),
   provider: z.string().optional(),
   status: z.string().optional(),
-  tags: z.record(z.any()).optional(),
+  tags: z.record(z.string(),z.any()).optional(),
 });
 
 const analyticsResponse = z.object({
