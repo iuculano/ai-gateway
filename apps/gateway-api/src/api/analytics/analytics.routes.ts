@@ -17,7 +17,7 @@ const postAnalytics = createRoute({
   },
   responses: {
     200: {
-      description: 'Sucessful analytics query',
+      description: 'Successful analytics query',
       content: {
         'application/json': {
           schema: Schemas.analyticsResponse,
