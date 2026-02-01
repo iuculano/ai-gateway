@@ -50,9 +50,9 @@ async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResp
 
     average_output_tokens_per_second: sql<number>`ROUND(AVG(${logs.output_tokens}::numeric / NULLIF(${logs.response_time_ms}, 0) * 1000), 2)`.mapWith(Number),
 
-    cost_total: sum(logs.estimated_cost).mapWith(Number),
-    cost_input: sql<number>`0`.mapWith(Number),  // Not tracked separately in logs table
-    cost_output: sql<number>`0`.mapWith(Number), // Not tracked separately in logs table
+    cost_total: sql<number>`COALESCE(SUM(${logs.input_cost}), 0) + COALESCE(SUM(${logs.output_cost}), 0)`.mapWith(Number),
+    cost_input: sum(logs.input_cost).mapWith(Number),
+    cost_output: sum(logs.output_cost).mapWith(Number),
 
     average_latency_ms: sql<number>`ROUND(AVG(${logs.response_time_ms}))`.mapWith(Number),
     maximum_latency_ms: max(logs.response_time_ms).mapWith(Number),
