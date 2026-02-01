@@ -28,12 +28,6 @@ import Schemas, {
  * If the log is not found or if multiple logs are found.
  */
 async function getLog(id: string) : Promise<GetLogResponse> {
-  const cacheKey = await createCacheKey('logs:', id);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-
   const result = await db.select()
     .from(logs)
     .where(eq(logs.id, id));
@@ -42,18 +36,7 @@ async function getLog(id: string) : Promise<GetLogResponse> {
     throw new HTTPException(404);
   }
 
-  // Just in case someone manages to find a colliding UUID...
-  if (result.length > 1) {
-    throw new HTTPException(500, {
-      message: 'Returned more than one model for ID',
-    });
-  }
-
   const parsed = Schemas.getLogResponse.parse(result[0]);
-  await redis.set(cacheKey, JSON.stringify(parsed), {
-    expiration: { type: 'EX', value: 60 }
-  });
-
   return parsed;
 }
 
@@ -99,13 +82,7 @@ async function getLogData(id: string): Promise<GetLogDataResponse> {
  * A promise that resolves to the log data.
  */
 async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
-  const cacheKey = await createCacheKey('logs:', request);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-
-  const conditions = [
+    const conditions = [
     request.model    ? eq(logs.model, request.model) : undefined,
     request.provider ? eq(logs.provider, request.provider) : undefined,
     request.status   ? eq(logs.status, request.status) : undefined,
@@ -126,10 +103,7 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
       ? result[result.length - 1]?.id ?? null
       : null;
 
-  // Write through to Redis cache
   const parsed = Schemas.listLogsResponse.parse({ data: result, next: nextCursor });
-  await redis.set(cacheKey, JSON.stringify(parsed), { EX: 60 });
-
   return parsed;
 }
 
