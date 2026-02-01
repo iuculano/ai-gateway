@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from '@hono/zod-openapi';
 import { STATUS_CODES } from 'node:http';
 import logger from '@lib/pino';
+import type { HttpError } from '@lib/errors';
 
 
 // Helper for bashing the 'cause' of an HTTPException into the shape we want.
@@ -102,7 +103,9 @@ export function errorHandler() {
       // zodExceptionHook() may have thrown the error - in which case it will
       // set the ZodError as the cause
       if (err.cause instanceof z.ZodError) {
-        formattedError.error.details = err.cause.errors.map(issue => ({
+        formattedError.error.message = 'An error occurred';
+
+        formattedError.error.details = err.cause.issues.map(issue => ({
           field: issue.path.join('.'),
           issue: issue.message,
         }));
