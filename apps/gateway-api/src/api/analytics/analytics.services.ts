@@ -16,14 +16,14 @@ import Schemas, {
  * @returns
  * A promise that resolves to the analytics response.
  */
-async function queryAnalytics(request: AnalyticsRequest) : Promise<Result<AnalyticsResponse, HttpError>> {
+async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResponse> {
   // Hash the payload to create a unique cache key for Redis
   const cacheKey = await createCacheKey('analytics:', request);
 
   // See if the data is already cached in Redis
   const cached = await redis.get(cacheKey);
   if (cached) {
-    return ok(JSON.parse(cached));
+    return JSON.parse(cached);
   }
 
   const conditions = [
