@@ -27,7 +27,7 @@ app.openapi(Routes.listLogs, async (c) => {
   return c.json(result, 200);
 });
 
-// Privleged
+// Privileged
 //
 // app.openapi(Routes.createLog, async (c) => {
 //   const json = c.req.valid('json');
