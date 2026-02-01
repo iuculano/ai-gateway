@@ -2,7 +2,9 @@ import ModelService from '../models/models.services';
 import Schemas, {
   type InferenceHeaders,
   type InferenceRequest,
+  type InferenceRequestSimple,
   type InferenceResponse,
+  type InferenceStrategy,
 } from './inference.schemas';
 import { LRUCache } from 'lru-cache';
 import { createAzure } from '@ai-sdk/azure';
@@ -16,6 +18,7 @@ import { type GetModelResponse } from '../models/models.schemas';
 
 
 
+// In-memory cache for instantiated model instances.
 const providerCache = new LRUCache<string, LanguageModel>({
   max: 100,
   ttl: 1000 * 60 * 60, // 1 hour
@@ -29,29 +32,32 @@ interface CallableModel {
 };
 
 /**
- * Gets a representation of a callable model.
+ * Gets an instance of a callable model.
  *
- * @param response
- * The response from the model to validate.
+ * @param model
+ * The model name/identifier to retrieve.
+ * 
+ * @param apiKey
+ * The API key to use for the model provider.
+ * 
+ * @param baseUrl
+ * Optional base URL for the model provider API.
  *
  * @returns
  * A promise that resolves if the response is valid, or throws an error if not.
  */
-async function getCallableModel(modelId: string, apiKey: string, baseUrl?: string): Promise<CallableModel> {
-  // Try to find a registered model - this returns information on the model
-  // such as cost. It does not return the actual LanguageModel instance.
-  const model = await ModelService.getModel(modelId);
-
-  if (!model) {
-    throw new HTTPException(422, {
-      cause: `Model with ID ${modelId} not found`,
-    });
+async function getCallableModel(model: string, apiKey: string, baseUrl?: string): Promise<CallableModel> {
+  // Try to find a registered model first - as in a model that exists in our
+  // database.
+  const registeredModel = await ModelService.getModelBySlug(model);
+  if (!registeredModel) {
+    throw new HTTPException(404);
   }
 
-  // Try to find an instantiated model instance in the cache.
+  // Try to find an instantiated callable model instance in the cache.
   // Note that this is a local, in-memory cache - not Redis.
   const cacheKey = await createCacheKey('inference:', {
-    modelId: modelId,
+    model: model,
     apiKey: apiKey,
     baseUrl: baseUrl ?? null,
   });
@@ -62,39 +68,29 @@ async function getCallableModel(modelId: string, apiKey: string, baseUrl?: strin
   let instance = providerCache.get(cacheKey);
   if (!instance) {
     let factory;
-    switch(model.provider) {
+    switch(registeredModel.provider) {
       case 'openai':
-        factory = createOpenAI({
-          apiKey: apiKey,
-          baseURL: baseUrl,
-          compatibility: 'strict',
-        });
-
-        instance = factory(model.name);
+        factory = createOpenAI({ apiKey: apiKey, baseURL: baseUrl });
+        instance = factory(registeredModel.name);
         break;
 
       case 'azure':
-        factory = createAzure({
-          apiKey: apiKey,
-          baseURL: baseUrl,
-        });
-
-        instance = factory(model.name);
+        factory = createAzure({ apiKey: apiKey, baseURL: baseUrl });
+        instance = factory(registeredModel.name);
         break;
 
       default:
         throw new HTTPException(400, {
-          message: `Unsupported model provider: ${model.provider}`,
+          message: `Unsupported model provider: ${registeredModel.provider}`,
         });
     }
   }
 
-  // Should have a valid LanguageModel instance now. If we already had one, this
-  // will be a no-op.
+  // Should have a valid LanguageModel instance now.
   providerCache.set(cacheKey, instance);
 
   const modelInfo: CallableModel = {
-    info: model,
+    info: registeredModel,
     instance: instance,
   };
 
@@ -104,10 +100,10 @@ async function getCallableModel(modelId: string, apiKey: string, baseUrl?: strin
 /**
  * Creates a new log entry for an inference request.
  *
- * @param modelName
+ * @param model
  * The name of the model being used.
  *
- * @param modelProvider
+ * @param provider
  * The provider of the model (e.g., 'openai', 'azure').
  *
  * @param status
@@ -115,10 +111,10 @@ async function getCallableModel(modelId: string, apiKey: string, baseUrl?: strin
  *
  * @returns A promise that resolves to the ID of the created log entry.
  */
-async function startLog(modelName: string, modelProvider: string, status?: string) : Promise<string> {
+async function startLog(model: string, provider: string, status?: string) : Promise<string> {
   const log = await LogsService.createLog({
-    model: modelName,
-    provider: modelProvider,
+    model: model,
+    provider: provider,
     status: status || 'incomplete',
   });
 
@@ -126,12 +122,30 @@ async function startLog(modelName: string, modelProvider: string, status?: strin
 }
 
 /**
- * Completes a log entry for an inference request by storing the request and
- * response data in object storage (compressed), and updating the log status and
- * metadata.
+ * Updates a log entry for an inference request.
  *
- * @param logId
- * The ID of the log entry to complete.
+ * @param id
+ * The id of the log entry to update.
+ *
+ * @param status
+ * Status for the log entry.
+ *
+ * @returns A promise that resolves to the ID of the created log entry.
+ */
+async function updateLog(id: string, status: string) : Promise<void> {
+  await LogsService.updateLog(id, {
+    status: status,
+  });
+}
+
+/**
+ * Completes a log entry for an inference request.
+ * 
+ * This compresses and writes the request and response to storage, and then
+ * updates the log entry to mark it as complete.
+ *
+ * @param id
+ * The id of the log entry to complete.
  *
  * @param request
  * The original inference request object.
@@ -143,7 +157,7 @@ async function startLog(modelName: string, modelProvider: string, status?: strin
  * A promise that resolves when the log entry has been updated and the data
  * stored.
  */
-async function completeLog(logId: string, request: InferenceRequest, response: InferenceResponse) : Promise<void> {
+async function completeLog(id: string, request: InferenceRequest, response: InferenceResponse) : Promise<void> {
   // The actual object data that will be written to object storage. This is
   // currently pretty naive and doesn't do anything like batching into a bigger
   // object.
@@ -156,15 +170,178 @@ async function completeLog(logId: string, request: InferenceRequest, response: I
   const data = Buffer.from(JSON.stringify(objectData));
   const compressed = Bun.gzipSync(data);
 
-  const s3Key = `/v1/logs/${logId}.json.gz`;
+  const s3Key = `/v1/logs/${id}.json.gz`;
   s3.file(s3Key).write(compressed);
 
-  await LogsService.updateLog(logId, {
+  await LogsService.updateLog(id, {
     status: 'complete',
-    prompt_tokens: response.usage.prompt_tokens,
-    completion_tokens: response.usage.completion_tokens,
-    object_reference: `/v1/logs/${logId}.json.gz`,
+    prompt_tokens: response.usage.input_tokens,
+    completion_tokens: response.usage.output_tokens,
+    object_reference: `/v1/logs/${id}.json.gz`,
   });
+}
+
+/**
+ * Helper function to pick a model based on weighted strategy.
+ *
+ * @param strategy
+ * The inference strategy containing model targets and their weights.
+ *
+ * @returns
+ * A promise that resolves to the selected model name.
+ */
+async function pickWeightedModel(strategy: InferenceStrategy) : Promise<string> {
+  // Say Math.random() * 100 generates 72.5.
+  // 
+  // Iteration 1 (Model A - Weight 50)
+  // 72.5 < 50 == False
+  // 
+  // Iteration 2 (Model B - Weight 30)
+  // 72.5 < 80 == True
+  // 
+  // In other words, the number fell within the 50 to 80 range.
+  const random = Math.random() * 100;
+  let cumulative = 0;
+
+  for (const target of strategy.targets) {
+    cumulative += target.weight || 0;
+    if (random < cumulative) {
+      return target.model;
+    }
+  }
+
+  // Just a failsafe in case of fudged math/weights.
+  if (strategy.targets[0]) {
+    return strategy.targets[0].model;
+  }
+
+  // Shouldn't ever get here, but stop TypeScript complaining.
+  throw new HTTPException(500);
+}
+
+/**
+ * Non-streaming call to a model.
+ *
+ * @param headers
+ * The headers containing authentication and configuration for the model
+ * provider.
+ *
+ * @param request
+ * The inference request payload.
+ *
+ * @returns
+ * A promise that resolves to the inference response.
+ */
+async function callModel(headers: InferenceHeaders, request: InferenceRequestSimple): Promise<InferenceResponse> {
+  const callableModel = await getCallableModel(
+    request.model,
+    headers['ai-api-key'],
+    headers['ai-base-url'],
+  );
+
+  const log = await startLog(callableModel.info.name, callableModel.info.provider);
+
+  let llmResponse;
+  let responseTimestampStart = 0;
+  let responseTimestampEnd = 0;
+
+  try {
+    responseTimestampStart = performance.now();
+
+    llmResponse = await generateText({
+      model: callableModel.instance,
+      messages: request.messages,
+      ...(request.parameters?.max_output_tokens ? { maxTokens: request.parameters.max_output_tokens } : {}),
+      ...(request.parameters?.max_retries ? { maxRetries: request.parameters.max_retries } : {}),
+      ...(request.parameters?.system_prompt ? { system: request.parameters.system_prompt } : {}),
+      ...(request.parameters?.temperature ? { temperature: request.parameters.temperature } : {}),
+      ...(request.parameters?.top_p ? { topP: request.parameters.top_p } : {}),
+      ...(request.parameters?.top_k ? { topK: request.parameters.top_k } : {}),
+    });
+
+    responseTimestampEnd = performance.now();
+  }
+
+  catch {
+    // Just eat the error, we deal with it below so we don't need to
+    // do type narrowing.
+  }
+
+  if (!llmResponse) {
+    // Failed, try the next model in the list.
+    await updateLog(log, 'failed');
+    throw new HTTPException(500);
+  }
+
+  const response: InferenceResponse = {
+    id: log,
+    model: callableModel.info.name,
+    provider: callableModel.info.provider,
+    text: llmResponse.text,
+    reasoning: llmResponse.reasoningText,
+    usage: {
+      input_tokens: llmResponse.usage.inputTokens ?? 0,
+      output_tokens: llmResponse.usage.outputTokens ?? 0,
+      total_tokens: llmResponse.usage.totalTokens ?? 0,
+    },
+    response_time_ms: (responseTimestampEnd - responseTimestampStart),
+  }
+
+  completeLog(log, request, response)
+  return response;
+}
+
+/**
+ * Sstreaming call to a model.
+ *
+ * @param headers
+ * The headers containing authentication and configuration for the model
+ * provider.
+ *
+ * @param request
+ * The inference request payload.
+ *
+ * @returns
+ * A promise that resolves to the streaming response from the model provider.
+ */
+async function callModelStreaming(headers: InferenceHeaders, request: InferenceRequestSimple): Promise<AsyncIterable<string>> {
+  const callableModel = await getCallableModel(
+    request.model,
+    headers['ai-api-key'],
+    headers['ai-base-url']
+  );
+
+  const log = await startLog(callableModel.info.name, callableModel.info.provider);
+
+  const stream = await streamText({
+    model: callableModel.instance,
+    messages: request.messages,
+    ...(request.parameters?.max_output_tokens ? { maxTokens: request.parameters.max_output_tokens } : {}),
+    ...(request.parameters?.max_retries ? { maxRetries: request.parameters.max_retries } : {}),
+    ...(request.parameters?.system_prompt ? { system: request.parameters.system_prompt } : {}),
+    ...(request.parameters?.temperature ? { temperature: request.parameters.temperature } : {}),
+    ...(request.parameters?.top_p ? { topP: request.parameters.top_p } : {}),
+    ...(request.parameters?.top_k ? { topK: request.parameters.top_k } : {}),
+
+    // Log callback
+    onFinish: async (result) => {
+      await completeLog(log, request, {
+        id: log,
+        model: callableModel.info.name,
+        provider: callableModel.info.provider,
+        text: result.text,
+        reasoning: result.reasoningText,
+        usage: {
+          input_tokens: result.usage.inputTokens ?? 0,
+          output_tokens: result.usage.outputTokens ?? 0,
+          total_tokens: result.usage.totalTokens ?? 0,
+        },
+        response_time_ms: undefined,
+      });
+    }
+  });
+
+  return stream.textStream as AsyncIterable<string>;
 }
 
 /**
@@ -183,51 +360,88 @@ async function completeLog(logId: string, request: InferenceRequest, response: I
  * If the model is not found, the provider is unsupported, or inference fails.
  */
 async function submitInference(headers: InferenceHeaders, request: InferenceRequest): Promise<InferenceResponse> {
-  const model = await getCallableModel(
-    request.model_id,
-    headers['ai-api-key'],
-    headers['ai-base-url']
-  );
+  // Simple inference type.
+  if ('model' in request) {    
+    return await callModel(headers, request);
+  }
 
-  // Start a log entry for this inference request.
-  const logId = await startLog(model.info.name, model.info.provider);
+  // Only other shape is complex.
+  if (request.strategy.mode === 'fallback') {
+    let llmResponse: InferenceResponse;
 
-  const llmResponse = await generateText({
-    model: model.instance,
-    messages: request.messages,
-    ...(request.temperature ? { temperature: request.temperature } : {}),
-    ...(request.top_p ? { topP: request.top_p } : {}),
-    ...(request.max_tokens ? { maxTokens: request.max_tokens } : {}),
-  });
+    for (const target of request.strategy.targets) {
+      try {
+        llmResponse = await callModel(headers, {
+          model: target.model,
+          parameters: target.parameters,
+          messages: request.messages,
+        });
+        
+        return llmResponse;
+      }
 
-  // TODO add better error handling here.
-  if (!llmResponse) {
+      catch {
+        // Eat the exception and try the next model.
+        continue;
+      }
+    }
+    
     throw new HTTPException(500, {
-      message: 'Failed to generate response from model',
+      message: 'All models, including fallbacks, failed',
     });
   }
 
-  const response = Schemas.inferenceResponse.parse({
-    id: logId,
-    text: llmResponse.text,
-    reasoning: llmResponse.reasoning,
-    sources: llmResponse.sources,
-    usage: {
-      prompt_tokens: llmResponse.usage.promptTokens,
-      completion_tokens: llmResponse.usage.completionTokens,
-      total_tokens: llmResponse.usage.totalTokens,
+  if (request.strategy.mode === 'weighted') {
+    const selectedModel = await pickWeightedModel(request.strategy);
 
-      // TODO: Try to cope with cached tokens?
-      // This might currently land as a bit more expensive than it is in
-      // actuality.
-      cost_estimate: (llmResponse.usage.promptTokens * model.info.cost_input) + (llmResponse.usage.completionTokens * model.info.cost_output),
-    },
-    response_time_ms: undefined,
+    return await callModel(headers, {
+      model: selectedModel,
+      messages: request.messages,
+    });
+  }
+
+  if (request.strategy.mode === 'shadowed') {
+    const primaryTarget = request.strategy.targets[0];
+    const shadowTargets = request.strategy.targets.slice(1);
+
+    if (!primaryTarget) {
+      throw new HTTPException(400, {
+        message: 'No primary model specified for shadowed strategy',
+      });
+    }
+
+    const primaryPromise = callModel(headers, {
+      model: primaryTarget.model,
+      parameters: primaryTarget.parameters,
+      messages: request.messages,      
+    });
+
+
+    // Start shadow calls but don't await them yet.
+    const shadowPromises = shadowTargets.map(async (target) => {
+      try {
+        await callModel(headers, {
+          model: target.model,
+          parameters: target.parameters,
+          messages: request.messages,
+        });
+      } 
+      
+      catch {
+        // Just eat errors from shadow models.
+      }
+    });
+
+    Promise.all(shadowPromises);
+
+    const response = await primaryPromise; 
+    return response;
+  }
+
+  throw new HTTPException(500, {
+    message: 'Unknown inference failure',
   });
-
-  await completeLog(logId, request, response);
-  return response;
-};
+}
 
 /**
  * Submits an inference request to a language model provider and returns a
@@ -238,51 +452,86 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
  * provider.
  *
  * @param request
- * The inference request payload, including model ID and prompt details.
+ * The inference request payload.
  *
  * @returns
  * A promise that resolves to the streaming response from the model provider.
- *
- * @remarks
- * This function also logs the inference request and response, and stores the
- * log data upon completion.
  */
 async function submitInferenceStreaming(headers: InferenceHeaders, request: InferenceRequest): Promise<AsyncIterable<string>> {
-  const model = await getCallableModel(
-    request.model_id,
-    headers['ai-api-key'],
-    headers['ai-base-url']
-  );
+  // Simple inference type.
+  if ('model' in request) {
+    return await callModelStreaming(headers, request);
+  }
 
-    // Start a log entry for this inference request.
-  const logId = await startLog(model.info.name, model.info.provider);
+  // Only other shape is complex.
+  if (request.strategy.mode === 'fallback') {
+    for (const target of request.strategy.targets) {
+      try {
+        return await callModelStreaming(headers, {
+          model: target.model,
+          parameters: target.parameters,
+          messages: request.messages,
+        });
+      }
 
-  const stream = await streamText({
-    model: model.instance,
-    messages: request.messages,
-    ...(request.temperature ? { temperature: request.temperature } : {}),
-    ...(request.top_p ? { topP: request.top_p } : {}),
-    ...(request.max_tokens ? { maxTokens: request.max_tokens } : {}),
+      catch {
+        // Eat the exception and try the next model.
+        continue;
+      }
+    }
 
-    // Log callback
-    onFinish: async (result) => {
-      await completeLog(logId, request, {
-        id: logId,
-        text: result.text,
-        reasoning: result.reasoning,
-        sources: undefined,
-        usage: {
-          prompt_tokens: result.usage.promptTokens,
-          completion_tokens: result.usage.completionTokens,
-          total_tokens: result.usage.totalTokens,
-        },
-        response_time_ms: undefined,
+    throw new HTTPException(500, {
+      message: 'All models, including fallbacks, failed',
+    });
+  }
+
+  if (request.strategy.mode === 'weighted') {
+    const selectedModel = await pickWeightedModel(request.strategy);
+
+    return await callModelStreaming(headers, {
+      model: selectedModel,
+      messages: request.messages,
+    });
+  }
+
+  if (request.strategy.mode === 'shadowed') {
+    const primaryTarget = request.strategy.targets[0];
+    const shadowTargets = request.strategy.targets.slice(1);
+
+    if (!primaryTarget) {
+      throw new HTTPException(400, {
+        message: 'No primary model specified for shadowed strategy',
       });
     }
-  });
 
-  return stream.textStream as AsyncIterable<string>;
-};
+    // Start shadow calls but don't await them (fire-and-forget for streaming).
+    const shadowPromises = shadowTargets.map(async (target) => {
+      try {
+        await callModel(headers, {
+          model: target.model,
+          parameters: target.parameters,
+          messages: request.messages,
+        });
+      }
+
+      catch {
+        // Just eat errors from shadow models.
+      }
+    });
+
+    Promise.all(shadowPromises);
+
+    return await callModelStreaming(headers, {
+      model: primaryTarget.model,
+      parameters: primaryTarget.parameters,
+      messages: request.messages,
+    });
+  }
+
+  throw new HTTPException(500, {
+    message: 'Unknown inference failure',
+  });
+}
 
 export default {
   submitInference,
