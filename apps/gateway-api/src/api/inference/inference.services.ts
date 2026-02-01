@@ -171,7 +171,7 @@ async function completeLog(id: string, request: InferenceRequest, response: Infe
   const compressed = Bun.gzipSync(data);
 
   const s3Key = `/v1/logs/${id}.json.gz`;
-  s3.file(s3Key).write(compressed);
+  await s3.file(s3Key).write(compressed);
 
   await LogsService.updateLog(id, {
     status: 'complete',
@@ -191,6 +191,9 @@ async function completeLog(id: string, request: InferenceRequest, response: Infe
  * A promise that resolves to the selected model name.
  */
 async function pickWeightedModel(strategy: InferenceStrategy) : Promise<string> {
+  // Don't assume 100 total weight, sum up the weights.
+  const totalWeight = strategy.targets.reduce((sum, target) => sum + (target.weight || 0), 0);
+
   // Say Math.random() * 100 generates 72.5.
   // 
   // Iteration 1 (Model A - Weight 50)
@@ -200,7 +203,7 @@ async function pickWeightedModel(strategy: InferenceStrategy) : Promise<string> 
   // 72.5 < 80 == True
   // 
   // In other words, the number fell within the 50 to 80 range.
-  const random = Math.random() * 100;
+  const random = Math.random() * totalWeight;
   let cumulative = 0;
 
   for (const target of strategy.targets) {
