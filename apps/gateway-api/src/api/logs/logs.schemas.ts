@@ -1,19 +1,19 @@
 import { z } from '@hono/zod-openapi';
-import { normalizeTimestamp } from '@lib/zod';
-
+import InferenceSchemas from '../inference/inference.schemas';
 
 const logShape = z.object({
   id: z.uuidv7(),
   model: z.string(),
   provider: z.string(),
   status: z.string(),
-  prompt_tokens: z.number().optional().nullable(),
-  completion_tokens: z.number().optional().nullable(),
+  input_tokens: z.number().optional().nullable(),
+  output_tokens: z.number().optional().nullable(),
+  estimated_cost: z.number().optional(),
   response_time_ms: z.number().optional().nullable(),
   object_reference: z.string().optional().nullable(), // Reference to the object in the provider's system
   tags: z.record(z.string(), z.any()).optional().nullable(),
-  created_at: z.preprocess(normalizeTimestamp, z.string().datetime().optional()),
-  updated_at: z.preprocess(normalizeTimestamp, z.string().datetime().optional()),
+  created_at: z.date().transform((date) => date.toISOString()),
+  updated_at: z.date().transform((date) => date.toISOString()),
 });
 
 const getLogRequest = z.object({
@@ -23,33 +23,7 @@ const getLogRequest = z.object({
 const getLogResponse = logShape;
 
 // Be careful of this, it's duplicated from inference.schemas.ts
-const getLogDataResponse = z.object({
-  request: z.object({
-    model_id: z.uuidv7(),
-    messages: z.array(z.object({
-      role: z.enum(['user', 'assistant']),
-      content: z.string(),
-    })),
-    temperature: z.number().min(0).max(2).optional(),
-    top_p: z.number().min(0).max(1).optional(),
-    max_tokens: z.number().int().positive().optional(),
-    stream: z.boolean().optional().default(false),
-  }),
-
-  response: z.object({
-    id: z.uuidv7(),
-    text: z.string(),
-    reasoning: z.string().optional(),
-    sources: z.array(z.string()).optional(),
-    usage: z.object({
-      prompt_tokens: z.number(),
-      completion_tokens: z.number(),
-      total_tokens: z.number(),
-    }),
-    response_time_ms: z.number().optional(),
-  }),
-});
-
+const getLogDataResponse = InferenceSchemas.inferenceObjectData;
 
 const listLogsRequest = z.object({
   model: z.string().optional(),
