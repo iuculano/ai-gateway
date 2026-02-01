@@ -3,7 +3,7 @@ import { z } from '@hono/zod-openapi';
 
 const inferenceHeaders = z.object({
   'ai-api-key': z.string(),
-  'ai-base-url': z.string().url().optional(),
+  'ai-base-url': z.url().optional(),
 
   // Unused for now.
   'ai-cache-skip': z.boolean().optional(),
@@ -64,7 +64,7 @@ const inferenceResponse = z.object({
     input_tokens: z.number(),
     output_tokens: z.number(),
     total_tokens: z.number(),
-    cost_estimate: z.number().min(0).optional(),
+    estimated_cost: z.number().min(0).optional(),
   }),
   response_time_ms: z.number().optional(),
 });
