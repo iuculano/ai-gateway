@@ -1,6 +1,5 @@
-import { pgTable, uuid, text, numeric, jsonb, timestamp, check } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, numeric, jsonb, timestamp } from 'drizzle-orm/pg-core';
 import { uuidv7 } from 'uuidv7';
-import { sql } from 'drizzle-orm';
 
 
   // Originally, this was used because a provider exclusively held the base url...
@@ -19,12 +18,10 @@ export const models = pgTable('models', {
   id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
   name: text('name').notNull(), // e.g., 'gpt-4-turbo'
   provider: text('provider').notNull(),
-  cost_input: numeric('cost_input', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
-  cost_output: numeric('cost_output', { precision: 10, scale: 4 }).$type<number>().notNull().default(0),
+  cost_input: numeric('cost_input', { precision: 20, scale: 12 }).$type<number>().notNull().default(0),
+  cost_output: numeric('cost_output', { precision: 20, scale: 12 }).$type<number>().notNull().default(0),
   config: jsonb('config').$type<Record<string, unknown>>().default({}),
   tags: jsonb('tags').$type<Record<string, unknown>>().default({}),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  check("provider_check", sql`${table.provider} IN ('openai', 'anthropic', 'azure', 'local')`),
-]);
+});
