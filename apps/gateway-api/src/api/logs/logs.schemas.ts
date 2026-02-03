@@ -30,9 +30,9 @@ const listLogsRequest = z.object({
   model: z.string().optional(),
   provider: z.string().optional(),
   status: z.string().optional(),
-  tags: z.record(z.string(), z.any()).optional(),
+  tags: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-  after_id: z.uuidv7().optional(), // UUIDv7 cursor
+  after_id: z.uuidv7().optional(),  // UUIDv7 cursor
 });
 
 const listLogsResponse = z.object({

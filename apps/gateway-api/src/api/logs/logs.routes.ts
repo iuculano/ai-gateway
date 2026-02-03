@@ -10,7 +10,7 @@ const getLog = createRoute({
   },
   responses: {
     200: {
-      description: 'Logs retrieved successfully',
+      description: 'Log retrieved successfully',
       content: {
         'application/json': {
           schema: Schemas.getLogResponse,
@@ -28,7 +28,7 @@ const getLogData = createRoute({
   },
   responses: {
     200: {
-      description: 'Logs retrieved successfully',
+      description: 'Log data retrieved successfully',
       content: {
         'application/json': {
           schema: Schemas.getLogDataResponse,
@@ -97,7 +97,7 @@ const updateLog = createRoute({
   },
   responses: {
     200: {
-      description: 'Logs retrieved successfully',
+      description: 'Log updated successfully',
       content: {
         'application/json': {
           schema: Schemas.getLogResponse,

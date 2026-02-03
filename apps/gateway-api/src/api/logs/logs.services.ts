@@ -82,11 +82,27 @@ async function getLogData(id: string): Promise<GetLogDataResponse> {
  * A promise that resolves to the log data.
  */
 async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
-    const conditions = [
+  // Parse tags from comma-separated string into an object.
+  // Expected format is "key1:value1,key2:value2"
+  const tagsToFilter: Record<string, string> = {};
+
+  if (request.tags) {
+    const pairs = request.tags.split(',');
+
+    for (const pair of pairs) {
+      const [key, value] = pair.split(':');
+
+      if (key && value) {
+        tagsToFilter[key] = value;
+      }
+    }
+  }
+
+  const conditions = [
     request.model    ? eq(logs.model, request.model) : undefined,
     request.provider ? eq(logs.provider, request.provider) : undefined,
     request.status   ? eq(logs.status, request.status) : undefined,
-    request.tags     ? sql`${logs.tags} @> ${JSON.stringify(request.tags)}` : undefined,
+    request.tags     ? sql`${logs.tags} @> ${tagsToFilter}::jsonb` : undefined,
     request.after_id ? lt(logs.id, request.after_id) : undefined,
   ].filter(x => x !== undefined);
 
