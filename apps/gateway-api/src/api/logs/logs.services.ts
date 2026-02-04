@@ -1,5 +1,5 @@
 import { HTTPException } from 'hono/http-exception';
-import { db, sql, and, eq, desc, lt } from '@lib/drizzle';
+import { db, sql, and, eq, desc, lt, asc, gt } from '@lib/drizzle';
 import { redis, createCacheKey } from '@lib/redis';
 import { logs } from '../../db/schemas/logs'
 import { s3 } from '@lib/s3';
@@ -99,27 +99,66 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
   }
 
   const conditions = [
-    request.model    ? eq(logs.model, request.model) : undefined,
-    request.provider ? eq(logs.provider, request.provider) : undefined,
-    request.status   ? eq(logs.status, request.status) : undefined,
-    request.tags     ? sql`${logs.tags} @> ${tagsToFilter}::jsonb` : undefined,
-    request.after_id ? lt(logs.id, request.after_id) : undefined,
+    request.model     ? eq(logs.model, request.model) : undefined,
+    request.provider  ? eq(logs.provider, request.provider) : undefined,
+    request.status    ? eq(logs.status, request.status) : undefined,
+    request.tags      ? sql`${logs.tags} @> ${tagsToFilter}::jsonb` : undefined,
+    request.after_id  ? lt(logs.id, request.after_id) : undefined,
+    request.before_id ? gt(logs.id, request.before_id) : undefined,
   ].filter(x => x !== undefined);
 
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
+  // Say id 20 is the newest log, id 1 is the oldest.
+  //
+  // Query (after_id):         WHERE id < 15 ORDER BY id DESC LIMIT 3
+  // Query returns:            [14, 13, 12] (Correct neighbors)
+  // API reversed and returns: [14, 13, 12] (Nothing to change)
+  // 
+  // Query (before_id):        WHERE id > 15 ORDER BY id ASC LIMIT 3
+  // Query returns:            [16, 17, 18] (Correct neighbors)
+  // API reversed and returns: [18, 17, 16] (Reversed in code)
+  // 
+  // Query (before_id):        WHERE id > 15 ORDER BY id DESC LIMIT 3
+  // Query returns:            [20, 19, 18] (Starts from newest in DB)
+  // API reversed and returns: [20, 19, 18] (Results in a gap)
+  //
+  // TLDR: 
+  // Need to order ASC when using before_id to get correct neighbors then
+  // reverse after in code.
+  const orderByClause = request.before_id ? 
+    asc(logs.id) : 
+    desc(logs.id);
+
   const result = await db.select()
     .from(logs)
     .where(whereClause)
-    .orderBy(desc(logs.id))
-    .limit(request.limit);
+    .orderBy(orderByClause)
+    .limit(request.limit + 1); // Fetch one extra to determine if there's more.
 
-  const nextCursor =
-    result.length === request.limit
-      ? result[result.length - 1]?.id ?? null
-      : null;
+  const hasMoreData = result.length > request.limit;
+  if (hasMoreData) {
+    // Burn off the extra record.
+    result.pop();
+  }
 
-  const parsed = Schemas.listLogsResponse.parse({ data: result, next: nextCursor });
+  // Order is messed up for before_id, need to reverse it back.
+  if (request.before_id) {
+    result.reverse();
+  }
+
+  const newestId = result[0]?.id ?? null;
+  const oldestId = result[result.length - 1]?.id ?? null;
+
+  const parsed = Schemas.listLogsResponse.parse({
+    data: result,
+    meta: {
+      newest_id: newestId,
+      oldest_id: oldestId,
+      more_data: hasMoreData,
+    },
+  });
+
   return parsed;
 }
 

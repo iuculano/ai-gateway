@@ -32,6 +32,7 @@ const listLogsRequest = z.object({
   status: z.string().optional(),
   tags: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  before_id: z.uuidv7().optional(), // UUIDv7 cursor
   after_id: z.uuidv7().optional(),  // UUIDv7 cursor
 });
 
@@ -39,7 +40,11 @@ const listLogsResponse = z.object({
   data: z.array(logShape.omit({
     object_reference: true, // Internal
   })),
-  next: z.uuidv7().nullable().optional(),
+  meta: z.object({
+    oldest_id: z.uuidv7().nullable(),
+    newest_id: z.uuidv7().nullable(),
+    more_data: z.boolean()
+  })
 });
 
 const createLogRequest = logShape.omit({
