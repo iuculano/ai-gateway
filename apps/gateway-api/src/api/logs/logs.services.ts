@@ -13,6 +13,7 @@ import Schemas, {
   type UpdateLogRequest,
   type UpdateLogResponse,
 } from './logs.schemas';
+import { parseTags } from '@lib/utils';
 
 
 /**
@@ -23,9 +24,6 @@ import Schemas, {
  *
  * @returns
  * A promise that resolves to the log data.
- *
- * @throws {HTTPException}
- * If the log is not found or if multiple logs are found.
  */
 async function getLog(id: string) : Promise<GetLogResponse> {
   const result = await db.select()
@@ -49,9 +47,6 @@ async function getLog(id: string) : Promise<GetLogResponse> {
  *
  * @returns
  * A promise that resolves to the log data.
- *
- * @throws {HTTPException}
- * If the log is not found or if multiple logs are found.
  */
 async function getLogData(id: string): Promise<GetLogDataResponse> {
   const cacheKey = await createCacheKey('logs:', id);
@@ -84,19 +79,7 @@ async function getLogData(id: string): Promise<GetLogDataResponse> {
 async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
   // Parse tags from comma-separated string into an object.
   // Expected format is "key1:value1,key2:value2"
-  const tagsToFilter: Record<string, string> = {};
-
-  if (request.tags) {
-    const pairs = request.tags.split(',');
-
-    for (const pair of pairs) {
-      const [key, value] = pair.split(':');
-
-      if (key && value) {
-        tagsToFilter[key] = value;
-      }
-    }
-  }
+  const tagsToFilter = parseTags(request.tags);
 
   const conditions = [
     request.model     ? eq(logs.model, request.model) : undefined,
@@ -105,7 +88,7 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
     request.tags      ? sql`${logs.tags} @> ${tagsToFilter}::jsonb` : undefined,
     request.after_id  ? lt(logs.id, request.after_id) : undefined,
     request.before_id ? gt(logs.id, request.before_id) : undefined,
-  ].filter(x => x !== undefined);
+  ];
 
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
