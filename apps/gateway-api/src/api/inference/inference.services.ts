@@ -329,6 +329,11 @@ async function callModelStreaming(headers: InferenceHeaders, request: InferenceR
 
   const log = await startLog(callableModel.info.name, callableModel.info.provider);
 
+  let responseTimestampStart = 0;
+  let responseTimestampEnd = 0;
+
+  responseTimestampStart = performance.now();
+
   const stream = await streamText({
     model: callableModel.instance,
     messages: request.messages,
@@ -341,6 +346,9 @@ async function callModelStreaming(headers: InferenceHeaders, request: InferenceR
 
     // Log callback
     onFinish: async (result) => {
+      // Immediately capture end timestamp.
+      responseTimestampEnd = performance.now();
+
       let inputCost = 0;
       let outputCost = 0;
       if (result.usage && (result.usage.inputTokens && result.usage.outputTokens)) {
@@ -360,7 +368,7 @@ async function callModelStreaming(headers: InferenceHeaders, request: InferenceR
           input_cost: inputCost,
           output_cost: outputCost,
         },
-        response_time_ms: undefined,
+        response_time_ms: responseTimestampEnd - responseTimestampStart,
       });
     }
   });
