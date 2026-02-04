@@ -51,7 +51,9 @@ async function getCallableModel(model: string, apiKey: string, baseUrl?: string)
   // database.
   const registeredModel = await ModelService.getModelBySlug(model);
   if (!registeredModel) {
-    throw new HTTPException(404);
+    throw new HTTPException(404, {
+      message: `Model not found: ${model}`,
+    });
   }
 
   // Try to find an instantiated callable model instance in the cache.
