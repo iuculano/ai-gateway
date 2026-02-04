@@ -7,7 +7,7 @@ const analyticsRequest = z.object({
   model: z.string().optional(),
   provider: z.string().optional(),
   status: z.string().optional(),
-  tags: z.record(z.string(), z.any()).optional(),
+  tags: z.string().optional(),
 });
 
 const analyticsResponse = z.object({
