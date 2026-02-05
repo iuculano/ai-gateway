@@ -50,9 +50,9 @@ async function getLog(id: string) : Promise<GetLogResponse> {
  */
 async function getLogData(id: string): Promise<GetLogDataResponse> {
   const cacheKey = await createCacheKey('logs:', id);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
+  const existing = await redis.get(cacheKey);
+  if (existing) {
+    return JSON.parse(existing);
   }
 
   const key = `/v1/logs/${id}.json.gz`;
