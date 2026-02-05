@@ -20,9 +20,9 @@ import { parseTags } from '@lib/utils';
 async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResponse> {
   // This is a relatively expensive query!
   const cacheKey = await createCacheKey('analytics:', request);
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
+  const existing = await redis.get(cacheKey);
+  if (existing) {
+    return JSON.parse(existing);
   }
 
   const tagsToFilter = parseTags(request.tags);
