@@ -4,10 +4,20 @@ import { z } from '@hono/zod-openapi';
 const inferenceHeaders = z.object({
   'ai-api-key': z.string(),
   'ai-base-url': z.url().optional(),
+  'ai-rate-limit-policy': z.string().optional(),
+  'ai-log-skip': z.boolean().optional(),
+  'ai-log-omit-response': z.boolean().optional(),
+  'ai-log-omit-request': z.boolean().optional(),
+  'ai-max-retries': z.number().int().optional(),
+  'ai-timeout-ms': z.number().int().optional(),
 
-  // Unused for now.
-  'ai-cache-skip': z.boolean().optional(),
-  'ai-cache-ttl': z.number().optional(),
+  // // Unused for now. AI SDK currently has no abstraction over moderations.
+  // // Will build my own later.
+  // 'ai-moderations-enabled': z.boolean().optional(),
+  //
+  // // Unused for now. Unsupported.
+  // 'ai-cache-skip': z.boolean().optional(),
+  // 'ai-cache-ttl': z.number().optional(),
 });
 
 const inferenceModelParameters = z.object({

@@ -1,8 +1,11 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { streamSSE } from 'hono/streaming';
+import { getConnInfo } from 'hono/bun'
+import { enforceRateLimit, parseRateLimitHeader } from '@lib/rate-limiter';
+import { HTTPException } from 'hono/http-exception';
 import Routes from './inference.routes';
 import Services from './inference.services';
 import { zodExceptionHook } from '../../middleware/error-handler';
-import { streamSSE } from 'hono/streaming';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
@@ -10,6 +13,33 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 app.openapi(Routes.postInference, async (c) => {
   const headers = c.req.valid('header');
   const json = c.req.valid('json');
+
+  if (headers['ai-rate-limit-policy']) {
+    // We can technically rate limit by anything unique but currently just
+    // support the client IP address.
+    //
+    // Maybe supporting API keys or user IDs will be useful in the future?
+    const key = getConnInfo(c).remote.address;
+    if (!key) {
+      throw new HTTPException(503, {
+        message: 'Unable to determine client IP for rate limiting',
+      });
+    }
+
+    // Bash the header into an object describing the rate limit config.
+    // Generally, this should never fail because the header is validated...
+    const config = await parseRateLimitHeader(headers['ai-rate-limit-policy']);
+    if (!config) {
+      throw new HTTPException(400, {
+        message: 'Malformed rate limit policy header format',
+      });
+    }
+
+    await enforceRateLimit(
+      key,
+      config
+    );
+  }
 
   if (!json.stream) {
     const result = await Services.submitInference(headers, json);
