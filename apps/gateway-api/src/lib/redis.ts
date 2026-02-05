@@ -33,8 +33,13 @@ interface JsonArray extends Array<JsonValue> {}
  * @returns
  * A promise that resolves to the generated cache key string.
  */
-async function createCacheKey(prefix: string, data: JsonValue): Promise<string> {
-  return prefix + createHash('sha1').update(JSON.stringify(data)).digest('hex');
+async function createCacheKey(prefix: string, data: unknown): Promise<string> {
+  const json = JSON.stringify(data);
+  if (json === undefined) {
+    throw new Error('Cache key data is not JSON-serializable');
+  }
+
+  return prefix + createHash('sha1').update(json).digest('hex');
 }
 
 export {
