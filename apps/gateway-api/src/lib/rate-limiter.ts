@@ -1,4 +1,4 @@
-import { RateLimiterRedis } from 'rate-limiter-flexible';
+import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import { LRUCache } from "lru-cache";
 import { createCacheKey, redis } from "@lib/redis";
 
@@ -16,6 +16,7 @@ interface RateLimitPolicy {
 }
 
 interface RateLimitResult {
+  isLimited: boolean;
   consumedQuota: number;
   remainingQuota: number;
   secondsUntilReset: number;
@@ -33,6 +34,7 @@ async function getRateLimiter(policy: RateLimitPolicy) {
     keyPrefix: 'rate-limiter',
     points: policy.quota,
     duration: policy.windowSeconds,
+    useRedisPackage: true,
   });
 
   limiterCache.set(cacheKey, limiter);
@@ -41,13 +43,35 @@ async function getRateLimiter(policy: RateLimitPolicy) {
 
 export async function enforceRateLimit(key: string, policy: RateLimitPolicy): Promise<RateLimitResult> {
   const limiter = await getRateLimiter(policy);
-  const remaining = await limiter.consume(key, 1);
+
+  let isLimited = false;
+  let response;
+  try {
+    response = await limiter.consume(key, 1);
+  } 
+  
+  catch (err) {
+    // Try to figure out if we're limited, or something is actually wrong.
+    //
+    // If we're rate limited, seems like the promise will reject and we'll
+    // get a RateLimiterRes object.
+    //
+    // Asumme if we don't get that, something else is wrong - let the error
+    // handler eat it.
+    if (!(err instanceof RateLimiterRes)) {
+      throw err;
+    }
+
+    isLimited = true;
+    response = err;
+  }
 
   // We always consume by 1, so it's fine to use consumedPoints directly here.
   return {
-    consumedQuota: remaining.consumedPoints,
-    remainingQuota: remaining.remainingPoints,
-    secondsUntilReset: Math.ceil(remaining.msBeforeNext / 1000),
+    isLimited: isLimited,
+    consumedQuota: response.consumedPoints,
+    remainingQuota: response.remainingPoints,
+    secondsUntilReset: Math.ceil(response.msBeforeNext / 1000),
   }
 }
 

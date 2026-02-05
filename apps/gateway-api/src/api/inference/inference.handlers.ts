@@ -35,10 +35,27 @@ app.openapi(Routes.postInference, async (c) => {
       });
     }
 
-    await enforceRateLimit(
+    const result = await enforceRateLimit(
       key,
       config
     );
+
+    // Set both the standard and legacy rate limit headers.
+    // The X- headers still seem wildly more common...
+    c.res.headers.append('RateLimit-Limit', result.consumedQuota.toString());
+    c.res.headers.append('RateLimit-Remaining', result.remainingQuota.toString());
+    c.res.headers.append('RateLimit-Reset', result.secondsUntilReset.toString());
+    c.res.headers.append('X-RateLimit-Limit', result.consumedQuota.toString());
+    c.res.headers.append('X-RateLimit-Remaining', result.remainingQuota.toString());
+    c.res.headers.append('X-RateLimit-Reset', result.secondsUntilReset.toString());
+
+    if (result.isLimited) {
+      c.res.headers.append('Retry-After', result.secondsUntilReset.toString());
+
+      throw new HTTPException(429, {
+        message: `Rate limit exceeded. Try again in ${result.secondsUntilReset} seconds.`,
+      });
+    }
   }
 
   if (!json.stream) {
