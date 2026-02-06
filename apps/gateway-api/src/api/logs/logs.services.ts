@@ -41,7 +41,7 @@ async function getLog(id: string) : Promise<GetLogResponse> {
 
 /**
  * Retrieves the input and output data for a log entry - effectively the
- * "payload" of the inference request and response.
+ * "data" of the inference request and response.
  *
  * @param request
  * The request object containing the filter criteria.
@@ -147,7 +147,7 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
 }
 
 /**
- * Creates a new log entry in the database.
+ * Creates a new log.
  *
  * @param request
  * The request object containing the log data to be created.
@@ -165,7 +165,7 @@ async function createLog(request: CreateLogRequest) : Promise<CreateLogResponse>
 }
 
 /**
- * Updates an existing log entry in the database.
+ * Updates an existing log.
  *
  * @param id
  * The ID of the log to update.
@@ -191,7 +191,7 @@ async function updateLog(id: string, payload: UpdateLogRequest) : Promise<Update
 }
 
 /**
- * Deletes an existing log entry in the database.
+ * Deletes an existing log.
  *
  * @param id
  * The ID of the log to delete.

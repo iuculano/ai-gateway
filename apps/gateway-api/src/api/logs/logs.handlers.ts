@@ -8,7 +8,7 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
 /**
  * GET /logs/:id
- * Controller to handle specific log requests.
+ * Controller to handle retrieving a specific log.
  *
  * @returns
  * - 200 on success.
@@ -22,7 +22,7 @@ app.openapi(Routes.getLog, async (c) => {
 
 /**
  * GET /logs/:id/data
- * Controller to handle specific log data requests.
+ * Controller to handle retrieving specific log data.
  *
  * @returns
  * - 200 on success.
@@ -36,7 +36,7 @@ app.openapi(Routes.getLogData, async (c) => {
 
 /**
  * GET /logs
- * Controller to handle log requests.
+ * Controller to handle retrieving a list of logs.
  *
  * @returns
  * - 200 on success.
@@ -50,7 +50,7 @@ app.openapi(Routes.listLogs, async (c) => {
 
 /**
  * POST /logs
- * Controller to handle log creation requests.
+ * Controller to handle creating a new log.
  *
  * @returns
  * - 201 on success.
@@ -64,7 +64,7 @@ app.openapi(Routes.createLog, async (c) => {
 
 /**
  * PATCH /logs/:id
- * Controller to handle log update requests.
+ * Controller to handle updating an existing log.
  *
  * @returns
  * - 200 on success.
@@ -75,6 +75,20 @@ app.openapi(Routes.updateLog, async (c) => {
   const result = await Service.updateLog(params.id, json);  
 
   return c.json(result, 200);
+});
+
+/**
+ * DELETE /logs/:id
+ * Controller to handle deletion of an existing log.
+ *
+ * @returns
+ * - 204 on success.
+ */
+app.openapi(Routes.deleteLog, async (c) => {
+  const params = c.req.valid('param');
+  await Service.deleteLog(params.id);  
+
+  return c.body(null, 204);
 });
 
 export default app;

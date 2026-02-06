@@ -107,10 +107,33 @@ const updateLog = createRoute({
   },
 });
 
+const deleteLog = createRoute({
+  method: 'delete' as const,
+  path: '/logs/:id',
+  request: {
+    params: Schemas.getLogRequest,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.updateLogRequest,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Log deleted successfully',
+    },
+  },
+});
+
+
 export default {
   getLog,
   getLogData,
   listLogs,
   createLog,
   updateLog,
+  deleteLog,
 }
