@@ -89,9 +89,31 @@ const updateModel = createRoute({
   },
 });
 
+const deleteModel = createRoute({
+  method: 'delete' as const,
+  path: '/models/:id',
+  request: {
+    params: Schemas.deleteModelRequest,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.updateModelRequest,
+        },
+      },
+    },
+  },
+  responses: {
+    204: {
+      description: 'Model deleted successfully',
+    },
+  },
+});
+
 export default {
   getModel,
   listModels,
   createModel,
   updateModel,
-}
+  deleteModel,
+};

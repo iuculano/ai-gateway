@@ -47,6 +47,12 @@ const updateModelRequest = modelShape.partial().omit({
 
 const updateModelResponse = modelShape;
 
+const deleteModelRequest = z.object({
+  id: z.uuidv7(),
+});
+
+const deleteModelResponse = z.never();
+
 export type GetModelRequest = z.infer<typeof getModelRequest>;
 export type GetModelResponse = z.infer<typeof getModelResponse>;
 export type ListModelsRequest = z.infer<typeof listModelsRequest>;
@@ -55,6 +61,8 @@ export type CreateModelRequest = z.infer<typeof createModelRequest>;
 export type CreateModelResponse = z.infer<typeof createModelResponse>;
 export type UpdateModelRequest = z.infer<typeof updateModelRequest>;
 export type UpdateModelResponse = z.infer<typeof updateModelResponse>;
+export type DeleteModelRequest = z.infer<typeof deleteModelRequest>;
+export type DeleteModelResponse = z.infer<typeof deleteModelResponse>;
 
 export default {
   getModelRequest,
@@ -65,4 +73,6 @@ export default {
   createModelResponse,
   updateModelRequest,
   updateModelResponse,
+  deleteModelRequest,
+  deleteModelResponse,
 };

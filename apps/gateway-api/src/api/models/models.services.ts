@@ -9,6 +9,7 @@ import Schemas, {
   type CreateModelResponse,
   type UpdateModelRequest,
   type UpdateModelResponse,
+  type DeleteModelResponse,
 } from './models.schemas';
 
 /**
@@ -145,9 +146,6 @@ async function createModel(request: CreateModelRequest) : Promise<CreateModelRes
  *
  * @returns
  * A promise that resolves to the updated model data.
- *
- * @throws {HTTPException}
- * If the model update fails.
  */
 async function updateModel(id: string, request: UpdateModelRequest) : Promise<UpdateModelResponse> {
   const result = await db.update(models)
@@ -164,10 +162,35 @@ async function updateModel(id: string, request: UpdateModelRequest) : Promise<Up
   return parsed;
 }
 
+/**
+ * Deletes an existing model in the database.
+ *
+ * @param id
+ * The ID of the model to update.
+ *
+ * @param request
+ * The request object containing the updated model data.
+ *
+ * @returns
+ * A promise that resolves to the updated model data.
+ */
+async function deleteModel(id: string) : Promise<DeleteModelResponse> {
+  const result = await db.delete(models)
+    .where(eq(models.id, id))
+    .returning();
+
+  if (!result[0]) {
+    throw new HTTPException(404);
+  }
+
+  return null as DeleteModelResponse;
+}
+
 export default {
   getModel,
   getModelBySlug,
   listModels,
   createModel,
   updateModel,
+  deleteModel,
 }
