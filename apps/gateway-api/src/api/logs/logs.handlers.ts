@@ -48,21 +48,33 @@ app.openapi(Routes.listLogs, async (c) => {
   return c.json(result, 200);
 });
 
-// Privileged
-//
-// app.openapi(Routes.createLog, async (c) => {
-//   const json = c.req.valid('json');
-//   const result = await Service.createLog(json);
-// 
-//   return c.json(result, 201);
-// });
-// 
-// app.openapi(Routes.updateLog, async (c) => {
-//   const params = c.req.valid('param');
-//   const json = c.req.valid('json');
-//   const result = await Service.updateLog(params.id, json);  
-// 
-//   return c.json(result, 200);
-// });
+/**
+ * POST /logs
+ * Controller to handle log creation requests.
+ *
+ * @returns
+ * - 201 on success.
+ */
+app.openapi(Routes.createLog, async (c) => {
+  const json = c.req.valid('json');
+  const result = await Service.createLog(json);
+
+  return c.json(result, 201);
+});
+
+/**
+ * PATCH /logs/:id
+ * Controller to handle log update requests.
+ *
+ * @returns
+ * - 200 on success.
+ */
+app.openapi(Routes.updateLog, async (c) => {
+  const params = c.req.valid('param');
+  const json = c.req.valid('json');
+  const result = await Service.updateLog(params.id, json);  
+
+  return c.json(result, 200);
+});
 
 export default app;

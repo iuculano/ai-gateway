@@ -12,6 +12,7 @@ import Schemas, {
   type CreateLogResponse,
   type UpdateLogRequest,
   type UpdateLogResponse,
+  type DeleteLogResponse,
 } from './logs.schemas';
 import { parseTags } from '@lib/utils';
 
@@ -181,8 +182,33 @@ async function updateLog(id: string, payload: UpdateLogRequest) : Promise<Update
     .where(eq(logs.id, id))
     .returning();
 
+  if (result.length === 0) {
+    throw new HTTPException(404);
+  }
+
   const parsed = Schemas.updateLogResponse.parse(result[0]);
   return parsed;
+}
+
+/**
+ * Deletes an existing log entry in the database.
+ *
+ * @param id
+ * The ID of the log to delete.
+ *
+ * @returns
+ * A promise that resolves to nothing.
+ */
+async function deleteLog(id: string) : Promise<DeleteLogResponse> {
+  const result = await db.delete(logs)
+    .where(eq(logs.id, id))
+    .returning();
+
+  if (result.length === 0) {
+    throw new HTTPException(404);
+  }
+
+  return null as DeleteLogResponse;
 }
 
 export default {
@@ -191,4 +217,5 @@ export default {
   listLogs,
   createLog,
   updateLog,
+  deleteLog,
 }
