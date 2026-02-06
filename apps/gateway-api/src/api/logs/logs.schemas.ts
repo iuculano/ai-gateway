@@ -31,7 +31,7 @@ const listLogsRequest = z.object({
   provider: z.string().optional(),
   status: z.string().optional(),
   tags: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  limit: z.coerce.number().int().min(1).max(250).optional().default(25),
   before_id: z.uuidv7().optional(), // UUIDv7 cursor
   after_id: z.uuidv7().optional(),  // UUIDv7 cursor
 });
@@ -63,6 +63,12 @@ const updateLogRequest = logShape.partial().omit({
 
 const updateLogResponse = logShape;
 
+const deleteLogRequest = z.object({
+  id: z.uuidv7(),
+});
+
+const deleteLogResponse = z.never();
+
 export type GetLogResponse = z.infer<typeof getLogResponse>;
 export type GetLogRequest = z.infer<typeof getLogRequest>;
 export type GetLogDataResponse = z.infer<typeof getLogDataResponse>;
@@ -72,6 +78,8 @@ export type CreateLogRequest = z.infer<typeof createLogRequest>;
 export type CreateLogResponse = z.infer<typeof createLogResponse>;
 export type UpdateLogRequest =  z.infer<typeof updateLogRequest>;
 export type UpdateLogResponse = z.infer<typeof updateLogResponse>;
+export type DeleteLogRequest = z.infer<typeof deleteLogRequest>;
+export type DeleteLogResponse = z.infer<typeof deleteLogResponse>;
 
 export default {
   getLogRequest,
@@ -83,4 +91,6 @@ export default {
   createLogResponse,
   updateLogRequest,
   updateLogResponse,
+  deleteLogRequest,
+  deleteLogResponse,
 };
