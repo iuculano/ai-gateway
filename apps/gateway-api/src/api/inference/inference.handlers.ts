@@ -10,6 +10,15 @@ import { zodExceptionHook } from '../../middleware/error-handler';
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
+/**
+ * POST /inference
+ * Controller to handle inference requests.
+ *
+ * @returns
+ * - 200 on success.
+ * - 429 if rate limit is exceeded.
+ * - 503 if unable to determine client IP for rate limiting.
+ */
 app.openapi(Routes.postInference, async (c) => {
   const headers = c.req.valid('header');
   const json = c.req.valid('json');

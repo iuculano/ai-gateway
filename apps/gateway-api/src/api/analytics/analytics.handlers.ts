@@ -6,6 +6,13 @@ import { zodExceptionHook } from '@middleware/error-handler';
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
+/**
+ * POST /analytics
+ * Controller to handle analytics queries.
+ *
+ * @returns
+ * - 200 OK with the analytics response on success.
+ */
 app.openapi(Routes.postAnalytics, async (c) => {
   const body = c.req.valid('json');
   const result = await Services.queryAnalytics(body);

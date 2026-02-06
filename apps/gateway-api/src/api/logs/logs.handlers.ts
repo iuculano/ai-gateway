@@ -6,6 +6,13 @@ import { zodExceptionHook } from '../../middleware/error-handler';
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
+/**
+ * GET /logs/:id
+ * Controller to handle specific log requests.
+ *
+ * @returns
+ * - 200 on success.
+ */
 app.openapi(Routes.getLog, async (c) => {
   const params = c.req.valid('param');
   const result = await Service.getLog(params.id);
@@ -13,6 +20,13 @@ app.openapi(Routes.getLog, async (c) => {
   return c.json(result, 200);
 });
 
+/**
+ * GET /logs/:id/data
+ * Controller to handle specific log data requests.
+ *
+ * @returns
+ * - 200 on success.
+ */
 app.openapi(Routes.getLogData, async (c) => {
   const params = c.req.valid('param');
   const result = await Service.getLogData(params.id);
@@ -20,6 +34,13 @@ app.openapi(Routes.getLogData, async (c) => {
   return c.json(result, 200);
 });
 
+/**
+ * GET /logs
+ * Controller to handle log requests.
+ *
+ * @returns
+ * - 200 on success.
+ */
 app.openapi(Routes.listLogs, async (c) => {
   const query = c.req.valid('query');
   const result = await Service.listLogs(query);

@@ -6,19 +6,42 @@ import { zodExceptionHook } from '../../middleware/error-handler';
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
+/**
+ * GET /livez
+ * Controller to handle liveliness checks.
+ *
+ * @returns
+ * - 200 on success.
+ */
 app.openapi(Routes.livez, async (c) => {
   return c.json({ 
     status: 'alive' as const ,
   }, 200);
 });
 
+/**
+ * GET /healthz
+ * Controller to handle health checks.
+ *
+ * @returns
+ * - 200 on success.
+ */
 app.openapi(Routes.healthz, async (c) => {
   return c.json({ 
     status: 'ok' as const,
   }, 200);
 });
 
+/**
+ * GET /readyz
+ * Controller to handle readiness checks.
+ *
+ * @returns
+ * - 200 on success.
+ * - 503 if any checks fail.
+ */
 app.openapi(Routes.readyz, async (c) => {
+  // List of tables to check existence of.
   const tables = ['logs', 'models', 'settings'];
 
   const checks = {
@@ -29,8 +52,6 @@ app.openapi(Routes.readyz, async (c) => {
 
   const allHealthy = Object.values(checks).every(Boolean);
 
-  // Watch this return type, the zod 'literal' types do truly mean a string
-  // literal. You will need to cast it as const or you'll get a type error.
   return c.json({
     status: allHealthy ? 'ok' as const : 'degraded' as const,
     checks,
