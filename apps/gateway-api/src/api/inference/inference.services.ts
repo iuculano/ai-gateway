@@ -20,7 +20,7 @@ import { type GetModelResponse } from '../models/models.schemas';
 
 // In-memory cache for instantiated model instances.
 const providerCache = new LRUCache<string, LanguageModel>({
-  max: 100,
+  max: 1000,
   ttl: 1000 * 60 * 60, // 1 hour
 });
 
@@ -273,6 +273,7 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
   catch {
     // Just eat the error, we deal with it below so we don't need to
     // do type narrowing.
+    //errorReason = err;
   }
 
   if (!llmResponse) {
