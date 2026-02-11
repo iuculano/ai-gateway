@@ -2,15 +2,19 @@ import { and, db, eq, lt, sql } from '@lib/drizzle';
 import Schemas, {
   type CreatePromptBody,
   type CreatePromptResponse,
+  type CreatePromptVersionBody,
+  type CreatePromptVersionResponse,
   type DeletePromptResponse,
   type GetPromptResponse,
-  type ListPromptsBody,
+  type GetPromptVersionResponse,
   type ListPromptsQuery,
   type ListPromptsResponse,
+  type ListPromptVersionsQuery,
+  type ListPromptVersionsResponse,
   type UpdatePromptBody,
   type UpdatePromptResponse,
 } from './prompts.schemas';
-import { prompts } from '@db/schemas/prompts';
+import { prompts, promptVersions } from '@db/schemas/prompts';
 import { HTTPException } from 'hono/http-exception';
 import { parseTags } from '@lib/utils';
 
@@ -112,7 +116,12 @@ async function listPrompts(query: ListPromptsQuery) : Promise<ListPromptsRespons
  */
 async function createPrompt(body: CreatePromptBody) : Promise<CreatePromptResponse> {
   const result = await db.insert(prompts)
-    .values(body)
+    .values({
+      name: body.name,
+      description: body.description,
+      activeVersion: body.active_version,
+      tags: body.tags,
+    })
     .returning();
 
   const parsed = Schemas.createPromptResponse.parse(result[0]);
@@ -161,7 +170,7 @@ async function deletePrompt(id: string) : Promise<DeletePromptResponse> {
 }
 
 /**
- * Retrieves a single prompt by its ID.
+ * Retrieves a single prompt version by its ID.
  *
  * @param id
  * The ID of the prompt to retrieve.
@@ -169,16 +178,113 @@ async function deletePrompt(id: string) : Promise<DeletePromptResponse> {
  * @returns
  * A promise that resolves to the prompt data.
  */
-async function getPromptVersion(version: number) : Promise<GetPromptResponse> {
+async function getPromptVersion(id: string, version: number) : Promise<GetPromptVersionResponse> {
   const result = await db.select()
-    .from(prompts)
-    .where(eq(prompts.id, id));
+    .from(promptVersions)
+    .where(and(
+      eq(promptVersions.promptId, id),
+      eq(promptVersions.version, version),
+    ));
 
   if (!result[0]) {
     throw new HTTPException(404);
   }
 
-  const parsed = Schemas.getPromptResponse.parse(result[0]);
+  const parsed = Schemas.getPromptVersionResponse.parse(result[0]);
+  return parsed;
+}
+
+/**
+ * Retrieves a list of prompt versions for a given prompt ID.
+ *
+ * @param id
+ * The ID of the prompt to retrieve.
+ * 
+ * @param query
+ * The filter criteria for pagination, etc.
+ *
+ * @returns
+ * A promise that resolves to the prompt data.
+ */
+async function listPromptVersions(id: string, query: ListPromptVersionsQuery) : Promise<ListPromptVersionsResponse> {
+  const conditions = [
+    query.after_id ? lt(promptVersions.id, query.after_id) : undefined,
+  ];
+
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+
+  const result = await db.select()
+    .from(promptVersions)
+    .where(whereClause)
+    .limit(query.limit + 1); // Fetch one extra to determine if there's more.
+
+  const hasMoreData = result.length > query.limit;
+  if (hasMoreData) {
+    result.pop(); // Burn off the extra record.
+  }
+
+  const oldestId = result[result.length - 1]?.id ?? null;
+
+  const parsed = Schemas.listPromptVersionsResponse.parse({
+    data: result,
+    meta: {
+      oldest_id: oldestId,
+      more_data: hasMoreData,
+    },
+  });
+
+  return parsed;
+}
+
+/**
+ * Creates a new prompt version.
+ * 
+ * @param id
+ * The ID of the parent prompt for which to create a new version.
+ *
+ * @param body
+ * The request object containing the prompt version data to be created.
+ *
+ * @returns
+ * A promise that resolves to the created prompt data.
+ */
+async function createPromptVersion(id: string, body: CreatePromptVersionBody) : Promise<CreatePromptVersionResponse> {
+
+  // Try to do this in a single transaction because it's basically a 
+  // read-modify-write sequence that needs to be atomic.
+  const parsed = await db.transaction(async (tx) => {
+
+    // Lock the parent prompt row to prevent concurrent version creation which
+    // could result in duplicate/wrong version numbers.
+    //
+    // That is, as long as every "create version" ransaction takes that same
+    // parent-row lock first, inserts into prompt_versions for that prompt_id
+    // will effectively serialize per prompt.
+    await tx.execute(sql`
+      SELECT 1
+      FROM ${prompts}
+      WHERE ${prompts.id} = ${id}
+      FOR UPDATE
+    `);
+
+    // Insert with computed next version (per prompt_id)
+    const result = await tx.insert(promptVersions)
+      .values({
+        promptId: id,
+        prompt: body.prompt,
+
+        // next version = max(version) + 1 for this prompt
+        version: sql`
+          SELECT COALESCE(MAX(${promptVersions.version}), 0) + 1
+          FROM ${promptVersions}
+          WHERE ${promptVersions.promptId} = ${id}
+        `,
+      })
+      .returning();
+
+    return Schemas.createPromptVersionResponse.parse(result[0]);
+  });
+
   return parsed;
 }
 
@@ -274,4 +380,8 @@ export default {
   updatePrompt,
   deletePrompt,
   renderPrompt,
+
+  getPromptVersion,
+  listPromptVersions,
+  createPromptVersion,
 }

@@ -102,39 +102,13 @@ const deletePrompt = createRoute({
   },
 });
 
-const renderPrompt = createRoute({
-  method: 'post' as const,
-  path: '/prompts/:id/render',
-  request: {
-    params: Schemas.renderPromptParams,
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.renderPromptBody,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: 'Prompt rendered successfully',
-      content: {
-        'application/json': {
-          schema: Schemas.renderPromptResponse,
-        },
-      },
-    },
-  },
-});
-
 // ---
 
 const getPromptVersion = createRoute({
   method: 'get' as const,
   path: '/prompts/:id/versions/:version',
   request: {
-    params: Schemas.getPromptVersionRequest,
+    params: Schemas.getPromptVersionParams,
   },
   responses: {
     200: {
@@ -148,11 +122,12 @@ const getPromptVersion = createRoute({
   },
 });
 
-  const listPromptVersions = createRoute({
+const listPromptVersions = createRoute({
   method: 'get' as const,
   path: '/prompts/:id/versions',
   request: {
-    query: Schemas.listPromptVersionsRequest,
+    params: Schemas.listPromptVersionsParams,
+    query: Schemas.listPromptVersionsQuery,
   },
   responses: {
     200: {
@@ -170,11 +145,12 @@ const createPromptVersion = createRoute({
   method: 'post' as const,
   path: '/prompts/:id/versions',
   request: {
+    params: Schemas.createPromptVersionParams,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.createPromptVersionRequest,
+          schema: Schemas.createPromptVersionBody,
         },
       },
     }
@@ -190,53 +166,53 @@ const createPromptVersion = createRoute({
     },
   },
 });
-
-const updatePromptVersion = createRoute({
-  method: 'patch' as const,
-  path: '/prompts/:id/versions/:version',
-  request: {
-    params: Schemas.updatePromptVersionRequest,
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.updatePromptRequest,
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: 'Prompt version updated successfully',
-      content: {
-        'application/json': {
-          schema: Schemas.updatePromptVersionResponse,
-        },
-      },
-    },
-  },
-});
-
-const deletePromptVersion = createRoute({
-  method: 'delete' as const,
-  path: '/prompts/:id/versions/:version',
-  request: {
-    params: Schemas.getPromptRequest,
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.deletePromptRequest,
-        },
-      },
-    },
-  },
-  responses: {
-    204: {
-      description: 'Prompt deleted successfully',
-    },
-  },
-});
+//
+//const updatePromptVersion = createRoute({
+//  method: 'patch' as const,
+//  path: '/prompts/:id/versions/:version',
+//  request: {
+//    params: Schemas.updatePromptVersionRequest,
+//    body: {
+//      required: true,
+//      content: {
+//        'application/json': {
+//          schema: Schemas.updatePromptRequest,
+//        },
+//      },
+//    },
+//  },
+//  responses: {
+//    200: {
+//      description: 'Prompt version updated successfully',
+//      content: {
+//        'application/json': {
+//          schema: Schemas.updatePromptVersionResponse,
+//        },
+//      },
+//    },
+//  },
+//});
+//
+//const deletePromptVersion = createRoute({
+//  method: 'delete' as const,
+//  path: '/prompts/:id/versions/:version',
+//  request: {
+//    params: Schemas.getPromptRequest,
+//    body: {
+//      required: true,
+//      content: {
+//        'application/json': {
+//          schema: Schemas.deletePromptRequest,
+//        },
+//      },
+//    },
+//  },
+//  responses: {
+//    204: {
+//      description: 'Prompt deleted successfully',
+//    },
+//  },
+//});
 
 export default {
   getPrompt,
@@ -244,11 +220,10 @@ export default {
   createPrompt,
   updatePrompt,
   deletePrompt,
-  renderPrompt,
 
   getPromptVersion,
   listPromptVersions,
   createPromptVersion,
-  updatePromptVersion,
-  deletePromptVersion,
+  // updatePromptVersion,
+  // deletePromptVersion,
 }

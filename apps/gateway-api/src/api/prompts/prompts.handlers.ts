@@ -79,38 +79,49 @@ app.openapi(Routes.deletePrompt, async (c) => {
 });
 
 /**
- * POST /prompts/:id/render
- * Renders the prompt with the provided input variables.
+ * GET /prompts/:id/versions/:version
+ * Retrieves a singular prompt version by version number.
+ *
+ * @returns
+ * - 200 OK with the prompt version body on success.
+ */
+app.openapi(Routes.getPromptVersion, async (c) => {
+  const params = c.req.valid('param');
+  const result = await Services.getPromptVersion(params.id, params.version);
+
+  return c.json(result, 200);
+});
+
+/**
+ * GET /prompts/:id/versions
+ * Queries versions for a prompt.
+ * Supports pagination.
  *
  * @returns
  * - 200 OK with the prompt body on success.
  */
-app.openapi(Routes.renderPrompt, async (c) => {
+app.openapi(Routes.listPromptVersions, async (c) => {
   const params = c.req.valid('param');
-  const body = c.req.valid('json');
+  const query = c.req.valid('query');
+  const result = await Services.listPromptVersions(params.id, query);
 
-  const prompt = await Services.getPrompt(params.id);
-  const render = await Services.renderPrompt(prompt.prompt, body.inputs);
-  prompt.prompt = render;
-
-  return c.json(prompt, 200);
+  return c.json(result, 200);
 });
 
+/**
+ * POST /prompts/:id/versions
+ * Creates a new version for a prompt.
+ *
+ * @returns
+ * - 201 Created with the prompt version body on success.
+ */
+app.openapi(Routes.createPromptVersion, async (c) => {
+  const params = c.req.valid('param');
+  const body = c.req.valid('json');
+  const result = await Services.createPromptVersion(params.id, body);
 
-// Versions
-// app.openapi(Routes.getPromptVersion, async (c) => {
-//   const params = c.req.valid('param');
-//   const result = await Services.getPrompt(params.id);
-// 
-//   return c.json(result, 200);
-// });
-// 
-// app.openapi(Routes.createPromptVersion, async (c) => {
-//   const body = c.req.valid('json');
-//   const result = await Services.createPrompt(body);
-// 
-//   return c.json(result, 201);
-// });
+  return c.json(result, 201);
+});
 // 
 // 
 // app.openapi(Routes.updatePromptVersion, async (c) => {

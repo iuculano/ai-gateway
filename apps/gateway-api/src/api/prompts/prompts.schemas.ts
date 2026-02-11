@@ -5,6 +5,7 @@ const promptShape = z.object({
   id: z.uuidv7(),
   name: z.string(),
   description: z.string().optional(),
+  active_version: z.number().optional().default(1),
   tags: z.record(z.string(), z.string()).optional(),
   created_at: z.date().transform((date) => date.toISOString()),
   updated_at: z.date().transform((date) => date.toISOString()),
@@ -82,41 +83,52 @@ export type RenderPromptParams = z.infer<typeof renderPromptParams>;
 export type RenderPromptBody = z.infer<typeof renderPromptBody>;
 export type RenderPromptResponse = z.infer<typeof renderPromptResponse>;
 
-// const promptVersionShape = z.object({
-//   id: z.uuidv7(),
-//   prompt_id: z.uuidv7(),
-//   prompt: z.string(),
-//   version: z.number().int(),
-//   created_at: z.date().transform((date) => date.toISOString()),
-//   updated_at: z.date().transform((date) => date.toISOString()),
-// });
-// 
-// const getPromptVersionRequest = z.object({
-//   version: z.number().int(),
-// });
-// 
-// const getPromptVersionResponse = promptVersionShape;
-// 
-// const listPromptVersionsRequest = z.object({
-//   limit: z.coerce.number().int().min(1).max(250).optional().default(25),
-//   after_id: z.uuidv7().optional(),
-// });
-// 
-// const listPromptVersionsResponse = z.object({
-//   data: z.array(promptVersionShape.omit({
-//     prompt: true,
-//   })),
-//   meta: z.object({
-//     oldest_id: z.uuidv7().nullable(),
-//     more_data: z.boolean()
-//   })
-// });
-// 
-// const createPromptVersionRequest = promptVersionShape.omit({
-//   id: true,
-//   created_at: true,
-//   updated_at: true,
-// });
+const promptVersionShape = z.object({
+  id: z.uuidv7(),
+  prompt_id: z.uuidv7(),
+  prompt: z.string(),
+  version: z.number().positive(),
+  created_at: z.date().transform((date) => date.toISOString()),
+  updated_at: z.date().transform((date) => date.toISOString()),
+});
+
+const getPromptVersionParams = z.object({
+  id: z.uuidv7(),
+  version: z.number().positive(),
+});
+
+const getPromptVersionResponse = promptVersionShape;
+
+const listPromptVersionsParams = z.object({
+  id: z.uuidv7(),
+});
+
+const listPromptVersionsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(250).optional().default(25),
+  after_id: z.uuidv7().optional(),
+});
+
+const listPromptVersionsResponse = z.object({
+  data: z.array(promptVersionShape.omit({
+    prompt_id: true, // Already implied by the route
+    prompt: true,
+  })),
+  meta: z.object({
+    oldest_id: z.uuidv7().nullable(),
+    more_data: z.boolean()
+  })
+});
+
+const createPromptVersionParams = z.object({
+  id: z.uuidv7(),
+});
+
+const createPromptVersionBody = z.object({
+  prompt: z.string(),
+});
+
+const createPromptVersionResponse = promptVersionShape;
+
 // 
 // const createPromptVersionResponse = promptVersionShape;
 // 
@@ -134,10 +146,15 @@ export type RenderPromptResponse = z.infer<typeof renderPromptResponse>;
 // 
 // const deletePromptVersionResponse = z.never();
 // 
-// export type GetPromptVersionResponse = z.infer<typeof getPromptVersionResponse>;
-// export type GetPromptVersionRequest = z.infer<typeof getPromptVersionRequest>;
-// export type ListPromptVersionsRequest = z.infer<typeof listPromptVersionsRequest>;
-// export type ListPromptVersionsResponse = z.infer<typeof listPromptVersionsResponse>;
+
+export type GetPromptVersionParams = z.infer<typeof getPromptVersionParams>;
+export type GetPromptVersionResponse = z.infer<typeof getPromptVersionResponse>;
+export type ListPromptVersionsQuery = z.infer<typeof listPromptVersionsQuery>;
+export type ListPromptVersionsResponse = z.infer<typeof listPromptVersionsResponse>;
+export type CreatePromptVersionParams = z.infer<typeof createPromptVersionParams>;
+export type CreatePromptVersionBody = z.infer<typeof createPromptVersionBody>;
+export type CreatePromptVersionResponse = z.infer<typeof createPromptVersionResponse>;
+
 // export type CreatePromptVersionRequest = z.infer<typeof createPromptVersionRequest>;
 // export type CreatePromptVersionResponse = z.infer<typeof createPromptVersionResponse>;
 // export type UpdatePromptVersionRequest =  z.infer<typeof updatePromptVersionRequest>;
@@ -161,14 +178,12 @@ export default {
   renderPromptBody,
   renderPromptResponse,
 
-  // getPromptVersionRequest,
-  // getPromptVersionResponse,
-  // listPromptVersionsRequest,
-  // listPromptVersionsResponse,
-  // createPromptVersionRequest,
-  // createPromptVersionResponse,
-  // updatePromptVersionRequest,
-  // updatePromptVersionResponse,
-  // deletePromptVersionRequest,
-  // deletePromptVersionResponse,
+  getPromptVersionParams,
+  getPromptVersionResponse,
+  listPromptVersionsParams,
+  listPromptVersionsQuery,
+  listPromptVersionsResponse,
+  createPromptVersionParams,
+  createPromptVersionBody,
+  createPromptVersionResponse,
 };
