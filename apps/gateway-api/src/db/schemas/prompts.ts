@@ -6,7 +6,7 @@ export const prompts = pgTable('prompts', {
   id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
   name: text('name').notNull().unique(),
   description: text('description'),
-  activeVersion: integer('active_version').notNull(),
+  activeVersion: integer('active_version'),
   tags: jsonb('tags').$type<Record<string, string>>().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
