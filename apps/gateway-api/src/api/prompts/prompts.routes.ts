@@ -6,7 +6,7 @@ const getPrompt = createRoute({
   method: 'get' as const,
   path: '/prompts/:id',
   request: {
-    params: Schemas.getPromptRequest,
+    params: Schemas.getPromptParams,
   },
   responses: {
     200: {
@@ -20,11 +20,11 @@ const getPrompt = createRoute({
   },
 });
 
-  const listPrompts = createRoute({
+const listPrompts = createRoute({
   method: 'get' as const,
   path: '/prompts',
   request: {
-    query: Schemas.listPromptsRequest,
+    query: Schemas.listPromptsQuery,
   },
   responses: {
     200: {
@@ -46,7 +46,7 @@ const createPrompt = createRoute({
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.createPromptRequest,
+          schema: Schemas.createPromptBody,
         },
       },
     }
@@ -67,12 +67,12 @@ const updatePrompt = createRoute({
   method: 'patch' as const,
   path: '/prompts/:id',
   request: {
-    params: Schemas.getPromptRequest,
+    params: Schemas.updatePromptParams,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.updatePromptRequest,
+          schema: Schemas.updatePromptBody,
         },
       },
     },
@@ -93,19 +93,37 @@ const deletePrompt = createRoute({
   method: 'delete' as const,
   path: '/prompts/:id',
   request: {
-    params: Schemas.getPromptRequest,
+    params: Schemas.deletePromptParams,
+  },
+  responses: {
+    204: {
+      description: 'Prompt deleted successfully',
+    },
+  },
+});
+
+const renderPrompt = createRoute({
+  method: 'post' as const,
+  path: '/prompts/:id/render',
+  request: {
+    params: Schemas.renderPromptParams,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.deletePromptRequest,
+          schema: Schemas.renderPromptBody,
         },
       },
     },
   },
   responses: {
-    204: {
-      description: 'Prompt deleted successfully',
+    200: {
+      description: 'Prompt rendered successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.renderPromptResponse,
+        },
+      },
     },
   },
 });
@@ -226,6 +244,7 @@ export default {
   createPrompt,
   updatePrompt,
   deletePrompt,
+  renderPrompt,
 
   getPromptVersion,
   listPromptVersions,
