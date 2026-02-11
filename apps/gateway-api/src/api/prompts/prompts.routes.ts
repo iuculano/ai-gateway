@@ -166,6 +166,32 @@ const createPromptVersion = createRoute({
     },
   },
 });
+
+const renderPromptVersion = createRoute({
+  method: 'post' as const,
+  path: '/prompts/:id/versions/:version/render',
+  request: {
+    params: Schemas.renderPromptVersionParams,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.renderPromptVersionBody,
+        },
+      },
+    }
+  },
+  responses: {
+    200: {
+      description: 'Prompt version rendered successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.renderPromptVersionResponse,
+        },
+      },
+    },
+  },
+});
 //
 //const updatePromptVersion = createRoute({
 //  method: 'patch' as const,
@@ -224,6 +250,7 @@ export default {
   getPromptVersion,
   listPromptVersions,
   createPromptVersion,
+  renderPromptVersion,
   // updatePromptVersion,
   // deletePromptVersion,
 }

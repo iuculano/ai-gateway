@@ -5,7 +5,7 @@ const promptShape = z.object({
   id: z.uuidv7(),
   name: z.string(),
   description: z.string().optional(),
-  active_version: z.number().optional().default(1),
+  active_version: z.number().optional(),
   tags: z.record(z.string(), z.string()).optional(),
   created_at: z.date().transform((date) => date.toISOString()),
   updated_at: z.date().transform((date) => date.toISOString()),
@@ -33,11 +33,16 @@ const listPromptsResponse = z.object({
 
 const createPromptBody = promptShape.omit({
   id: true,
+  active_version: true,
   created_at: true,
   updated_at: true,
 });
 
-const createPromptResponse = promptShape;
+const createPromptResponse = promptShape.omit({
+  active_version: true,
+  created_at: true,
+  updated_at: true,
+});
 
 const updatePromptParams = z.object({
   id: z.uuidv7(),
@@ -57,17 +62,6 @@ const deletePromptParams = z.object({
 
 const deletePromptResponse = z.void();
 
-const renderPromptParams = z.object({
-  id: z.uuidv7(),
-});
-
-const renderPromptBody = z.object({
-  inputs: z.record(z.string(), z.string()),
-});
-
-const renderPromptResponse = getPromptResponse;
-
-
 export type GetPromptParams = z.infer<typeof getPromptParams>;
 export type GetPromptResponse = z.infer<typeof getPromptResponse>;
 export type ListPromptsQuery = z.infer<typeof listPromptsQuery>;
@@ -79,9 +73,6 @@ export type UpdatePromptBody =  z.infer<typeof updatePromptBody>;
 export type UpdatePromptResponse = z.infer<typeof updatePromptResponse>;
 export type DeletePromptParams = z.infer<typeof deletePromptParams>;
 export type DeletePromptResponse = z.infer<typeof deletePromptResponse>;
-export type RenderPromptParams = z.infer<typeof renderPromptParams>;
-export type RenderPromptBody = z.infer<typeof renderPromptBody>;
-export type RenderPromptResponse = z.infer<typeof renderPromptResponse>;
 
 const promptVersionShape = z.object({
   id: z.uuidv7(),
@@ -97,7 +88,12 @@ const getPromptVersionParams = z.object({
   version: z.number().positive(),
 });
 
-const getPromptVersionResponse = promptVersionShape;
+const getPromptVersionResponse = promptVersionShape.omit({
+  id: true,
+  prompt_id: true, // Already implied by the route
+  created_at: true,
+  updated_at: true,
+});
 
 const listPromptVersionsParams = z.object({
   id: z.uuidv7(),
@@ -127,7 +123,25 @@ const createPromptVersionBody = z.object({
   prompt: z.string(),
 });
 
-const createPromptVersionResponse = promptVersionShape;
+const createPromptVersionResponse = promptVersionShape.omit({
+  prompt_id: true, // Already implied by the route
+  created_at: true,
+  updated_at: true,
+});
+
+const renderPromptVersionParams = z.object({
+  id: z.uuidv7(),
+  version: z.coerce.number().positive(),
+});
+
+const renderPromptVersionBody = z.object({
+  inputs: z.record(z.string(), z.string()),
+});
+
+const renderPromptVersionResponse = z.object({
+  prompt: z.string(),
+});
+
 
 // 
 // const createPromptVersionResponse = promptVersionShape;
@@ -155,6 +169,10 @@ export type CreatePromptVersionParams = z.infer<typeof createPromptVersionParams
 export type CreatePromptVersionBody = z.infer<typeof createPromptVersionBody>;
 export type CreatePromptVersionResponse = z.infer<typeof createPromptVersionResponse>;
 
+export type RenderPromptVersionParams = z.infer<typeof renderPromptVersionParams>;
+export type RenderPromptVersionBody = z.infer<typeof renderPromptVersionBody>;
+export type RenderPromptVersionResponse = z.infer<typeof renderPromptVersionResponse>;
+
 // export type CreatePromptVersionRequest = z.infer<typeof createPromptVersionRequest>;
 // export type CreatePromptVersionResponse = z.infer<typeof createPromptVersionResponse>;
 // export type UpdatePromptVersionRequest =  z.infer<typeof updatePromptVersionRequest>;
@@ -174,9 +192,6 @@ export default {
   updatePromptResponse,
   deletePromptParams,
   deletePromptResponse,
-  renderPromptParams,
-  renderPromptBody,
-  renderPromptResponse,
 
   getPromptVersionParams,
   getPromptVersionResponse,
@@ -186,4 +201,8 @@ export default {
   createPromptVersionParams,
   createPromptVersionBody,
   createPromptVersionResponse,
+
+  renderPromptVersionParams,
+  renderPromptVersionBody,
+  renderPromptVersionResponse,
 };

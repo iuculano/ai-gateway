@@ -122,6 +122,19 @@ app.openapi(Routes.createPromptVersion, async (c) => {
 
   return c.json(result, 201);
 });
+
+app.openapi(Routes.renderPromptVersion, async (c) => {
+  const params = c.req.valid('param');
+  const body = c.req.valid('json');
+
+  const prompt = await Services.getPromptVersion(params.id, params.version);
+  const result = await Services.renderPrompt(prompt.prompt, body.inputs);
+
+  return c.json({
+    prompt: result,
+  }, 200);
+});
+
 // 
 // 
 // app.openapi(Routes.updatePromptVersion, async (c) => {

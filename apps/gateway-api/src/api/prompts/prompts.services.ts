@@ -116,15 +116,13 @@ async function listPrompts(query: ListPromptsQuery) : Promise<ListPromptsRespons
  */
 async function createPrompt(body: CreatePromptBody) : Promise<CreatePromptResponse> {
   const result = await db.insert(prompts)
-    .values({
-      name: body.name,
-      description: body.description,
-      activeVersion: body.active_version,
-      tags: body.tags,
-    })
+    .values(body)
     .returning();
 
-  const parsed = Schemas.createPromptResponse.parse(result[0]);
+  const parsed = Schemas.createPromptResponse.parse({
+    ...result[0],
+    active_version: null
+  });
   return parsed;
 }
 
@@ -275,9 +273,11 @@ async function createPromptVersion(id: string, body: CreatePromptVersionBody) : 
 
         // next version = max(version) + 1 for this prompt
         version: sql`
+        (
           SELECT COALESCE(MAX(${promptVersions.version}), 0) + 1
           FROM ${promptVersions}
           WHERE ${promptVersions.promptId} = ${id}
+        )
         `,
       })
       .returning();
@@ -297,9 +297,9 @@ function renderSubstitution(substitution: string) : string | undefined {
   }
 
   // Check if this is an built-in substitution.
-  const prefix = substitution.split('.')[0];
-  if (prefix === 'aig') {
-    switch (substitution) {
+  const [prefix, value] = substitution.split('.');
+  if (prefix === 'aig' && (prefix && value)) {
+    switch (value) {
       case 'date':
         return new Date().toISOString().split('T')[0] as string;
 
