@@ -37,7 +37,7 @@ async function getPrompt(id: string) : Promise<GetPromptResponse> {
     throw new HTTPException(404);
   }
 
-  const parsed = Schemas.getPromptResponse.parse(result[0]);
+  const parsed = Schemas.getPrompt.response.parse(result[0]);
   return parsed;
 }
 
@@ -59,7 +59,7 @@ async function getPromptByName(name: string) : Promise<GetPromptResponse> {
     throw new HTTPException(404);
   }
 
-  const parsed = Schemas.getPromptResponse.parse(result[0]);
+  const parsed = Schemas.getPrompt.response.parse(result[0]);
   return parsed;
 }
 
@@ -94,7 +94,7 @@ async function listPrompts(query: ListPromptsQuery) : Promise<ListPromptsRespons
 
   const oldestId = result[result.length - 1]?.id ?? null;
 
-  const parsed = Schemas.listPromptsResponse.parse({
+  const parsed = Schemas.listPrompts.response.parse({
     data: result,
     meta: {
       oldest_id: oldestId,
@@ -119,7 +119,7 @@ async function createPrompt(body: CreatePromptBody) : Promise<CreatePromptRespon
     .values(body)
     .returning();
 
-  const parsed = Schemas.createPromptResponse.parse({
+  const parsed = Schemas.createPrompt.response.parse({
     ...result[0],
     active_version: null
   });
@@ -144,7 +144,7 @@ async function updatePrompt(id: string, body: UpdatePromptBody) : Promise<Update
     .where(eq(prompts.id, id))
     .returning();
 
-  const parsed = Schemas.updatePromptResponse.parse(result[0]);
+  const parsed = Schemas.updatePrompt.response.parse(result[0]);
   return parsed;
 }
 
@@ -180,7 +180,7 @@ async function getPromptVersion(id: string, version: number) : Promise<GetPrompt
   const result = await db.select()
     .from(promptVersions)
     .where(and(
-      eq(promptVersions.promptId, id),
+      eq(promptVersions.prompt_id, id),
       eq(promptVersions.version, version),
     ));
 
@@ -188,7 +188,7 @@ async function getPromptVersion(id: string, version: number) : Promise<GetPrompt
     throw new HTTPException(404);
   }
 
-  const parsed = Schemas.getPromptVersionResponse.parse(result[0]);
+  const parsed = Schemas.getPromptVersion.response.parse(result[0]);
   return parsed;
 }
 
@@ -223,7 +223,7 @@ async function listPromptVersions(id: string, query: ListPromptVersionsQuery) : 
 
   const oldestId = result[result.length - 1]?.id ?? null;
 
-  const parsed = Schemas.listPromptVersionsResponse.parse({
+  const parsed = Schemas.listPromptVersions.response.parse({
     data: result,
     meta: {
       oldest_id: oldestId,
@@ -268,7 +268,7 @@ async function createPromptVersion(id: string, body: CreatePromptVersionBody) : 
     // Insert with computed next version (per prompt_id)
     const result = await tx.insert(promptVersions)
       .values({
-        promptId: id,
+        prompt_id: id,
         prompt: body.prompt,
 
         // next version = max(version) + 1 for this prompt
@@ -276,13 +276,13 @@ async function createPromptVersion(id: string, body: CreatePromptVersionBody) : 
         (
           SELECT COALESCE(MAX(${promptVersions.version}), 0) + 1
           FROM ${promptVersions}
-          WHERE ${promptVersions.promptId} = ${id}
+          WHERE ${promptVersions.prompt_id} = ${id}
         )
         `,
       })
       .returning();
 
-    return Schemas.createPromptVersionResponse.parse(result[0]);
+    return Schemas.createPromptVersion.response.parse(result[0]);
   });
 
   return parsed;

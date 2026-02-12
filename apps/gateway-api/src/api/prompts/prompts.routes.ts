@@ -6,14 +6,14 @@ const getPrompt = createRoute({
   method: 'get' as const,
   path: '/prompts/:id',
   request: {
-    params: Schemas.getPromptParams,
+    params: Schemas.getPrompt.params,
   },
   responses: {
     200: {
       description: 'Prompt retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.getPromptResponse,
+          schema: Schemas.getPrompt.response,
         },
       },
     },
@@ -24,14 +24,14 @@ const listPrompts = createRoute({
   method: 'get' as const,
   path: '/prompts',
   request: {
-    query: Schemas.listPromptsQuery,
+    query: Schemas.listPrompts.query,
   },
   responses: {
     200: {
       description: 'Prompts retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.listPromptsResponse,
+          schema: Schemas.listPrompts.response,
         },
       },
     },
@@ -46,7 +46,7 @@ const createPrompt = createRoute({
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.createPromptBody,
+          schema: Schemas.createPrompt.body,
         },
       },
     }
@@ -56,7 +56,7 @@ const createPrompt = createRoute({
       description: 'Prompt created successfully',
       content: {
         'application/json': {
-          schema: Schemas.createPromptResponse,
+          schema: Schemas.createPrompt.response,
         },
       },
     },
@@ -67,12 +67,12 @@ const updatePrompt = createRoute({
   method: 'patch' as const,
   path: '/prompts/:id',
   request: {
-    params: Schemas.updatePromptParams,
+    params: Schemas.updatePrompt.params,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.updatePromptBody,
+          schema: Schemas.updatePrompt.body,
         },
       },
     },
@@ -82,7 +82,7 @@ const updatePrompt = createRoute({
       description: 'Prompt updated successfully',
       content: {
         'application/json': {
-          schema: Schemas.updatePromptResponse,
+          schema: Schemas.updatePrompt.response,
         },
       },
     },
@@ -93,7 +93,7 @@ const deletePrompt = createRoute({
   method: 'delete' as const,
   path: '/prompts/:id',
   request: {
-    params: Schemas.deletePromptParams,
+    params: Schemas.deletePrompt.params,
   },
   responses: {
     204: {
@@ -108,14 +108,14 @@ const getPromptVersion = createRoute({
   method: 'get' as const,
   path: '/prompts/:id/versions/:version',
   request: {
-    params: Schemas.getPromptVersionParams,
+    params: Schemas.getPromptVersion.params,
   },
   responses: {
     200: {
       description: 'Prompt version retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.getPromptVersionResponse,
+          schema: Schemas.getPromptVersion.response,
         },
       },
     },
@@ -126,15 +126,15 @@ const listPromptVersions = createRoute({
   method: 'get' as const,
   path: '/prompts/:id/versions',
   request: {
-    params: Schemas.listPromptVersionsParams,
-    query: Schemas.listPromptVersionsQuery,
+    params: Schemas.listPromptVersions.params,
+    query: Schemas.listPromptVersions.query,
   },
   responses: {
     200: {
       description: 'Prompt versions retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.listPromptVersionsResponse,
+          schema: Schemas.listPromptVersions.response,
         },
       },
     },
@@ -145,12 +145,12 @@ const createPromptVersion = createRoute({
   method: 'post' as const,
   path: '/prompts/:id/versions',
   request: {
-    params: Schemas.createPromptVersionParams,
+    params: Schemas.createPromptVersion.params,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.createPromptVersionBody,
+          schema: Schemas.createPromptVersion.body,
         },
       },
     }
@@ -160,9 +160,48 @@ const createPromptVersion = createRoute({
       description: 'Prompt version created successfully',
       content: {
         'application/json': {
-          schema: Schemas.createPromptVersionResponse,
+          schema: Schemas.createPromptVersion.response,
         },
       },
+    },
+  },
+});
+
+const updatePromptVersion = createRoute({
+  method: 'patch' as const,
+  path: '/prompts/:id/versions/:version',
+  request: {
+    params: Schemas.updatePromptVersion.params,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.updatePromptVersion.body,
+        },
+      },
+    }
+  },
+  responses: {
+    200: {
+      description: 'Prompt version updated successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.updatePromptVersion.response,
+        },
+      },
+    },
+  },
+});
+
+const deletePromptVersion = createRoute({
+  method: 'delete' as const,
+  path: '/prompts/:id/versions/:version',
+  request: {
+    params: Schemas.deletePromptVersion.params,
+  },
+  responses: {
+    204: {
+      description: 'Prompt version deleted successfully',
     },
   },
 });
@@ -171,12 +210,12 @@ const renderPromptVersion = createRoute({
   method: 'post' as const,
   path: '/prompts/:id/versions/:version/render',
   request: {
-    params: Schemas.renderPromptVersionParams,
+    params: Schemas.renderPromptVersion.params,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.renderPromptVersionBody,
+          schema: Schemas.renderPromptVersion.body,
         },
       },
     }
@@ -186,7 +225,7 @@ const renderPromptVersion = createRoute({
       description: 'Prompt version rendered successfully',
       content: {
         'application/json': {
-          schema: Schemas.renderPromptVersionResponse,
+          schema: Schemas.renderPromptVersion.response,
         },
       },
     },
@@ -250,7 +289,7 @@ export default {
   getPromptVersion,
   listPromptVersions,
   createPromptVersion,
+  updatePromptVersion,
+  deletePromptVersion,
   renderPromptVersion,
-  // updatePromptVersion,
-  // deletePromptVersion,
 }
