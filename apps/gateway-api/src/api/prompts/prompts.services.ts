@@ -1,4 +1,7 @@
+import { HTTPException } from 'hono/http-exception';
 import { and, db, eq, lt, sql } from '@lib/drizzle';
+import { parseTags } from '@lib/utils';
+import { prompts, promptVersions } from '@db/schemas/prompts';
 import Schemas, {
   type CreatePromptBody,
   type CreatePromptResponse,
@@ -13,11 +16,9 @@ import Schemas, {
   type ListPromptVersionsResponse,
   type UpdatePromptBody,
   type UpdatePromptResponse,
+  type UpdatePromptVersionBody,
+  type UpdatePromptVersionResponse,
 } from './prompts.schemas';
-import { prompts, promptVersions } from '@db/schemas/prompts';
-import { HTTPException } from 'hono/http-exception';
-import { parseTags } from '@lib/utils';
-
 
 /**
  * Retrieves a single prompt by its ID.
@@ -248,8 +249,8 @@ async function listPromptVersions(id: string, query: ListPromptVersionsQuery) : 
  */
 async function createPromptVersion(id: string, body: CreatePromptVersionBody) : Promise<CreatePromptVersionResponse> {
 
-  // Try to do this in a single transaction because it's basically a 
-  // read-modify-write sequence that needs to be atomic.
+  // Needs to be atomic since we have to compute the next version number based
+  // on existing versions for this prompt.
   const parsed = await db.transaction(async (tx) => {
 
     // Lock the parent prompt row to prevent concurrent version creation which
@@ -288,7 +289,48 @@ async function createPromptVersion(id: string, body: CreatePromptVersionBody) : 
   return parsed;
 }
 
-function renderSubstitution(substitution: string) : string | undefined {
+async function updatePromptVersion(id: string, version: number, body: UpdatePromptVersionBody) : Promise<UpdatePromptVersionResponse> {
+  const result = await db.update(promptVersions)
+    .set(body)
+    .where(and(
+      eq(promptVersions.prompt_id, id),
+      eq(promptVersions.version, version),
+    ))
+    .returning();
+
+  if (!result[0]) {
+    throw new HTTPException(404);
+  }
+
+  const parsed = Schemas.updatePromptVersion.response.parse(result[0]);
+  return parsed;
+}
+
+async function deletePromptVersion(id: string, version: number) : Promise<void> {
+  const result = await db.delete(promptVersions)
+    .where(and(
+      eq(promptVersions.prompt_id, id),
+      eq(promptVersions.version, version),
+    ))
+    .returning();
+
+  if (!result[0]) {
+    throw new HTTPException(404);
+  }
+}
+
+/**
+ * Tries to render a built-in substitution or user defined variable.
+ *
+ * If the the subtitution string matches a built-in substitution pattern, e.g.
+ * "aig.date", it will render the corresponding value.
+ *
+ * @param substitution The substitution string to evaluate, e.g. "aig.date".
+ *
+ * @returns
+ * A promise that resolves to the prompt data.
+ */
+function tryRenderInternalSubstitution(substitution: string) : string | undefined {
   //
   if (!substitution) {
     throw new HTTPException(500, {
@@ -320,8 +362,17 @@ function renderSubstitution(substitution: string) : string | undefined {
   return undefined;
 }
 
-
-function createSubstitutions(prompt: string, inputs: Record<string, string>) : Record<string, string> {
+/**
+ * 
+ *
+ * @param prompt The prompt string to render.
+ *
+ * @param inputs A record of input values to substitute into the prompt.
+ *
+ * @returns
+ * A promise that resolves to the prompt data.
+ */
+function createSubstitutionsMap(prompt: string, inputs: Record<string, string>) : Record<string, string> {
   const substitutions: Record<string, string> = {};
 
   const pattern = /{{\s+([a-z0-9.-]+)\s+}}/g;
@@ -334,7 +385,7 @@ function createSubstitutions(prompt: string, inputs: Record<string, string>) : R
     }
 
     // Handle built-in substitutions and user defined variables.
-    const substitution = renderSubstitution(variable);
+    const substitution = tryRenderInternalSubstitution(variable);
     if (substitution) {
       substitutions[variable] = substitution;
     }
@@ -361,8 +412,8 @@ function createSubstitutions(prompt: string, inputs: Record<string, string>) : R
  * @returns
  * A promise that resolves to the prompt data.
  */
-function renderPrompt(prompt: string, inputs: Record<string, string>) : string {
-  const substitutions = createSubstitutions(prompt, inputs);
+async function renderPromptVersion(prompt: string, inputs: Record<string, string>) : Promise<string> {
+  const substitutions = createSubstitutionsMap(prompt, inputs);
 
   let rendered = prompt;
   for (const [key, value] of Object.entries(substitutions)) {
@@ -379,9 +430,11 @@ export default {
   createPrompt,
   updatePrompt,
   deletePrompt,
-  renderPrompt,
 
   getPromptVersion,
   listPromptVersions,
   createPromptVersion,
+  updatePromptVersion,
+  deletePromptVersion,
+  renderPromptVersion,
 }
