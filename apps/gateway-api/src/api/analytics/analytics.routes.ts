@@ -10,7 +10,7 @@ const postAnalytics = createRoute({
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.analyticsRequest,
+          schema: Schemas.analytics.body,
         },
       },
     },
@@ -20,7 +20,7 @@ const postAnalytics = createRoute({
       description: 'Successful analytics query',
       content: {
         'application/json': {
-          schema: Schemas.analyticsResponse,
+          schema: Schemas.analytics.response,
         },
       },
     },

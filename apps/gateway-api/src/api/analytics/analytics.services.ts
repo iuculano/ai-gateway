@@ -2,7 +2,7 @@ import { and, db, eq, gte, lte, max, min, sql, sum } from '@lib/drizzle';
 import { createCacheKey, redis } from '@lib/redis';
 import { logs } from '../../db/schemas/logs';
 import Schemas, {
-  type AnalyticsRequest,
+  type AnalyticsBody,
   type AnalyticsResponse,
 } from './analytics.schemas';
 import { parseTags } from '@lib/utils';
@@ -17,7 +17,7 @@ import { parseTags } from '@lib/utils';
  * @returns
  * A promise that resolves to the analytics response.
  */
-async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResponse> {
+async function queryAnalytics(request: AnalyticsBody) : Promise<AnalyticsResponse> {
   // This is a relatively expensive query!
   const cacheKey = await createCacheKey('analytics:', request);
   const existing = await redis.get(cacheKey);
@@ -68,7 +68,7 @@ async function queryAnalytics(request: AnalyticsRequest) : Promise<AnalyticsResp
     : query
   ));
 
-  const parsed = Schemas.analyticsResponse.parse(data[0]);
+  const parsed = Schemas.analytics.response.parse(data[0]);
 
   await redis.set(cacheKey, JSON.stringify(parsed), {
     expiration: { type: 'EX', value: 60 * 5 },
