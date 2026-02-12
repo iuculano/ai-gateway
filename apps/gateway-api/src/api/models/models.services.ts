@@ -33,7 +33,7 @@ async function getModel(id: string) : Promise<GetModelResponse> {
     throw new HTTPException(404);
   }
 
-  const parsed = Schemas.getModelResponse.parse(result[0]);
+  const parsed = Schemas.getModel.response.parse(result[0]);
   return parsed;
 }
 
@@ -69,7 +69,7 @@ async function getModelBySlug(slug: string) : Promise<GetModelResponse> {
 
   // I'm wondering if I even need to cache here - the query is very cheap.
   // This endpoint is called on every inference, though, maybe worth it?
-  const parsed = Schemas.getModelResponse.parse(result[0]);
+  const parsed = Schemas.getModel.response.parse(result[0]);
   return parsed;
 }
 
@@ -104,7 +104,7 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
     ? result[result.length - 1]?.id ?? null
     : null;
 
-  const parsed = Schemas.listModelsResponse.parse({ data: result, next: nextCursor });
+  const parsed = Schemas.listModels.response.parse({ data: result, next: nextCursor });
   return parsed;
 }
 
@@ -131,7 +131,7 @@ async function createModel(request: CreateModelRequest) : Promise<CreateModelRes
     });
   }
 
-  const parsed = Schemas.createModelResponse.parse(result[0]);
+  const parsed = Schemas.createModel.response.parse(result[0]);
   return parsed;
 }
 
@@ -158,7 +158,7 @@ async function updateModel(id: string, request: UpdateModelRequest) : Promise<Up
     throw new HTTPException(404);
   }
 
-  const parsed = Schemas.updateModelResponse.parse(result[0]);
+  const parsed = Schemas.updateModel.response.parse(result[0]);
   return parsed;
 }
 
@@ -182,8 +182,6 @@ async function deleteModel(id: string) : Promise<DeleteModelResponse> {
   if (!result[0]) {
     throw new HTTPException(404);
   }
-
-  return null as DeleteModelResponse;
 }
 
 export default {

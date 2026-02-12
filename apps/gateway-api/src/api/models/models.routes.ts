@@ -6,14 +6,14 @@ const getModel = createRoute({
   method: 'get' as const,
   path: '/models/:id',
   request: {
-    params: Schemas.getModelRequest,
+    params: Schemas.getModel.params,
   },
   responses: {
     200: {
       description: 'Model retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.getModelResponse,
+          schema: Schemas.getModel.response,
         },
       },
     },
@@ -24,14 +24,14 @@ const listModels = createRoute({
   method: 'get' as const,
   path: '/models',
   request: {
-    query: Schemas.listModelsRequest
+    query: Schemas.listModels.query
   },
   responses: {
     200: {
       description: 'Models retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.listModelsResponse,
+          schema: Schemas.listModels.response,
         },
       },
     },
@@ -46,7 +46,7 @@ const createModel = createRoute({
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.createModelRequest,
+          schema: Schemas.createModel.body,
         },
       },
     }
@@ -56,7 +56,7 @@ const createModel = createRoute({
       description: 'Model created successfully',
       content: {
         'application/json': {
-          schema: Schemas.createModelResponse,
+          schema: Schemas.createModel.response,
         },
       },
     },
@@ -67,12 +67,12 @@ const updateModel = createRoute({
   method: 'patch' as const,
   path: '/models/:id',
   request: {
-    params: Schemas.getModelRequest,
+    params: Schemas.getModel.params,
     body: {
       required: true,
       content: {
         'application/json': {
-          schema: Schemas.updateModelRequest,
+          schema: Schemas.updateModel.body,
         },
       },
     },
@@ -82,7 +82,7 @@ const updateModel = createRoute({
       description: 'Logs retrieved successfully',
       content: {
         'application/json': {
-          schema: Schemas.updateModelResponse,
+          schema: Schemas.updateModel.response,
         },
       },
     },
@@ -93,15 +93,7 @@ const deleteModel = createRoute({
   method: 'delete' as const,
   path: '/models/:id',
   request: {
-    params: Schemas.deleteModelRequest,
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.updateModelRequest,
-        },
-      },
-    },
+    params: Schemas.deleteModel.params,
   },
   responses: {
     204: {

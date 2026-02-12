@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi';
+import { createSchema } from '@lib/schema';
 
 
 const modelShape = z.object({
@@ -13,66 +14,79 @@ const modelShape = z.object({
   updated_at: z.date().transform((date) => date.toISOString()),
 });
 
-const getModelRequest = z.object({
-  id: z.uuidv7(),
+const getModel = createSchema({
+  params: z.object({
+    id: z.uuidv7(),
+  }),
+
+  response: modelShape,
 });
 
-const getModelResponse = modelShape;
+const listModels = createSchema({
+  query: z.object({
+    name: z.string().optional(),
+    provider: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+    after_id: z.uuidv7().optional(), // UUIDv7 cursor
+  }),
 
-const listModelsRequest = z.object({
-  name: z.string().optional(),
-  provider: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-  after_id: z.uuidv7().optional(), // UUIDv7 cursor
+  response: z.object({
+    data: z.array(modelShape),
+    meta: z.object({
+      oldest_id: z.uuidv7().nullable(),
+      more_data: z.boolean()
+    }),
+  }),
 });
 
-const listModelsResponse = z.object({
-  data: z.array(modelShape),
-  next: z.uuidv7().nullable(),
+const createModel = createSchema({
+  body: modelShape.omit({
+    id: true,
+    created_at: true,
+    updated_at: true,
+  }),
+
+  response: modelShape,
 });
 
-const createModelRequest = modelShape.omit({ 
-  id: true, 
-  created_at: true,
-  updated_at: true,
+const updateModel = createSchema({
+  params: z.object({
+    id: z.uuidv7(),
+  }),
+
+  body: modelShape.partial().omit({
+    id: true,
+    created_at: true,
+    updated_at: true,
+  }),
+
+  response: modelShape,
 });
 
-const createModelResponse = modelShape;
+const deleteModel = createSchema({
+  params: z.object({
+    id: z.uuidv7(),
+  }),
 
-const updateModelRequest = modelShape.partial().omit({
-  id: true,         // ID is not updated
-  created_at: true, // Created at is not updated;
-  updated_at: true, // Updated automatically
+  response: z.void(),
 });
 
-const updateModelResponse = modelShape;
-
-const deleteModelRequest = z.object({
-  id: z.uuidv7(),
-});
-
-const deleteModelResponse = z.never();
-
-export type GetModelRequest = z.infer<typeof getModelRequest>;
-export type GetModelResponse = z.infer<typeof getModelResponse>;
-export type ListModelsRequest = z.infer<typeof listModelsRequest>;
-export type ListModelsResponse = z.infer<typeof listModelsResponse>;
-export type CreateModelRequest = z.infer<typeof createModelRequest>;
-export type CreateModelResponse = z.infer<typeof createModelResponse>;
-export type UpdateModelRequest = z.infer<typeof updateModelRequest>;
-export type UpdateModelResponse = z.infer<typeof updateModelResponse>;
-export type DeleteModelRequest = z.infer<typeof deleteModelRequest>;
-export type DeleteModelResponse = z.infer<typeof deleteModelResponse>;
+export type GetModelParams = z.infer<typeof getModel.params>;
+export type GetModelResponse = z.infer<typeof getModel.response>;
+export type ListModelsRequest = z.infer<typeof listModels.query>;
+export type ListModelsResponse = z.infer<typeof listModels.response>;
+export type CreateModelRequest = z.infer<typeof createModel.body>;
+export type CreateModelResponse = z.infer<typeof createModel.response>;
+export type UpdateModelRequest = z.infer<typeof updateModel.body>;
+export type UpdateModelResponse = z.infer<typeof updateModel.response>;
+export type DeleteModelRequest = z.infer<typeof deleteModel.params>;
+export type DeleteModelResponse = z.infer<typeof deleteModel.response>;
 
 export default {
-  getModelRequest,
-  getModelResponse,
-  listModelsRequest,
-  listModelsResponse,
-  createModelRequest,
-  createModelResponse,
-  updateModelRequest,
-  updateModelResponse,
-  deleteModelRequest,
-  deleteModelResponse,
+  getModel,
+  listModels,
+  createModel,
+  updateModel,
+  deleteModel,
 };
+
