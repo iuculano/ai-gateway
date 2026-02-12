@@ -8,7 +8,7 @@ import {
 
 // Holds (potentially dynamic) stateful application settings.
 export const settings = pgTable('settings', {
-  key: text('key').primaryKey(),
-  value: jsonb('value').notNull().$type<Record<string, unknown>>().default({}),
-  updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  key: text().primaryKey(),
+  value: jsonb().notNull().$type<Record<string, unknown>>().default({}),
+  updated_at: timestamp({ withTimezone: true }).defaultNow(),
 });

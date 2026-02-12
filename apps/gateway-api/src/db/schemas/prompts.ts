@@ -3,24 +3,24 @@ import { uuidv7 } from 'uuidv7';
 
 
 export const prompts = pgTable('prompts', {
-  id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
-  name: text('name').notNull().unique(),
-  description: text('description'),
-  activeVersion: integer('active_version'),
-  tags: jsonb('tags').$type<Record<string, string>>().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  id: uuid().primaryKey().$defaultFn(() => uuidv7()),
+  name: text().notNull().unique(),
+  description: text(),
+  active_version: integer(),
+  tags: jsonb().$type<Record<string, string>>().default({}),
+  created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
 export const promptVersions = pgTable('prompt_versions', {
-  id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
+  id: uuid().primaryKey().$defaultFn(() => uuidv7()),
 
-  promptId: uuid('prompt_id')
+  prompt_id: uuid()
     .notNull()
     .references(() => prompts.id, { onDelete: 'cascade' }),
 
-  prompt: text('prompt').notNull(),
-  version: integer('version').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  prompt: text().notNull(),
+  version: integer().notNull(),
+  created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });

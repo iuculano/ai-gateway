@@ -15,13 +15,13 @@ import { uuidv7 } from 'uuidv7';
 // Representation of an LLM that is available to inference.
 // Provider must be set to a supported provider.
 export const models = pgTable('models', {
-  id: uuid('id').primaryKey().$defaultFn(() => uuidv7()),
-  name: text('name').notNull(), // e.g., 'gpt-4-turbo'
-  provider: text('provider').notNull(),
-  cost_input: numeric('cost_input', { precision: 20, scale: 12 }).$type<number>().notNull().default(0),
-  cost_output: numeric('cost_output', { precision: 20, scale: 12 }).$type<number>().notNull().default(0),
-  config: jsonb('config').$type<Record<string, unknown>>().default({}),
-  tags: jsonb('tags').$type<Record<string, unknown>>().default({}),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  id: uuid().primaryKey().$defaultFn(() => uuidv7()),
+  name: text().notNull(), // e.g., 'gpt-4-turbo'
+  provider: text().notNull(),
+  cost_input: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),
+  cost_output: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),
+  config: jsonb().$type<Record<string, unknown>>().default({}),
+  tags: jsonb().$type<Record<string, unknown>>().default({}),
+  created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
