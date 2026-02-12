@@ -2,9 +2,10 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { swaggerUI } from '@hono/swagger-ui'
 import healthHandlers from './api/health/health.handlers';
 import analyticsHandlers from './api/analytics/analytics.handlers';
+import inferenceHandlers from './api/inference/inference.handlers';
 import logsHandlers from './api/logs/logs.handlers';
 import modelsHandlers from './api/models/models.handlers';
-import inferenceHandlers from './api/inference/inference.handlers';
+import promptsHandlers from './api/prompts/prompts.handlers';
 
 // Middleware
 import { secureHeaders } from 'hono/secure-headers'
@@ -34,8 +35,10 @@ app.get('/docs', swaggerUI({
 
 app.route('/', healthHandlers);
 app.route('/v1', analyticsHandlers);
+app.route('/v1', inferenceHandlers);
 app.route('/v1', logsHandlers);
 app.route('/v1', modelsHandlers);
-app.route('/v1', inferenceHandlers);
+app.route('/v1', promptsHandlers);
+
 
 export default app;
