@@ -1,26 +1,32 @@
 import { z } from '@hono/zod-openapi';
+import { createSchema } from '@lib/schema';
 
 
-const livezResponse = z.object({
-  status: z.literal('alive'),
-});
-
-const healthzResponse = z.object({
-  status: z.literal('ok'),
-});
-
-const readyzResponse = z.object({
-  status: z.union([z.literal('ok'), z.literal('degraded')]),
-  checks: z.object({
-    db: z.boolean(),
-    db_tables: z.boolean(),
-    redis: z.boolean(),
+const livez = createSchema({
+  response: z.object({
+    status: z.literal('alive'),
   }),
 });
 
+const healthz = createSchema({
+  response: z.object({
+    status: z.literal('ok'),
+  }),
+});
+
+const readyz = createSchema({
+  response: z.object({
+    status: z.union([z.literal('ok'), z.literal('degraded')]),
+    checks: z.object({
+      db: z.boolean(),
+      db_tables: z.boolean(),
+      redis: z.boolean(),
+    }),
+  }),
+});
 
 export default {
-  livezResponse,
-  healthzResponse,
-  readyzResponse,
+  livez,
+  healthz,
+  readyz,
 };

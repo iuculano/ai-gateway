@@ -10,7 +10,7 @@ const livez = createRoute({
       description: 'Service liveliness status',
       content: {
         'application/json': {
-          schema: Schemas.livezResponse,
+          schema: Schemas.livez.response,
         },
       },
     },
@@ -25,7 +25,7 @@ const healthz = createRoute({
       description: 'Service health status',
       content: {
         'application/json': {
-          schema: Schemas.healthzResponse,
+          schema: Schemas.healthz.response,
         },
       },
     },
@@ -40,7 +40,7 @@ const readyz = createRoute({
       description: 'Service is healthy',
       content: {
         'application/json': {
-          schema: Schemas.readyzResponse,
+          schema: Schemas.readyz.response,
         },
       },
     },
@@ -48,7 +48,7 @@ const readyz = createRoute({
       description: 'One or more dependencies are failing',
       content: {
         'application/json': {
-          schema: Schemas.readyzResponse,
+          schema: Schemas.readyz.response,
         },
       },
     },
