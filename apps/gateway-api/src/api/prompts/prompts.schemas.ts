@@ -6,7 +6,7 @@ const promptShape = z.object({
   id: z.uuidv7(),
   name: z.string(),
   description: z.string().optional(),
-  active_version: z.number().optional(),
+  active_version: z.number().nullable().optional(),
   tags: z.record(z.string(), z.string()).optional(),
   created_at: z.date().transform((date) => date.toISOString()),
   updated_at: z.date().transform((date) => date.toISOString()),
@@ -73,7 +73,7 @@ const promptVersionShape = z.object({
   id: z.uuidv7(),
   prompt_id: z.uuidv7(),
   prompt: z.string(),
-  version: z.number().positive(),
+  version: z.coerce.number().positive(),
   created_at: z.date().transform((date) => date.toISOString()),
   updated_at: z.date().transform((date) => date.toISOString()),
 });
@@ -81,7 +81,7 @@ const promptVersionShape = z.object({
 const getPromptVersion = createSchema({
   params: z.object({
     id: z.uuidv7(),
-    version: z.number().positive(),
+    version: z.coerce.number().positive(),
   }),
 
   response: promptVersionShape,
@@ -140,7 +140,7 @@ const updatePromptVersion = createSchema({
 const deletePromptVersion = createSchema({
   params: z.object({
     id: z.uuidv7(),
-    version: z.number().positive(),
+    version: z.coerce.number().positive(),
   }),
   
   response: z.void(),
@@ -149,7 +149,7 @@ const deletePromptVersion = createSchema({
 const renderPromptVersion = createSchema({
   params: z.object({
     id: z.uuidv7(),
-    version: z.number().positive(),
+    version: z.coerce.number().positive(),
   }),
 
   body: z.object({
