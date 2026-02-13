@@ -48,4 +48,33 @@ app.openapi(Routes.createModel, async (c) => {
   return c.json(result, 201);
 });
 
+/**
+ * PATCH /models/:id
+ * Controller to handle updating an existing model.
+ *
+ * @returns
+ * - 200 OK with the updated model on success.
+ */
+app.openapi(Routes.updateModel, async (c) => {
+  const params = c.req.valid('param');
+  const json = c.req.valid('json');
+  const result = await Service.updateModel(params.id, json);
+
+  return c.json(result, 200);
+});
+
+/**
+ * DELETE /models/:id
+ * Controller to handle deletion of an existing model.
+ *
+ * @returns
+ * - 204 No Content on success.
+ */
+app.openapi(Routes.deleteModel, async (c) => {
+  const params = c.req.valid('param');
+  await Service.deleteModel(params.id);
+
+  return c.body(null, 204);
+});
+
 export default app;

@@ -98,13 +98,23 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
     .from(models)
     .where(whereClause)
     .orderBy(desc(models.id))
-    .limit(request.limit);
+    .limit(request.limit + 1);
 
-  const nextCursor = result.length === (request.limit)
-    ? result[result.length - 1]?.id ?? null
-    : null;
+  const hasMoreData = result.length > request.limit;
+  if (hasMoreData) {
+    result.pop(); // Burn off the extra record.
+  }
 
-  const parsed = Schemas.listModels.response.parse({ data: result, next: nextCursor });
+  const oldestId = result[result.length - 1]?.id ?? null;
+
+  const parsed = Schemas.listModels.response.parse({
+    data: result,
+    meta: {
+      oldest_id: oldestId,
+      more_data: hasMoreData,
+    },
+  });
+
   return parsed;
 }
 
@@ -116,9 +126,6 @@ async function listModels(request: ListModelsRequest) : Promise<ListModelsRespon
  *
  * @returns
  * A promise that resolves to the created model data.
- *
- * @throws {HTTPException}
- * If the model creation fails.
  */
 async function createModel(request: CreateModelRequest) : Promise<CreateModelResponse> {
   const result = await db.insert(models)
