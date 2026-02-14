@@ -61,7 +61,6 @@ async function getOrganizationByExternalIdpId(issuer: string, id: string) : Prom
       eq(organizationIdpLinks.organization_id, organizations.id),
     )
     .where(and(
-      eq(organizationIdpLinks.issuer, issuer),
       eq(organizationIdpLinks.external_organization_id, id),
     ))
     .limit(1);
