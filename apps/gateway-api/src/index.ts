@@ -12,6 +12,7 @@ import { secureHeaders } from 'hono/secure-headers'
 import { requestId } from 'hono/request-id'
 import { requestLogger } from './middleware/request-logger';
 import { errorHandler } from './middleware/error-handler';
+import { authenticate } from '@middleware/authenticate';
 
 
 export const app = new OpenAPIHono();
@@ -32,6 +33,8 @@ app.doc31('/open-api.json', {
 app.get('/docs', swaggerUI({
   url: '/open-api.json'
 }));
+
+app.use('/v1/*', authenticate());
 
 app.route('/', healthHandlers);
 app.route('/v1', analyticsHandlers);

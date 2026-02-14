@@ -4,23 +4,28 @@ import { createCacheKey } from '@lib/redis';
 import { HTTPException } from 'hono/http-exception';
 import { LRUCache } from 'lru-cache';
 import * as jose from 'jose';
-import type { Or } from "drizzle-orm";
+import { environment } from "./environment";
+
 
 
 interface Organization {
   id: string;
   name: string;
   status: string;
-  issuer: string;
-  openidUrl: string;
 }
 
-interface AuthenticatedRequest extends Organization {
-  name: string;
-  firstName: string;
-  lastName: string;
+interface User {
+  displayName?: string;
+  firstName?: string;
+  lastName?: string;
   username: string; 
   email: string;
+  role?: string;
+}
+
+export interface ValidatedToken {
+  organization: Organization;
+  user: User;
 }
 
 
@@ -30,6 +35,18 @@ const organizationCache = new LRUCache<string, Organization>({
   ttl: 1000 * 60 * 15,
 });
 
+/**
+ * Fetches an organization from the database based on the provided external id
+ * and issuer. This is so we can expose only the idp-agnostic representation of
+ * an organization and abstract away the details of the underlying identity
+ * provider.
+ *
+ * Results are cached in-process & in-memory for 15 minutes. This is hot and
+ * tries to avoid a network call.
+ *
+ * @returns
+ * - 200 OK with the rendered prompt on success.
+ */
 async function getOrganizationByExternalIdpId(issuer: string, id: string) : Promise<Organization> {
   const cacheKey = await createCacheKey('organizations:', `${issuer}:${id}`);
   const existing = organizationCache.get(cacheKey);
@@ -65,23 +82,32 @@ async function getOrganizationByExternalIdpId(issuer: string, id: string) : Prom
     id: result[0].organizations.id,
     name: result[0].organizations.name,
     status: result[0].organizations.status,
-    issuer: result[0].organization_idp_links.issuer,
-    openidUrl: result[0].organization_idp_links.openid_url,
   };
 
   organizationCache.set(cacheKey, organization);
   return organization;
 }
 
+interface OpenIDConfig {
+  issuer: string;
+  userinfo_endpoint: string;
+  jwks_uri: string;
+}
+
 // What kind of cache strategy makes sense here? Is this dumb?
-const openidJwkUrlCache = new LRUCache<string, string>({
+const openidUrlCache = new LRUCache<string, OpenIDConfig>({
   max: 1000,
   ttl: 1000 * 60 * 60, // 1 hour
 });
 
-async function getCachedJwksUrl(openidUrl: string): Promise<string> {
-  const cacheKey = await createCacheKey('openid-jwks-url:', openidUrl);
-  const existing = openidJwkUrlCache.get(cacheKey);
+/**
+ * Fetches and cachhes OpenID configuration endpoints from the given URL.
+ * 
+ * Intended to reduce network calls.
+ */
+async function getCachedOpenIDConfig(openidUrl: string): Promise<OpenIDConfig> {
+  const cacheKey = await createCacheKey('openid-config:', openidUrl);
+  const existing = openidUrlCache.get(cacheKey);
   if (existing) {
     return existing;
   }
@@ -93,31 +119,112 @@ async function getCachedJwksUrl(openidUrl: string): Promise<string> {
     });
   }
 
-  const openidConfig = await data.json() as { jwks_uri: string };
-  if (!openidConfig.jwks_uri) {
+  const openidConfig = await data.json() as {
+    issuer: string,
+    userinfo_endpoint: string,
+    jwks_uri: string ,
+  };
+
+  if (!openidConfig.issuer || !openidConfig.jwks_uri || !openidConfig.userinfo_endpoint) {
     throw new HTTPException(500, {
-      message: 'OpenID configuration missing jwks_uri.',
+      message: 'OpenID configuration missing required fields.',
     });
   }
 
-  const url = openidConfig.jwks_uri;
-  openidJwkUrlCache.set(cacheKey, url);
-
-  return url;
+  openidUrlCache.set(cacheKey, openidConfig);
+  return openidConfig;
 }
 
-async function validateJwt(token: string, organization: Organization): Promise<unknown> {
-  const jwksUrl = await getCachedJwksUrl(organization.openidUrl);
+
+const userInfoCache = new LRUCache<string, User>({
+  max: 10000,
+  ttl: 1000 * 60 * 5, 
+});
+
+/**
+ * POST /prompts/:id/versions/:version
+ * Render a prompt version with provided inputs, replacing the templating.
+ *
+ * @returns
+ * - 200 OK with the rendered prompt on success.
+ */
+async function getCachedUserInfo(token: string, endpoint: string): Promise<User> {
+  // Be mindful here of the cache key - it's hashed and the direct token is
+  // never stored.
+  const cacheKey = await createCacheKey('openid-user-info:', token);
+  const existing = await userInfoCache.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new HTTPException(500, {
+      message: 'Failed to fetch user info.',
+    });
+  }
+
+  const data = await response.json();
+
+  // Roles come in with a bit of a fugly format from ZITADEL... need to parse
+  // them out...
+  //
+  // "urn:zitadel:iam:org:project:roles":{ "role_name_here": {... },
+  // }
+  //
+  // There can technically be multiple roles, but for now just assume one.
+  const claim = data['urn:zitadel:iam:org:project:roles'];
+  const role = data.role = claim ? Object.keys(claim)[0] : undefined;
+
+  const userInfo: User = {
+    displayName: data.name,
+    firstName: data.given_name,
+    lastName: data.family_name,
+    username: data.preferred_username,
+    email: data.email,
+    role: role,
+  };
+
+  userInfoCache.set(cacheKey, userInfo);
+  return userInfo;
+}
+
+let jwksCache: unknown = null;
+
+export async function validateJwt(token: string): Promise<ValidatedToken> {
+  const openidConfig = await getCachedOpenIDConfig(`${environment.IDENTITY_PROVIDER_ISSUER}/.well-known/openid-configuration`);
 
   // If I'm understanding this right, this should handle caching and refetching
   // the JWKS as needed...
   // https://github.com/panva/jose/discussions/653
-  const jwks = await jose.createRemoteJWKSet(new URL(jwksUrl));
+  if (!jwksCache) {
+    jwksCache = jose.createRemoteJWKSet(new URL(openidConfig.jwks_uri));
+  }
 
-  const { payload } = await jose.jwtVerify(token, jwks, {
-    issuer: organization.issuer,
+  const { payload } = await jose.jwtVerify(token, jwksCache as never, {
+    issuer: environment.IDENTITY_PROVIDER_ISSUER,
   });
 
-  return payload;
-}
+  // TODO: adapt tokens, support multiple idps.
+  const externalOrganizationId = payload['urn:zitadel:iam:user:resourceowner:id'] as string;
+  if (!externalOrganizationId) {
+    // Technically valid, but missing an expected claim that we need to identify
+    // the user.
+    throw new HTTPException(401, {
+      message: 'Invalid token: missing required claims.',
+    });
+  }
 
+  const org = await getOrganizationByExternalIdpId(openidConfig.issuer, externalOrganizationId);
+  const user = await getCachedUserInfo(token, openidConfig.userinfo_endpoint);
+
+  return {
+    organization: org,
+    user: user,
+  };
+}
