@@ -1,4 +1,5 @@
 import ModelService from '../models/models.services';
+import WebhookService from '../webhooks/webhooks.services';
 import Schemas, {
   type InferenceHeaders,
   type InferenceRequest,
@@ -36,10 +37,10 @@ interface CallableModel {
  *
  * @param model
  * The model name/identifier to retrieve.
- * 
+ *
  * @param apiKey
  * The API key to use for the model provider.
- * 
+ *
  * @param baseUrl
  * Optional base URL for the model provider API.
  *
@@ -142,7 +143,7 @@ async function updateLog(id: string, status: string) : Promise<void> {
 
 /**
  * Completes a log entry for an inference request.
- * 
+ *
  * This compresses and writes the request and response to storage, and then
  * updates the log entry to mark it as complete.
  *
@@ -200,13 +201,13 @@ async function pickWeightedModel(strategy: InferenceStrategy) : Promise<string> 
   const totalWeight = strategy.targets.reduce((sum, target) => sum + (target.weight || 0), 0);
 
   // Say Math.random() * 100 generates 72.5.
-  // 
+  //
   // Iteration 1 (Model A - Weight 50)
   // 72.5 < 50 == False
-  // 
+  //
   // Iteration 2 (Model B - Weight 30)
   // 72.5 < 80 == True
-  // 
+  //
   // In other words, the number fell within the 50 to 80 range.
   const random = Math.random() * totalWeight;
   let cumulative = 0;
@@ -304,12 +305,18 @@ async function callModel(headers: InferenceHeaders, request: InferenceRequestSim
     response_time_ms: (responseTimestampEnd - responseTimestampStart),
   }
 
-  await completeLog(log, request, response)
+  await completeLog(log, request, response);
+
+  const webhookId = headers['ai-webhook-id'];
+  if (webhookId) {
+    await WebhookService.submitWebhookRequest(webhookId, log);
+  }
+
   return response;
 }
 
 /**
- * Sstreaming call to a model.
+ * Streaming call to a model.
  *
  * @param headers
  * The headers containing authentication and configuration for the model
@@ -394,7 +401,7 @@ async function callModelStreaming(headers: InferenceHeaders, request: InferenceR
  */
 async function submitInference(headers: InferenceHeaders, request: InferenceRequest): Promise<InferenceResponse> {
   // Simple inference type.
-  if ('model' in request) {    
+  if ('model' in request) {
     return await callModel(headers, request);
   }
 
@@ -409,7 +416,7 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
           parameters: target.parameters,
           messages: request.messages,
         });
-        
+
         return llmResponse;
       }
 
@@ -418,7 +425,7 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
         continue;
       }
     }
-    
+
     throw new HTTPException(500, {
       message: 'All models, including fallbacks, failed',
     });
@@ -446,7 +453,7 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
     const primaryPromise = callModel(headers, {
       model: primaryTarget.model,
       parameters: primaryTarget.parameters,
-      messages: request.messages,      
+      messages: request.messages,
     });
 
 
@@ -458,8 +465,8 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
           parameters: target.parameters,
           messages: request.messages,
         });
-      } 
-      
+      }
+
       catch {
         // Just eat errors from shadow models.
       }
@@ -467,7 +474,7 @@ async function submitInference(headers: InferenceHeaders, request: InferenceRequ
 
     Promise.all(shadowPromises);
 
-    const response = await primaryPromise; 
+    const response = await primaryPromise;
     return response;
   }
 

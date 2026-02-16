@@ -10,6 +10,7 @@ const inferenceHeaders = z.object({
   'ai-log-omit-request': z.boolean().optional(),
   'ai-max-retries': z.number().int().optional(),
   'ai-timeout-ms': z.number().int().optional(),
+  'ai-webhook-id': z.string().optional(),
 
   // // Unused for now. AI SDK currently has no abstraction over moderations.
   // // Will build my own later.
@@ -59,7 +60,7 @@ const inferenceComplex = z.object({
 });
 
 const inferenceRequest = z.union([
-  inferenceSimple, 
+  inferenceSimple,
   inferenceComplex,
 ]);
 

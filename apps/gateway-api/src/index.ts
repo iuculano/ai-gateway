@@ -6,7 +6,7 @@ import inferenceHandlers from './api/inference/inference.handlers';
 import logsHandlers from './api/logs/logs.handlers';
 import modelsHandlers from './api/models/models.handlers';
 import promptsHandlers from './api/prompts/prompts.handlers';
-
+import webhooksHandlers from './api/webhooks/webhooks.handlers';
 // Middleware
 import { secureHeaders } from 'hono/secure-headers'
 import { requestId } from 'hono/request-id'
@@ -42,6 +42,6 @@ app.route('/v1', inferenceHandlers);
 app.route('/v1', logsHandlers);
 app.route('/v1', modelsHandlers);
 app.route('/v1', promptsHandlers);
-
+app.route('/v1', webhooksHandlers);
 
 export default app;
