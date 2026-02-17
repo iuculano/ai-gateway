@@ -1,8 +1,8 @@
 import { HTTPException } from 'hono/http-exception';
-import { db, sql, and, eq, desc, lt, asc, gt } from '@lib/drizzle';
-import { redis, createCacheKey } from '@lib/redis';
-import { logs } from '../../db/schemas/logs'
-import { s3 } from '@lib/s3';
+import { db, sql, and, eq, desc, lt, asc, gt } from '@repo/drizzle';
+import { redis,  } from '@repo/redis';
+import { logs } from '@repo/drizzle/schemas';
+import { s3 } from '@repo/object-storage';
 import Schemas, {
   type GetLogResponse,
   type GetLogDataResponse,
@@ -14,7 +14,7 @@ import Schemas, {
   type UpdateLogResponse,
   type DeleteLogResponse,
 } from './logs.schemas';
-import { parseTags } from '@lib/utils';
+import { parseTags, createCacheKey } from '@repo/core';
 
 
 /**
@@ -98,20 +98,20 @@ async function listLogs(request: ListLogsRequest) : Promise<ListLogsResponse> {
   // Query (after_id):         WHERE id < 15 ORDER BY id DESC LIMIT 3
   // Query returns:            [14, 13, 12] (Correct neighbors)
   // API reversed and returns: [14, 13, 12] (Nothing to change)
-  // 
+  //
   // Query (before_id):        WHERE id > 15 ORDER BY id ASC LIMIT 3
   // Query returns:            [16, 17, 18] (Correct neighbors)
   // API reversed and returns: [18, 17, 16] (Reversed in code)
-  // 
+  //
   // Query (before_id):        WHERE id > 15 ORDER BY id DESC LIMIT 3
   // Query returns:            [20, 19, 18] (Starts from newest in DB)
   // API reversed and returns: [20, 19, 18] (Results in a gap)
   //
-  // TLDR: 
+  // TLDR:
   // Need to order ASC when using before_id to get correct neighbors then
   // reverse after in code.
-  const orderByClause = request.before_id ? 
-    asc(logs.id) : 
+  const orderByClause = request.before_id ?
+    asc(logs.id) :
     desc(logs.id);
 
   const result = await db.select()

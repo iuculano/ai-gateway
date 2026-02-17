@@ -1,11 +1,11 @@
 import { z } from '@hono/zod-openapi';
-import { createSchema } from '@lib/schema';
+import { createSchema } from '@repo/hono';
 
 
 const promptShape = z.object({
   id: z.uuidv7(),
   name: z.string(),
-  description: z.string().optional(),
+  description: z.string().nullish(),
   active_version: z.number().nullable().optional(),
   tags: z.record(z.string(), z.string()).optional(),
   created_at: z.date().transform((date) => date.toISOString()),
@@ -116,7 +116,7 @@ const createPromptVersion = createSchema({
   body: z.object({
     prompt: z.string(),
   }),
-  
+
   response: promptVersionShape,
 });
 
@@ -133,7 +133,7 @@ const updatePromptVersion = createSchema({
     created_at: true,
     updated_at: true,
   }),
-  
+
   response: promptVersionShape,
 });
 
@@ -142,7 +142,7 @@ const deletePromptVersion = createSchema({
     id: z.uuidv7(),
     version: z.coerce.number().positive(),
   }),
-  
+
   response: z.void(),
 });
 

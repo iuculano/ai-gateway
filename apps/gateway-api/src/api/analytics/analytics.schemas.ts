@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { createSchema } from '@lib/schema';
+import { createSchema } from '@repo/hono';
 
 const analytics = createSchema({
   body: z.object({
@@ -20,10 +20,10 @@ const analytics = createSchema({
     total_input_tokens: z.number(),
     total_output_tokens: z.number(),
 
-    average_input_tokens: z.number().nullable(), 
+    average_input_tokens: z.number().nullable(),
     average_output_tokens: z.number().nullable(),
 
-    average_output_tokens_per_second: z.number().nullable(), 
+    average_output_tokens_per_second: z.number().nullable(),
     // average_time_to_first_token_ms: z.number().nullable(),
 
     cost_total: z.number(),
@@ -33,7 +33,7 @@ const analytics = createSchema({
     average_latency_ms: z.number().nullable(),
     maximum_latency_ms: z.number().nullable(),
     minimum_latency_ms: z.number().nullable(),
-    
+
     p50_latency_ms: z.number().nullable(),
     p95_latency_ms: z.number().nullable(),
     p99_latency_ms: z.number().nullable(),

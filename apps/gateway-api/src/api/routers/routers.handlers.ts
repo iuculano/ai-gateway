@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import Routes from './routers.routes';
 import Services from './routers.services';
-import { zodExceptionHook } from '@middleware/error-handler';
+import { zodExceptionHook } from '@repo/hono';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
@@ -23,7 +23,7 @@ app.openapi(Routes.getRouter, async (c) => {
 /**
  * GET /routers
  * Queries routers with optional filter for tags.
- * 
+ *
  * Supports pagination.
  *
  * @returns
@@ -60,7 +60,7 @@ app.openapi(Routes.createRouter, async (c) => {
 app.openapi(Routes.updateRouter, async (c) => {
   const params = c.req.valid('param');
   const body = c.req.valid('json');
-  const result = await Services.updateRouter(params.id, body);  
+  const result = await Services.updateRouter(params.id, body);
 
   return c.json(result, 200);
 });

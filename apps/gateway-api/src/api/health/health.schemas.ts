@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { createSchema } from '@lib/schema';
+import { createSchema } from '@repo/hono';
 
 
 const livez = createSchema({

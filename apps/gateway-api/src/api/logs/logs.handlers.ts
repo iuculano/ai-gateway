@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import Routes from './logs.routes';
 import Service from './logs.services';
-import { zodExceptionHook } from '../../middleware/error-handler';
+import { zodExceptionHook } from '@repo/hono';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
@@ -72,7 +72,7 @@ app.openapi(Routes.createLog, async (c) => {
 app.openapi(Routes.updateLog, async (c) => {
   const params = c.req.valid('param');
   const json = c.req.valid('json');
-  const result = await Service.updateLog(params.id, json);  
+  const result = await Service.updateLog(params.id, json);
 
   return c.json(result, 200);
 });
@@ -86,7 +86,7 @@ app.openapi(Routes.updateLog, async (c) => {
  */
 app.openapi(Routes.deleteLog, async (c) => {
   const params = c.req.valid('param');
-  await Service.deleteLog(params.id);  
+  await Service.deleteLog(params.id);
 
   return c.body(null, 204);
 });

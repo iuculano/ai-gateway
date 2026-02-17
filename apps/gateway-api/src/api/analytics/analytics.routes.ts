@@ -1,6 +1,6 @@
 import { createRoute } from '@hono/zod-openapi';
 import Schemas from './analytics.schemas';
-import SchemasCommon from '@lib/errors';
+import { httpError } from '@repo/core';
 
 const postAnalytics = createRoute({
   method: 'post' as const,
@@ -28,7 +28,7 @@ const postAnalytics = createRoute({
       description: 'Internal server error',
       content: {
         'application/json': {
-          schema: SchemasCommon.httpError,
+          schema: httpError,
         },
       },
     },

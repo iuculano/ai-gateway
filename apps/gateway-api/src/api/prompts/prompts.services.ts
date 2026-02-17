@@ -1,7 +1,7 @@
 import { HTTPException } from 'hono/http-exception';
-import { and, db, eq, lt, sql } from '@lib/drizzle';
-import { parseTags } from '@lib/utils';
-import { prompts, promptVersions } from '@db/schemas/prompts';
+import { and, db, eq, lt, sql } from '@repo/drizzle';
+import { parseTags } from '@repo/core';
+import { prompts, promptVersions } from '@repo/drizzle/schemas';
 import Schemas, {
   type CreatePromptBody,
   type CreatePromptResponse,
@@ -198,7 +198,7 @@ async function getPromptVersion(id: string, version: number) : Promise<GetPrompt
  *
  * @param id
  * The ID of the prompt to retrieve.
- * 
+ *
  * @param query
  * The filter criteria for pagination, etc.
  *
@@ -237,7 +237,7 @@ async function listPromptVersions(id: string, query: ListPromptVersionsQuery) : 
 
 /**
  * Creates a new prompt version.
- * 
+ *
  * @param id
  * The ID of the parent prompt for which to create a new version.
  *
@@ -363,7 +363,7 @@ function tryRenderInternalSubstitution(substitution: string) : string | undefine
 }
 
 /**
- * 
+ *
  *
  * @param prompt The prompt string to render.
  *

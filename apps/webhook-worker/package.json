@@ -5,10 +5,10 @@
   },
   "dependencies": {
     "@hono/swagger-ui": "^0.5.3",
-    "@hono/zod-openapi": "^1.2.1",
-    "ai": "^6.0.86",
-    "dotenv": "^17.3.1",
-    "drizzle-orm": "^0.45.1",
+    "@hono/zod-openapi": "^1.2.2",
+    "@repo/core": "../../packages/core/",
+    "@repo/drizzle": "../../packages/drizzle/",
+    "@repo/hono": "../../packages/hono/",
     "hono": "^4.11.9"
   },
   "devDependencies": {
@@ -17,6 +17,6 @@
     "eslint": "^9.39.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.55.0"
+    "typescript-eslint": "^8.56.0"
   }
 }

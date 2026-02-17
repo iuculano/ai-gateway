@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import Routes from './prompts.routes';
 import Services from './prompts.services';
-import { zodExceptionHook } from '@middleware/error-handler';
+import { zodExceptionHook } from '@repo/hono';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
@@ -23,7 +23,7 @@ app.openapi(Routes.getPrompt, async (c) => {
 /**
  * GET /prompts
  * Queries prompts with optional filter for tags.
- * 
+ *
  * Supports pagination.
  *
  * @returns
@@ -60,7 +60,7 @@ app.openapi(Routes.createPrompt, async (c) => {
 app.openapi(Routes.updatePrompt, async (c) => {
   const params = c.req.valid('param');
   const body = c.req.valid('json');
-  const result = await Services.updatePrompt(params.id, body);  
+  const result = await Services.updatePrompt(params.id, body);
 
   return c.json(result, 200);
 });
@@ -96,7 +96,7 @@ app.openapi(Routes.getPromptVersion, async (c) => {
 /**
  * GET /prompts/:id/versions
  * Queries versions for a prompt.
- * 
+ *
  * Supports pagination.
  *
  * @returns

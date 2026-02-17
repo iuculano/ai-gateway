@@ -10,9 +10,7 @@ import webhooksHandlers from './api/webhooks/webhooks.handlers';
 // Middleware
 import { secureHeaders } from 'hono/secure-headers'
 import { requestId } from 'hono/request-id'
-import { requestLogger } from './middleware/request-logger';
-import { errorHandler } from './middleware/error-handler';
-import { authenticate } from '@middleware/authenticate';
+import { authenticate, errorHandler, requestLogger } from '@repo/hono';
 
 
 export const app = new OpenAPIHono();

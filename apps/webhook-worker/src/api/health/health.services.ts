@@ -1,4 +1,5 @@
-import { db } from '@lib/drizzle';
+import { db } from '@repo/drizzle';
+
 
 /**
  * Checks the connectivity to the PostgreSQL database by executing a simple

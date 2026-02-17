@@ -1,11 +1,11 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { streamSSE } from 'hono/streaming';
 import { getConnInfo } from 'hono/bun'
-import { enforceRateLimit, parseRateLimitHeader } from '@lib/rate-limiter';
+import { enforceRateLimit, parseRateLimitHeader } from '@repo/rate-limiter';
 import { HTTPException } from 'hono/http-exception';
 import Routes from './inference.routes';
 import Services from './inference.services';
-import { zodExceptionHook } from '../../middleware/error-handler';
+import { zodExceptionHook } from '@repo/hono';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });

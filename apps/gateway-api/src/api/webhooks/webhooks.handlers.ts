@@ -1,10 +1,26 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import Routes from './webhooks.routes';
 import Service from './webhooks.services';
-import { zodExceptionHook } from '../../middleware/error-handler';
+import { zodExceptionHook } from '@repo/hono';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
+
+// Need to define these up front because of how the routes are structured.
+// Static routes need to be before dynamic.
+app.openapi(Routes.listWebhookOutbox, async (c) => {
+  const query = c.req.valid('query');
+  const result = await Service.listWebhookOutbox(query);
+
+  return c.json(result, 200);
+});
+
+app.openapi(Routes.listWebhookDeliveries, async (c) => {
+  const query = c.req.valid('query');
+  const result = await Service.listWebhookDeliveries(query);
+
+  return c.json(result, 200);
+});
 
 /**
  * GET /webhooks/:id
@@ -75,13 +91,6 @@ app.openapi(Routes.deleteWebhook, async (c) => {
   await Service.deleteWebhook(params.id);
 
   return c.body(null, 204);
-});
-
-app.openapi(Routes.listWebhookOutbox, async (c) => {
-  const params = c.req.valid('param');
-  const result = await Service.listWebhookOutbox(params.id);
-
-  return c.json(result, 200);
 });
 
 export default app;

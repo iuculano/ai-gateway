@@ -122,6 +122,24 @@ const listWebhookOutbox = createRoute({
   },
 });
 
+const listWebhookDeliveries = createRoute({
+  method: 'get' as const,
+  path: '/webhooks/deliveries',
+  request: {
+    query: Schemas.listWebhookDeliveries.query,
+  },
+  responses: {
+    200: {
+      description: 'Webhook deliveries retrieved successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.listWebhookDeliveries.response,
+        },
+      },
+    },
+  },
+});
+
 export default {
   getWebhook,
   listWebhooks,
@@ -130,4 +148,5 @@ export default {
   deleteWebhook,
 
   listWebhookOutbox,
+  listWebhookDeliveries,
 };

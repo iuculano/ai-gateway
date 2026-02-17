@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import Routes from './health.routes';
 import Services from './health.services';
-import { zodExceptionHook } from '../../middleware/error-handler';
+import { zodExceptionHook } from '@repo/hono';
 
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
@@ -14,7 +14,7 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
  * - 200 on success.
  */
 app.openapi(Routes.livez, async (c) => {
-  return c.json({ 
+  return c.json({
     status: 'alive' as const ,
   }, 200);
 });
@@ -27,7 +27,7 @@ app.openapi(Routes.livez, async (c) => {
  * - 200 on success.
  */
 app.openapi(Routes.healthz, async (c) => {
-  return c.json({ 
+  return c.json({
     status: 'ok' as const,
   }, 200);
 });
@@ -42,7 +42,7 @@ app.openapi(Routes.healthz, async (c) => {
  */
 app.openapi(Routes.readyz, async (c) => {
   // List of tables to check existence of.
-  const tables = ['logs', 'models', 'settings'];
+  const tables = ['logs', 'models', 'organizations', 'prompts', 'routers', 'webhooks'];
 
   const checks = {
     db: await Services.checkPostgres(),
@@ -55,7 +55,7 @@ app.openapi(Routes.readyz, async (c) => {
   return c.json({
     status: allHealthy ? 'ok' as const : 'degraded' as const,
     checks,
-  }, 
+  },
   allHealthy ? 200 : 503);
 });
 

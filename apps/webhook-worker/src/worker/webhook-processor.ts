@@ -1,8 +1,7 @@
 // This is cursed, need to fix
-import { db, eq } from '@lib/drizzle';
-import { webhookDeliveries, webhookOutbox, webhooks } from '../../../gateway-api/src/db/schemas/webhooks';
-import { logs } from '../../../gateway-api/src/db/schemas/logs';
-import { environment } from '@lib/environment';
+import { db, eq } from '@repo/drizzle';
+import { logs, webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
+import { environment } from 'src/environment';
 
 
 export async function tickWebhookProcessor(): Promise<void> {

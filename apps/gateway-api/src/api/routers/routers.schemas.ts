@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { createSchema } from '@lib/schema';
+import { createSchema } from '@repo/hono';
 
 
 export const routerShape = z.object({
@@ -86,20 +86,20 @@ const endRule = baseRule.extend({
 });
 
 const operators = [
-  'exists', 
-  'not_exists', 
-  'equals', 
-  'not_equals', 
-  'greater', 
-  'less', 
-  'greater_equal', 
+  'exists',
+  'not_exists',
+  'equals',
+  'not_equals',
+  'greater',
+  'less',
+  'greater_equal',
   'less_equal'
 ] as const;
 
 const conditionRule = baseRule.extend({
   type: z.literal("condition"),
   inputs: z.record(z.string(), z.record(
-    z.enum(operators), 
+    z.enum(operators),
     z.union([z.string(), z.number(), z.boolean()]),
   )), // basically: value: { operator:  expected }
 });
@@ -138,19 +138,19 @@ const modelRule = baseRule.extend({
   }),
 });
 
-const rulesShape = z.array(z.discriminatedUnion('type', [
+const ruleShape = z.discriminatedUnion('type', [
   startRule,
   endRule,
   conditionRule,
   rateLimitRule,
   weightedRule,
   modelRule,
-]));
+]);
 
 const routerVersionShape = z.object({
   id: z.uuidv7(),
   router_id: z.uuidv7(),
-  rules: rulesShape,
+  rules: z.array(ruleShape),
   version: z.coerce.number().positive(),
   created_at: z.date().transform((date) => date.toISOString()),
   updated_at: z.date().transform((date) => date.toISOString()),
@@ -192,9 +192,9 @@ const createRouterVersion = createSchema({
   }),
 
   body: z.object({
-    rules: rulesShape,
+    rules: z.array(ruleShape),
   }),
-  
+
   response: routerVersionShape,
 });
 
@@ -205,9 +205,9 @@ const updateRouterVersion = createSchema({
   }),
 
   body: z.object({
-    rules: rulesShape,
+    rules: z.array(ruleShape),
   }),
-  
+
   response: routerVersionShape,
 });
 
@@ -216,12 +216,11 @@ const deleteRouterVersion = createSchema({
     id: z.uuidv7(),
     version: z.coerce.number().positive(),
   }),
-  
+
   response: z.void(),
 });
 
-
-export type RulesShape = z.infer<typeof rulesShape>;
+export type RuleShape = z.infer<typeof ruleShape>;
 
 export type GetRouterParams = z.infer<typeof getRouter.params>;
 export type GetRouterResponse = z.infer<typeof getRouter.response>;

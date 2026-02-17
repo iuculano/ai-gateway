@@ -1,5 +1,5 @@
-import { db } from '@lib/drizzle';
-import { redis } from '@lib/redis';
+import { db } from '@repo/drizzle';
+import { redis } from '@repo/redis';
 
 
 /**

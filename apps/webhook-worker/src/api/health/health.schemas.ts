@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { createSchema } from '@lib/schema';
+import { createSchema } from '@repo/hono';
 
 
 const livez = createSchema({
@@ -20,7 +20,6 @@ const readyz = createSchema({
     checks: z.object({
       db: z.boolean(),
       db_tables: z.boolean(),
-      redis: z.boolean(),
     }),
   }),
 });

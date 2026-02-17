@@ -1,6 +1,6 @@
 import { HTTPException } from 'hono/http-exception';
-import { db, and, eq, desc, lt, sql } from '@lib/drizzle';
-import { webhooks, webhookOutbox, webhookDeliveries } from '@db/schemas/webhooks';
+import { db, and, eq, desc, lt, sql } from '@repo/drizzle';
+import { webhooks, webhookOutbox, webhookDeliveries } from '@repo/drizzle/schemas';
 import Schemas, {
   type GetWebhookResponse,
   type ListWebhooksResponse,
@@ -15,7 +15,7 @@ import Schemas, {
   type ListWebhookDeliveriesQuery,
   type ListWebhookDeliveriesResponse,
 } from './webhooks.schemas';
-import { parseTags } from '@lib/utils';
+import { parseTags } from '@repo/core';
 
 
 /**

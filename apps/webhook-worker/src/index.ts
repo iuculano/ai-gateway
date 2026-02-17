@@ -5,8 +5,8 @@ import healthHandlers from './api/health/health.handlers';
 // Middleware
 import { secureHeaders } from 'hono/secure-headers'
 import { requestId } from 'hono/request-id'
-import { errorHandler } from './middleware/error-handler';
-import { environment } from '@lib/environment';
+import { errorHandler } from '@repo/hono';
+import { environment } from './environment';
 
 import { tickWebhookProcessor } from './worker/webhook-processor';
 

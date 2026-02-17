@@ -1,7 +1,7 @@
 import { HTTPException } from 'hono/http-exception';
-import { and, db, eq, lt, sql } from '@lib/drizzle';
-import { parseTags } from '@lib/utils';
-import { routers, routerVersions } from '@db/schemas/routers';
+import { and, db, eq, lt, sql } from '@repo/drizzle';
+import { parseTags } from '@repo/core';
+import { routers, routerVersions } from '@repo/drizzle/schemas';
 import Schemas, {
   type CreateRouterBody,
   type CreateRouterResponse,
@@ -14,6 +14,7 @@ import Schemas, {
   type ListRoutersResponse,
   type ListRouterVersionsQuery,
   type ListRouterVersionsResponse,
+  type RuleShape,
   type UpdateRouterBody,
   type UpdateRouterResponse,
   type UpdateRouterVersionBody,
@@ -176,7 +177,7 @@ async function getRouterVersion(id: string, version: number) : Promise<GetRouter
  *
  * @param id
  * The ID of the prompt to retrieve.
- * 
+ *
  * @param query
  * The filter criteria for pagination, etc.
  *
@@ -215,7 +216,7 @@ async function listRouterVersions(id: string, query: ListRouterVersionsQuery) : 
 
 /**
  * Creates a new router version.
- * 
+ *
  * @param id
  * The ID of the parent router for which to create a new version.
  *
@@ -294,6 +295,61 @@ async function deleteRouterVersion(id: string, version: number) : Promise<void> 
 
   if (!result[0]) {
     throw new HTTPException(404);
+  }
+}
+
+export async function validateRules(rules: RuleShape[]) {
+  // Sanity check that there's an actual start and end defined.
+  if (rules.length >= 2)
+
+  if (rules[0] && rules[0].type !== 'start') {
+    throw new HTTPException(400, {
+      message: 'First rule must be a start rule.',
+    });
+  }
+
+  const end = rules.length - 1;
+  if (rules[end] && rules[end].type !== 'end') {
+    throw new HTTPException(400, {
+      message: 'Last rule must be an end rule.',
+    });
+  }
+
+  // Simple cycle detection to prevent infinite loops in routing.
+  // onst maxSteps = 50;
+  // et currentStep = 0;
+  //while (currentStep < maxSteps) {
+  //  const currentRule = rules[currentStep];
+//
+  //}
+
+  for (const rule of rules) {
+    switch (rule.type) {
+      case 'start':
+        // validate start rule
+        break;
+      case 'end':
+        // validate end rule
+        break;
+      case 'condition':
+        // validate condition rule
+        break;
+      case 'rate_limit':
+        // validate rate limit rule
+        break;
+      case 'weighted':
+        // validate weighted rule
+        break;
+      case 'model':
+        // validate model rule
+        break;
+      default:
+        // It's obviously not whatever type it should be, just cast and print
+        // whatever's there.
+        throw new HTTPException(400, {
+          message: `Invalid rule type: ${(rule as RuleShape).type}`,
+        });
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 import { createRoute } from '@hono/zod-openapi';
 import Schemas from './inference.schemas';
-import SchemasCommon from '@lib/errors';
+import { httpError } from '@repo/core';
 
 
 const postInference = createRoute({
@@ -34,7 +34,7 @@ const postInference = createRoute({
       description: 'Rate limit exceeded',
       content: {
         'application/json': {
-          schema: SchemasCommon.httpError,
+          schema: httpError,
         },
       },
     },
@@ -42,7 +42,7 @@ const postInference = createRoute({
       description: 'Service unavailable',
       content: {
         'application/json': {
-          schema: SchemasCommon.httpError,
+          schema: httpError,
         },
       },
     },
