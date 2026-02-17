@@ -1,6 +1,6 @@
 import { HTTPException } from 'hono/http-exception';
-import { db, and, eq, desc, lt } from '@lib/drizzle';
-import { models } from '@db/schemas/models';
+import { db, and, eq, desc, lt } from '@repo/drizzle';
+import { models } from '@repo/drizzle/schemas';
 import Schemas, {
   type GetModelResponse,
   type ListModelsRequest,
@@ -59,7 +59,7 @@ async function getModelBySlug(slug: string) : Promise<GetModelResponse> {
   const result = await db.select()
     .from(models)
     .where(and(
-      eq(models.provider, split[0] as string), 
+      eq(models.provider, split[0] as string),
       eq(models.name, split[1] as string),
     ));
 
