@@ -1,0 +1,28 @@
+{
+  "name": "@repo/drizzle",
+  "exports": {
+    ".": "./index.ts",
+    "./schemas": "./schemas.ts",
+    "./client": "./client.ts"
+  },
+  "types": "./index.ts",
+  "typesVersions": {
+    "*": {
+      "schemas": ["./schemas.ts"],
+      "client": ["./client.ts"],
+      "*": ["./*"]
+    }
+  },
+  "module": "index.ts",
+  "devDependencies": {
+    "@types/bun": "^1.3.9",
+    "drizzle-kit": "^0.31.9"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "type": "module",
+  "dependencies": {
+    "drizzle-orm": "^0.45.1"
+  }
+}
