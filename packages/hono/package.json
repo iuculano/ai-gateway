@@ -21,6 +21,7 @@
     "@hono/zod-openapi": "^1.2.2",
     "@repo/auth": "../auth/",
     "@repo/core": "../core/",
+    "@repo/redis": "../redis/",
     "hono": "^4.11.9"
   }
 }
