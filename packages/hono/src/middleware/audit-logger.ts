@@ -7,15 +7,18 @@ import {
 import { createMiddleware } from 'hono/factory'
 import { HTTPException } from 'hono/http-exception';
 
-import { redis } from '@repo/redis';
+import { nats, JSONCodec } from '@repo/nats';
 
 export interface AuditLoggerOptions {
   key: string;
   ignoreGet?: boolean;
 }
 
+const jetstream = nats.jetstream();
+const jsonCodec = JSONCodec();
+
 /**
- * Middleware that writes audit events to a Redis stream.
+ * Middleware that writes audit events to a NATS JetStream subject.
  *
  * @returns
  * An async middleware function.
@@ -42,22 +45,18 @@ export function auditLogger(options: AuditLoggerOptions) {
     // Want to log after the response.
     await next();
 
-    const id = await redis.xAdd(key, '*', {
+    const ack = await jetstream.publish(key, jsonCodec.encode({
       organizationId: jwt.organization.id,
-      timestamp: String(Date.now()),
+      timestamp: new Date().toISOString(),
       actor: jwt.user.username || jwt.user.email,
       method: c.req.method,
       route: c.req.path,
-      status: String(c.res.status),
+      statusCode: String(c.res.status),
       requestId: c.req.header('x-request-id') || '',
       ip: '',
-    }, {
-      // TODO: Is there a way to detect this? If the stream is getting this
-      // saturated, I think it's going to start dropping events??
-      TRIM: { strategy: 'MAXLEN', strategyModifier: '~', threshold: 1000000 },
-    });
+    }));
 
-    if (!id) {
+    if (!ack) {
       console.log('Failed to log audit event');
     }
   });
