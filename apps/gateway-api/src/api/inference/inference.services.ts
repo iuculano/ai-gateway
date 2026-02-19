@@ -171,9 +171,11 @@ async function completeLog(id: string, request: InferenceRequest, response: Infe
 
   // Compress and write it out to object storage.
   const data = Buffer.from(JSON.stringify(objectData));
-  const compressed = Bun.gzipSync(data);
+  const compressed = Bun.zstdCompressSync(data, {
+    level: 3,
+  });
 
-  const s3Key = `/v1/logs/${id}.json.gz`;
+  const s3Key = `/v1/logs/${id}.json.zst`;
   await s3.file(s3Key).write(compressed);
 
   await LogsService.updateLog(id, {
@@ -183,7 +185,7 @@ async function completeLog(id: string, request: InferenceRequest, response: Infe
     input_cost: response.usage.input_cost,
     output_cost: response.usage.output_cost,
     response_time_ms: response.response_time_ms,
-    object_reference: `/v1/logs/${id}.json.gz`,
+    object_reference: `/v1/logs/${id}.json.zst`,
   });
 }
 

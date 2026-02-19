@@ -56,10 +56,10 @@ async function getLogData(id: string): Promise<GetLogDataResponse> {
     return JSON.parse(existing);
   }
 
-  const key = `/v1/logs/${id}.json.gz`;
+  const key = `/v1/logs/${id}.json.zst`;
   const buffer = await s3.file(key).bytes();
 
-  const decompressed = Bun.gunzipSync(buffer);
+  const decompressed = Bun.zstdDecompressSync(buffer);
   const jsonString = Buffer.from(decompressed).toString('utf8');
   await redis.set(cacheKey, jsonString, {
     expiration: { type: 'EX', value: 60 * 15 }
