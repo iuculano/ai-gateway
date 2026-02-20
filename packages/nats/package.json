@@ -1,23 +1,22 @@
 {
   "name": "@repo/nats",
+  "type": "module",
+  "module": "index.ts",
   "exports": {
     ".": "./index.ts"
   },
   "types": "./index.ts",
-  "typesVersions": {
-    "*": {
-      "*": ["./*"]
-    }
+  "scripts": {
+    "build": "bunx tsc --noEmit",
+    "check-types": "bunx tsc --noEmit"
   },
-  "module": "index.ts",
+  "dependencies": {
+    "nats": "^2.29.3"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.9"
   },
   "peerDependencies": {
     "typescript": "^5"
-  },
-  "type": "module",
-  "dependencies": {
-    "nats": "^2.29.3"
   }
 }

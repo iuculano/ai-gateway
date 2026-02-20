@@ -1,24 +1,25 @@
 {
   "name": "@repo/rate-limiter",
+  "type": "module",
+  "module": "index.ts",
   "exports": {
     ".": "./index.ts"
   },
   "types": "./index.ts",
-  "typesVersions": {
-    "*": {
-      "*": ["./*"]
-    }
+  "scripts": {
+    "build": "bunx tsc --noEmit",
+    "check-types": "bunx tsc --noEmit"
   },
-  "module": "index.ts",
+  "dependencies": {
+    "@repo/core": "../core/",
+    "@repo/redis": "../redis/",
+    "lru-cache": "^11.2.6",
+    "rate-limiter-flexible": "^9.1.1"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.9"
   },
   "peerDependencies": {
     "typescript": "^5"
-  },
-  "type": "module",
-  "dependencies": {
-    "@repo/core": "../core/",
-    "@repo/redis": "../redis/"
   }
 }
