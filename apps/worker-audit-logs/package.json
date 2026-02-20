@@ -1,5 +1,5 @@
 {
-  "name": "gateway-api",
+  "name": "worker-audit-logs",
   "scripts": {
     "dev": "bun --env-file=.env --inspect --hot src/index.ts"
   },
