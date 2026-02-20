@@ -236,3 +236,26 @@ export async function validateJwt(token: string): Promise<ValidatedToken> {
     user: user,
   };
 }
+
+// Try to cache in process, this is going to be hot.
+const apiKeyCache = new LRUCache<string, string>({
+  max: 10000,
+  ttl: 1000 * 60 * 1,
+});
+
+// export async function validateApiKey(key: string): Promise<void> {
+//   const existing = apiKeyCache.get(key);
+//   if (existing) {
+//     return existing;
+//   }
+//
+//   // https://bun.com/docs/runtime/hashing#hmac-in-bun-cryptohasher
+//   // One digest per instance, apparently
+//   const hasher = new Bun.CryptoHasher('sha256', process.env.API_KEY_SECRET_KEY);
+//   const result = hasher.update(key).digest('hex');
+//
+//   const dbResult = await db.select()
+//     .from(apiKeys)
+//     .where(eq(apiKeys.key_hash, result))
+//     .limit(1);
+// }
