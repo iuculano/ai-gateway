@@ -15,7 +15,7 @@ import { HTTPException } from 'hono/http-exception';
 import { createCacheKey } from '@repo/core';
 import { s3 } from '@repo/object-storage';
 import LogsService from '../logs/logs.services';
-import { type GetModelResponse } from '../models/models.schemas';
+import type { GetModelResponse } from '../models/models.schemas';
 
 
 

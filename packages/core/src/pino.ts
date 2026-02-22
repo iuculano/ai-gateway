@@ -1,6 +1,6 @@
 // Pino seems to have some issues with ESM imports
 import pino from 'pino';
-import { type Logger, type LoggerOptions } from 'pino';
+import type { Logger, LoggerOptions } from 'pino';
 
 let logger: Logger;
 const nodeEnv = process.env.NODE_ENV ?? 'development';

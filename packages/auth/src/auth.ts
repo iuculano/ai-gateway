@@ -170,7 +170,7 @@ async function getCachedUserInfo(token: string, endpoint: string): Promise<User>
     family_name?: string;
     preferred_username?: string;
     email?: string;
-    ['urn:zitadel:iam:org:project:roles']?: Record<string, string>;
+    'urn:zitadel:iam:org:project:roles'?: Record<string, string>;
   };
 
   // Roles come in with a bit of a fugly format from ZITADEL... need to parse

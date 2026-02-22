@@ -1,6 +1,6 @@
-import {
-  type Context,
-  type Next,
+import type {
+  Context,
+  Next,
 } from 'hono';
 
 import { logger } from '@repo/core';

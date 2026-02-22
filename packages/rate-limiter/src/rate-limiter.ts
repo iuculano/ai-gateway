@@ -46,7 +46,7 @@ export async function enforceRateLimit(key: string, policy: RateLimitPolicy): Pr
   const limiter = await getRateLimiter(policy);
 
   let isLimited = false;
-  let response;
+  let response: RateLimiterRes;
   try {
     response = await limiter.consume(key, 1);
   }
@@ -90,13 +90,13 @@ export async function parseRateLimitHeader(header: string): Promise<RateLimitPol
   }
 
   // Reject negative or zero values, just in case.
-  const parsedQuota = parseInt(quota);
-  if (isNaN(parsedQuota) || parsedQuota <= 0) {
+  const parsedQuota = parseInt(quota, 10);
+  if (Number.isNaN(parsedQuota) || parsedQuota <= 0) {
     return undefined;
   }
 
-  const parsedWindow = parseInt(window.slice(2));
-  if (isNaN(parsedWindow) || parsedWindow <= 0) {
+  const parsedWindow = parseInt(window.slice(2), 10);
+  if (Number.isNaN(parsedWindow) || parsedWindow <= 0) {
     return undefined;
   }
 

@@ -1,4 +1,4 @@
-import { type Context, type ValidationTargets,} from 'hono';
+import type { Context, ValidationTargets,} from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from '@hono/zod-openapi';
 import { STATUS_CODES } from 'node:http';
@@ -37,8 +37,7 @@ type ErrorHook = {
   error: z.ZodError;
 } | {
   success: true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  data: any;
+  data: unknown;
 });
 
 /**

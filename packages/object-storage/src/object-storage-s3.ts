@@ -1,5 +1,5 @@
 import { S3Client } from 'bun';
-import { type ObjectStorageClient } from './object-storage';
+import type { ObjectStorageClient } from './object-storage';
 
 export interface S3ObjectStorageClientOptions {
   endpoint?: string;

@@ -1,7 +1,7 @@
 import type { ValidatedToken } from '@repo/auth';
-import {
-  type Context,
-  type Next,
+import type {
+  Context,
+  Next,
 } from 'hono';
 
 import { createMiddleware } from 'hono/factory'

@@ -84,7 +84,7 @@ async function listApiKeys(query: ListApiKeysQuery) : Promise<ListApiKeysRespons
  * A promise that resolves to the created API key data.
  */
 async function createApiKey(body: CreateApiKeyBody) : Promise<CreateApiKeyResponse> {
-  const key = 'aig_' + randomBytes(30).toString('hex');
+  const key = `aig_${randomBytes(30).toString('hex')}`;
   const hasher = new Bun.CryptoHasher('sha256', process.env.API_KEY_SECRET_KEY);
   const hashed = hasher.update(key).digest('hex');
 
