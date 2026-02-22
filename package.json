@@ -7,17 +7,17 @@
     "build": "turbo run build",
     "check-types": "turbo run check-types",
     "dev": "turbo run dev",
-    "lint": "bunx eslint ."
+    "lint": "bunx biome lint",
+    "lint:fix": "bunx biome lint --write",
+    "format": "bunx biome format",
+    "format:fix": "bunx biome format --write"
   },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "eslint": "^10.0.1",
-    "globals": "^17.3.0",
-    "turbo": "^2.8.10",
-    "typescript-eslint": "^8.56.0"
+    "@biomejs/biome": "2.4.4",
+    "turbo": "^2.8.10"
   }
 }
