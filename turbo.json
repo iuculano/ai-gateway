@@ -11,6 +11,16 @@
       "persistent": true,
       "cache": false
     },
+    "db:generate": {
+      "cache": false
+    },
+    "db:migrate": {
+      "dependsOn": ["db:generate"],
+      "cache": false
+    },
+    "db:push": {
+      "cache": false
+    },
     "//#lint": {
       "inputs": [
         "apps/**/*.ts",
