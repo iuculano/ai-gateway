@@ -18,15 +18,5 @@
     "ai": "^6.0.86",
     "hono": "^4.11.9",
     "lru-cache": "^11.2.6"
-  },
-  "devDependencies": {
-    "@eslint/js": "^9.39.2",
-    "@types/bun": "latest",
-    "@types/pg": "^8.16.0",
-    "drizzle-kit": "^0.31.9",
-    "eslint": "^9.39.2",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.56.0"
   }
 }
