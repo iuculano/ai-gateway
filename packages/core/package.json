@@ -7,7 +7,6 @@
   },
   "types": "./index.ts",
   "scripts": {
-    "build": "bunx tsc --noEmit",
     "check-types": "bunx tsc --noEmit"
   },
   "dependencies": {
@@ -20,6 +19,6 @@
     "@types/node": "^25.3.0"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^6.0.3"
   }
 }

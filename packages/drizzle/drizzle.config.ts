@@ -1,16 +1,25 @@
 import { defineConfig } from 'drizzle-kit';
 
+// The admin role, not the one the application runs as. drizzle-kit needs DDL,
+// and app_user deliberately has none. Same database either way; the database
+// name must match POSTGRES_DB in docker-compose.yml.
+//
+// Deliberately no default: silently falling back to localhost is how a db:push
+// ends up applied to the wrong database.
+const connectionString = process.env.POSTGRES_ADMIN_CONNECTION_STRING;
+if (!connectionString) {
+  throw new Error(
+    'Missing POSTGRES_ADMIN_CONNECTION_STRING. Pass it inline, for example:\n' +
+      '  POSTGRES_ADMIN_CONNECTION_STRING=postgresql://postgres:postgres@host.docker.internal:5432/ai_gateway bun run db:push',
+  );
+}
+
 export default defineConfig({
   schema: './schemas.ts',
   out: './migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    host: process.env.POSTGRES_HOST ?? 'localhost',
-    port: Number(process.env.POSTGRES_PORT ?? 5432),
-    user: process.env.POSTGRES_USERNAME ?? 'postgres',
-    password: process.env.POSTGRES_PASSWORD ?? 'postgres',
-    database: process.env.POSTGRES_DATABASE ?? 'ai_gateway',
-    ssl: false,
+    url: connectionString,
   },
   breakpoints: true,
   strict: true,

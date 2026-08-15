@@ -1,0 +1,318 @@
+import { parseTags } from '@repo/core';
+import { and, db, desc, eq, lt, sql } from '@repo/drizzle';
+import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
+import { getAccountableUserId, getCaller } from '@repo/hono';
+import { err, ok, type Result } from 'neverthrow';
+import Schemas, {
+  type CreateWebhookBody,
+  type CreateWebhookResponse,
+  type DeleteWebhookResponse,
+  type GetWebhookResponse,
+  type ListWebhookDeliveriesQuery,
+  type ListWebhookDeliveriesResponse,
+  type ListWebhookOutboxQuery,
+  type ListWebhookOutboxResponse,
+  type ListWebhooksQuery,
+  type ListWebhooksResponse,
+  type UpdateWebhookBody,
+  type UpdateWebhookResponse,
+} from './webhooks.schemas';
+
+/**
+ * The one outcome a caller can act on: the webhook is not theirs to see.
+ *
+ * Declared per operation rather than shared, so that a code added to one of
+ * them cannot silently widen the others. They are identical today because the
+ * three operations genuinely refuse for the same single reason.
+ *
+ * Everything else here - a failed query, a row that will not parse, an insert
+ * that returns nothing - is the system malfunctioning rather than an answer,
+ * and rejects.
+ */
+export type GetWebhookFailure = {
+  code: 'WEBHOOK_NOT_FOUND';
+  id: string;
+};
+
+export type UpdateWebhookFailure = {
+  code: 'WEBHOOK_NOT_FOUND';
+  id: string;
+};
+
+export type DeleteWebhookFailure = {
+  code: 'WEBHOOK_NOT_FOUND';
+  id: string;
+};
+
+/**
+ * Retrieves a single webhook by its ID.
+ *
+ * Scoping the read to the caller's organization rather than checking after the
+ * fact makes a cross-tenant id indistinguishable from a missing one - both
+ * answer WEBHOOK_NOT_FOUND, and neither confirms the row exists.
+ *
+ * @param id
+ * The ID of the webhook to retrieve.
+ */
+async function getWebhook(id: string): Promise<Result<GetWebhookResponse, GetWebhookFailure>> {
+  const caller = getCaller();
+
+  const [row] = await db
+    .select()
+    .from(webhooks)
+    .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)));
+
+  if (!row) {
+    return err({ code: 'WEBHOOK_NOT_FOUND', id });
+  }
+
+  const parsed = Schemas.getWebhook.response.parse(row);
+  return ok(parsed);
+}
+
+/**
+ * Retrieves a list of webhooks, filtered by the given criteria.
+ *
+ * Deliberately not a Result: an empty page is a page, and there is no outcome
+ * here the caller could correct.
+ *
+ * @param request
+ * The request object containing the filter criteria.
+ */
+async function listWebhooks(request: ListWebhooksQuery): Promise<ListWebhooksResponse> {
+  const caller = getCaller();
+  const tagsToFilter = parseTags(request.tags);
+
+  const conditions = [
+    eq(webhooks.organization_id, caller.organization.id),
+    request.tags ? sql`${webhooks.tags} @> ${tagsToFilter}::jsonb` : undefined,
+    request.after_id ? lt(webhooks.id, request.after_id) : undefined,
+  ];
+
+  const result = await db
+    .select()
+    .from(webhooks)
+    .where(and(...conditions))
+    .orderBy(desc(webhooks.id))
+    .limit(request.limit + 1);
+
+  const hasMoreData = result.length > request.limit;
+  if (hasMoreData) {
+    result.pop(); // Burn off the extra record.
+  }
+
+  const oldestId = result[result.length - 1]?.id ?? null;
+
+  const parsed = Schemas.listWebhooks.response.parse({
+    data: result,
+    meta: {
+      oldest_id: oldestId,
+      more_data: hasMoreData,
+    },
+  });
+
+  return parsed;
+}
+
+/**
+ * Creates a new webhook in the database.
+ *
+ * Deliberately not a Result: nothing about a create is refusable today. The
+ * organization and the accountable human both come from the authenticated caller
+ * rather than the body, so there is no cross-tenant grant to reject.
+ *
+ * @param request
+ * The request object containing the webhook data to create.
+ */
+async function createWebhook(request: CreateWebhookBody): Promise<CreateWebhookResponse> {
+  const caller = getCaller();
+
+  const result = await db
+    .insert(webhooks)
+    .values({
+      ...request,
+      organization_id: caller.organization.id,
+      creator_id: getAccountableUserId(caller),
+    })
+    .returning();
+
+  if (!result[0]) {
+    // Probably impossible: a returning() insert either throws or gives a row.
+    throw new Error('Failed to create webhook');
+  }
+
+  const parsed = Schemas.createWebhook.response.parse(result[0]);
+  return parsed;
+}
+
+/**
+ * Updates an existing webhook in the database.
+ *
+ * @param id
+ * The ID of the webhook to update.
+ *
+ * @param request
+ * The request object containing the updated webhook data.
+ */
+async function updateWebhook(
+  id: string,
+  request: UpdateWebhookBody,
+): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> {
+  const caller = getCaller();
+
+  const result = await db
+    .update(webhooks)
+    .set(request)
+    .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+    .returning();
+
+  // Either the webhook does not exist, or it belongs to someone else. Both are
+  // the same refusal on purpose.
+  if (!result[0]) {
+    return err({ code: 'WEBHOOK_NOT_FOUND', id });
+  }
+
+  const parsed = Schemas.updateWebhook.response.parse(result[0]);
+  return ok(parsed);
+}
+
+/**
+ * Deletes an existing webhook in the database.
+ *
+ * @param id
+ * The ID of the webhook to delete.
+ */
+async function deleteWebhook(id: string): Promise<Result<DeleteWebhookResponse, DeleteWebhookFailure>> {
+  const caller = getCaller();
+
+  const result = await db
+    .delete(webhooks)
+    .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+    .returning();
+
+  if (!result[0]) {
+    return err({ code: 'WEBHOOK_NOT_FOUND', id });
+  }
+
+  return ok(undefined);
+}
+
+// ---
+
+/**
+ * Retrieves queued deliveries.
+ *
+ * Scoped by joining through `webhooks`: the outbox has no organization of its
+ * own, and giving it one would let the two disagree.
+ */
+async function listWebhookOutbox(request: ListWebhookOutboxQuery): Promise<ListWebhookOutboxResponse> {
+  const caller = getCaller();
+
+  const conditions = [
+    eq(webhooks.organization_id, caller.organization.id),
+    request.after_id ? lt(webhookOutbox.id, request.after_id) : undefined,
+  ];
+
+  const rows = await db
+    .select({ outbox: webhookOutbox })
+    .from(webhookOutbox)
+    .innerJoin(webhooks, eq(webhooks.id, webhookOutbox.webhook_id))
+    .where(and(...conditions))
+    .orderBy(desc(webhookOutbox.id))
+    .limit(request.limit + 1);
+
+  const result = rows.map((row) => row.outbox);
+
+  const hasMoreData = result.length > request.limit;
+  if (hasMoreData) {
+    result.pop(); // Burn off the extra record.
+  }
+
+  const oldestId = result[result.length - 1]?.id ?? null;
+
+  const parsed = Schemas.listWebhookOutbox.response.parse({
+    data: result,
+    meta: {
+      oldest_id: oldestId,
+      more_data: hasMoreData,
+    },
+  });
+
+  return parsed;
+}
+
+/**
+ * Retrieves delivery attempts, scoped the same way as the outbox above.
+ */
+async function listWebhookDeliveries(request: ListWebhookDeliveriesQuery): Promise<ListWebhookDeliveriesResponse> {
+  const caller = getCaller();
+
+  const conditions = [
+    eq(webhooks.organization_id, caller.organization.id),
+    request.after_id ? lt(webhookDeliveries.id, request.after_id) : undefined,
+  ];
+
+  const rows = await db
+    .select({ delivery: webhookDeliveries })
+    .from(webhookDeliveries)
+    .innerJoin(webhooks, eq(webhooks.id, webhookDeliveries.webhook_id))
+    .where(and(...conditions))
+    .orderBy(desc(webhookDeliveries.id))
+    .limit(request.limit + 1);
+
+  const result = rows.map((row) => row.delivery);
+
+  const hasMoreData = result.length > request.limit;
+  if (hasMoreData) {
+    result.pop(); // Burn off the extra record.
+  }
+
+  const oldestId = result[result.length - 1]?.id ?? null;
+
+  const parsed = Schemas.listWebhookDeliveries.response.parse({
+    data: result,
+    meta: {
+      oldest_id: oldestId,
+      more_data: hasMoreData,
+    },
+  });
+
+  return parsed;
+}
+
+/**
+ * Queues a delivery.
+ *
+ * Takes no organization: this is called by the pipeline that already resolved
+ * the webhook, not by a request handler, and the webhook id it was given is
+ * where the tenancy came from. Not a Result for the same reason - there is no
+ * HTTP caller here to hand a refusal to.
+ */
+async function submitWebhookRequest(webhookId: string, logId: string) {
+  const result = await db
+    .insert(webhookOutbox)
+    .values({
+      webhook_id: webhookId,
+      log_id: logId,
+    })
+    .returning();
+
+  if (!result[0]) {
+    throw new Error('Failed to submit webhook request');
+  }
+
+  return result[0];
+}
+
+export default {
+  getWebhook,
+  listWebhooks,
+  createWebhook,
+  updateWebhook,
+  deleteWebhook,
+
+  listWebhookOutbox,
+  listWebhookDeliveries,
+
+  submitWebhookRequest,
+};

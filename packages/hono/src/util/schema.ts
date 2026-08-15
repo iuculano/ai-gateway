@@ -1,6 +1,5 @@
 import type { z } from '@hono/zod-openapi';
 
-
 export interface Schema {
   params?: z.ZodType;
   query?: z.ZodType;

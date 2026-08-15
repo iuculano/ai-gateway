@@ -1,44 +1,37 @@
-import type { Context, ValidationTargets,} from 'hono';
-import { HTTPException } from 'hono/http-exception';
-import { z } from '@hono/zod-openapi';
 import { STATUS_CODES } from 'node:http';
-import { logger, type HttpError } from '@repo/core';
+import { z } from '@hono/zod-openapi';
+import { type HttpError, logger } from '@repo/core';
+import type { Context, ValidationTargets } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 
-
-// Helper for bashing the 'cause' of an HTTPException into the shape we want.
-type DetailRecord = Record<string, unknown>;
-
-export function wrapCauseAsDetails(cause: unknown): DetailRecord[] | undefined {
-  let detail: DetailRecord;
-
-  if (cause && cause instanceof Error) {
-    detail = {
-      cause: cause.cause,
-    };
-
-    // Include the stack trace in development mode
-    if (process.env.NODE_ENV === 'development' && cause.stack) {
-      detail.stack = cause.stack;
-    }
-
-    return [detail];
-  }
-
-  return [];
+/** What zodExceptionHook() attaches as the HTTPException cause. */
+interface ValidationCause {
+  target: keyof ValidationTargets;
+  error: z.ZodError;
 }
 
-
+function isValidationCause(cause: unknown): cause is ValidationCause {
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    'error' in cause &&
+    (cause as { error: unknown }).error instanceof z.ZodError
+  );
+}
 
 // Just mimic what the OpenAPIHono does expects for the defaultHook
 type ErrorHook = {
   target: keyof ValidationTargets;
-} & ({
-  success: false;
-  error: z.ZodError;
-} | {
-  success: true;
-  data: unknown;
-});
+} & (
+  | {
+      success: false;
+      error: z.ZodError;
+    }
+  | {
+      success: true;
+      data: unknown;
+    }
+);
 
 /**
  * Hook to handle Zod validation errors after validation in OpenAPIHono routes.
@@ -62,8 +55,13 @@ export function zodExceptionHook(result: ErrorHook) {
   // Propagate the error if it is a ZodError, we've failed validation somewhere
   if (!result.success && result.error instanceof z.ZodError) {
     throw new HTTPException(400, {
-      message: result.error.message || 'Bad Request',
-      cause: result.error,
+      message: 'Request validation failed.',
+      // Carry the target too, so the response can say WHERE the bad field
+      // lives (body vs query vs param), not just its name.
+      cause: {
+        target: result.target,
+        error: result.error,
+      } satisfies ValidationCause,
     });
   }
 }
@@ -75,58 +73,74 @@ export function zodExceptionHook(result: ErrorHook) {
  * - For unhandled errors, a generic 500 Internal Server Error response is
  *   returned.
  *
+ * Every response echoes the request id so clients can quote it; log records
+ * go through the request-scoped logger so they carry the correlation ids.
+ *
  * @returns
- * An async middleware function.
+ * An error handler function.
  */
 export function errorHandler() {
-  return async (err: Error, c: Context)=> {
-    const requestId = c.var?.requestId;
-    const childLogger = logger.child({
-      'id    ': requestId,
-      'path  ': c.req.path,
-      'method': c.req.method,
-    });
+  return (err: Error, c: Context) => {
+    const requestId: string | undefined = c.var.requestId;
+    const log = c.var.logger ?? logger;
 
-    let formattedError: HttpError;
-
+    // If it's an HTTPException, we probably threw it intentionally.
     if (err instanceof HTTPException) {
-        formattedError = {
-          error: {
-            code: err.status,
-            status: STATUS_CODES[err.status] ?? 'Unknown',
-            message: err.message || 'An error occurred',
-          },
-        };
-      
-      // zodExceptionHook() may have thrown the error - in which case it will
-      // set the ZodError as the cause
-      if (err.cause instanceof z.ZodError) {
-        formattedError.error.message = 'An error occurred';
+      const formattedError: HttpError = {
+        error: {
+          code: err.status,
+          status: STATUS_CODES[err.status] ?? 'Unknown',
+          message: err.message || 'An error occurred',
+        },
+      };
 
-        formattedError.error.details = err.cause.issues.map(issue => ({
-          field: issue.path.join('.'),
+      const cause = err.cause;
+      if (isValidationCause(cause)) {
+        formattedError.error.details = cause.error.issues.map((issue) => ({
+          field: [cause.target, ...issue.path.map(String)].join('.'),
           issue: issue.message,
         }));
       }
 
-      // We probably raised the HTTPException ourselves - return the
-      // exception status code and log the error
-      childLogger.error({
-        'code  ': err.status,
-        'status': STATUS_CODES[err.status],
-        //...(err.cause ? { cause: err.cause } as object : {}), // gross
-      }, err.message || 'HTTP Exception');
+      // 4xx is the client's mistake and normal traffic; only 5xx should be
+      // able to page anyone.
+      const level = err.status >= 500 ? 'error' : 'warn';
+      log[level]({ err, 'http.response.status_code': err.status }, err.message || 'HTTP exception');
 
-      return c.json(formattedError, err.status);
+      const response = c.json(formattedError, err.status);
+
+      // An HTTPException can carry a prebuilt Response - hono's own middleware
+      // and our adapters use it to attach headers (WWW-Authenticate,
+      // Retry-After, RateLimit-*). 
+      //
+      // Pass these headers along to the final response.
+      if (err.res) {
+        err.res.headers.forEach((value, key) => {
+          if (key === 'content-type' || key === 'content-length') {
+            return;
+          }
+
+          response.headers.set(key, value);
+        });
+      }
+
+      return response;
     }
 
-    // Log other errors as internal server errors, something raised in an
-    // unexpected way
-    childLogger?.error({ err }, 'Unhandled exception');
-    return c.json({ error: {
-      code: 500,
-      status: STATUS_CODES[500],
-      message: 'An unexpected error occurred',
-    }}, 500);
+    // Something raised in an unexpected way - it's not a ZodError or an
+    // HTTPException.
+    //
+    // Basically, we probably didn't intentionally throw it.
+    log.error({ err, 'http.response.status_code': 500 }, 'Unhandled exception');
+    return c.json(
+      {
+        error: {
+          code: 500,
+          status: STATUS_CODES[500],
+          message: 'An unexpected error occurred',
+        },
+      },
+      500,
+    );
   };
 }
