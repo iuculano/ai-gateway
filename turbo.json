@@ -2,10 +2,17 @@
   "$schema": "https://turborepo.dev/schema.json",
   "tasks": {
     "build": {
-      "outputs": ["dist/**"]
+      "dependsOn": ["^build"],
+      "outputs": [".svelte-kit/**", "build/**"]
     },
     "check-types": {
       "dependsOn": ["^check-types"]
+    },
+    "test": {
+      "outputs": []
+    },
+    "test:integration": {
+      "cache": false
     },
     "dev": {
       "persistent": true,
@@ -21,13 +28,12 @@
     "db:push": {
       "cache": false
     },
+    "synth": {
+      "inputs": ["src/**/*.ts", "cdk8s.yaml"],
+      "outputs": ["manifests/**"]
+    },
     "//#lint": {
-      "inputs": [
-        "apps/**/*.ts",
-        "apps/**/*.tsx",
-        "packages/**/*.ts",
-        "eslint.config.ts"
-      ],
+      "inputs": ["apps/**/*.ts", "apps/**/*.svelte", "packages/**/*.ts", "biome.json"],
       "outputs": []
     }
   }
