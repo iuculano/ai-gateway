@@ -1,8 +1,7 @@
 import { defineConfig } from 'drizzle-kit';
 
-// The admin role, not the one the application runs as. drizzle-kit needs DDL,
-// and app_user deliberately has none. Same database either way; the database
-// name must match POSTGRES_DB in docker-compose.yml.
+// drizzle-kit needs a schema-changing connection. The database name must match
+// POSTGRES_DB in docker-compose.yml.
 //
 // Deliberately no default: silently falling back to localhost is how a db:push
 // ends up applied to the wrong database.
@@ -22,6 +21,5 @@ export default defineConfig({
     url: connectionString,
   },
   breakpoints: true,
-  strict: true,
   verbose: true,
 });

@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { BlockList, isIP } from 'node:net';
 import { db, eq } from '@repo/drizzle';
 import { type ApiKeyRow, apiKeys } from '@repo/drizzle/schemas';
-import type { CallerIdentity, KeyAuthAdapter } from '@repo/hono';
+import type { CallerIdentity, KeyAuthAdapter } from '@repo/hono/auth-adapter';
 import { consumeFixedWindowCounter, redis } from '@repo/redis';
 import { HTTPException } from 'hono/http-exception';
 import { getOrganization } from '../organizations';
@@ -12,7 +11,11 @@ import { getUserById } from '../users';
 // paying for a hash + database lookup.
 const DEFAULT_KEY_PATTERN = /^aik_[a-zA-Z0-9]{60}$/;
 
+/**
+ * Options for the generic key adapter.
+ */
 export interface GenericKeyAdapterOptions {
+  /** Regex pattern for the expected API key format. */
   keyPattern?: RegExp;
 }
 
@@ -22,95 +25,22 @@ type ApiKey = Omit<ApiKeyRow, 'key_hash'>;
 // A key that has passed validation, creator is known to exist.
 type ValidApiKey = ApiKey & { creator_id: string };
 
-type AddressFamily = 'ipv4' | 'ipv6';
-
-interface ParsedAddress {
-  address: string;
-  family: AddressFamily;
-}
-
-function parseAddress(address: string): ParsedAddress | null {
-  const version = isIP(address);
-  if (version === 4) {
-    return { address, family: 'ipv4' };
-  }
-  if (version === 6) {
-    return { address, family: 'ipv6' };
-  }
-  return null;
-}
-
-/** Both Bun and reverse proxies commonly surface IPv4 peers as mapped IPv6. */
-function addressCandidates(address: string): ParsedAddress[] {
-  const candidates: ParsedAddress[] = [];
-  const parsed = parseAddress(address);
-  if (parsed) {
-    candidates.push(parsed);
-  }
-
-  const mappedPrefix = '::ffff:';
-  if (address.toLowerCase().startsWith(mappedPrefix)) {
-    const mapped = parseAddress(address.slice(mappedPrefix.length));
-    if (mapped) {
-      candidates.push(mapped);
-    }
-  }
-
-  return candidates;
-}
-
-function cidrContains(cidr: string, addresses: ParsedAddress[]): boolean {
-  const separator = cidr.lastIndexOf('/');
-  const networkText = separator >= 0 ? cidr.slice(0, separator) : cidr;
-  const network = parseAddress(networkText);
-  if (!network) {
-    throw new Error(`Invalid CIDR stored for API key: ${cidr}`);
-  }
-
-  const maxPrefix = network.family === 'ipv4' ? 32 : 128;
-  const prefix = separator >= 0 ? Number(cidr.slice(separator + 1)) : maxPrefix;
-  if (!Number.isInteger(prefix) || prefix < 0 || prefix > maxPrefix) {
-    throw new Error(`Invalid CIDR prefix stored for API key: ${cidr}`);
-  }
-
-  const blockList = new BlockList();
-  blockList.addSubnet(network.address, prefix, network.family);
-
-  return addresses.some(
-    (candidate) => candidate.family === network.family && blockList.check(candidate.address, candidate.family),
-  );
-}
-
-/** Rejects allowlisted keys when the request peer is missing or outside every configured CIDR. */
-function enforceAllowedIp(apiKey: ApiKey, ipAddress?: string): void {
-  if (!apiKey.allowed_ips?.length) {
-    return;
-  }
-
-  const addresses = ipAddress ? addressCandidates(ipAddress) : [];
-  const allowed = addresses.length > 0 && apiKey.allowed_ips.some((cidr) => cidrContains(cidr, addresses));
-  if (!allowed) {
-    throw new HTTPException(401, {
-      cause: 'Invalid API key: source IP is not allowed',
-    });
-  }
-}
-
 /**
  * Gets an API key by its SHA-256 hash.
  *
- * This is intentionally the one cross-organization API-key query: the row
+ * This is intentionally the one cross-organization API-key query. The row
  * being looked up is what determines the tenant, so there is no organization
  * to filter by until after it returns.
- *
- * Scoped as tightly as the mechanism allows: one indexed lookup by hash, and
- * the caller must already hold the key to produce that hash.
  *
  * Returns undefined if no matching row is found.
  */
 async function getApiKeyByHash(keyHash: string): Promise<ApiKey | undefined> {
   // biome-ignore format: please biome stop fucking with this
-  const [row] = await db.select().from(apiKeys).where(eq(apiKeys.key_hash, keyHash)).limit(1);
+  const [row] = await db
+    .select()
+    .from(apiKeys)
+    .where(eq(apiKeys.key_hash, keyHash))
+    .limit(1);
 
   if (!row) {
     return undefined;
@@ -158,15 +88,12 @@ async function validateApiKey(key: string): Promise<ValidApiKey> {
   return { ...apiKey, creator_id };
 }
 
-
 /**
  * Enforces the key's own fixed-window quota.
  *
- * Keys without rate_limit_requests are unlimited.
+ * Keys without rate_limit_requests or rate_limit_window are unlimited.
  */
 async function enforceKeyQuota(apiKey: ApiKey): Promise<void> {
-  // TODO maybe change how this is stored in the db...?
-
   // Bail early if either doesn't have a sane number.
   if (apiKey.rate_limit_requests == null || apiKey.rate_limit_window == null) {
     return;
@@ -185,7 +112,7 @@ async function enforceKeyQuota(apiKey: ApiKey): Promise<void> {
       res: new Response(null, {
         headers: {
           'Retry-After': String(quota.retryAfterSeconds),
-          'RateLimit': `limit=${quota.limit}, remaining=${quota.remainingQuota}, reset=${quota.retryAfterSeconds}`,
+          RateLimit: `limit=${quota.limit}, remaining=${quota.remainingQuota}, reset=${quota.retryAfterSeconds}`,
           'RateLimit-Policy': `${quota.limit};w=${windowSeconds}`,
         },
       }),
@@ -194,7 +121,7 @@ async function enforceKeyQuota(apiKey: ApiKey): Promise<void> {
 }
 
 /**
- * Updates the key's usage stats.
+ * Updates the key's usage stats in Redis.
  */
 async function recordApiKeyUsage(apiKeyId: string): Promise<void> {
   const usageKey = `api-keys:usage:${apiKeyId}`;
@@ -267,14 +194,17 @@ async function buildCaller(apiKey: ValidApiKey): Promise<CallerIdentity> {
 }
 
 /**
- * Builds an adapter for opaque aik_ API keys: hashes the presented key, loads
- * and validates the matching row, enforces its source-IP allowlist and quota,
- * records usage, and resolves the owning organization and user.
+ * Builds an adapter for validating generic API keys.
  */
 export function createGenericKeyAdapter(options: GenericKeyAdapterOptions = {}): KeyAuthAdapter {
   const keyPattern = options.keyPattern ?? DEFAULT_KEY_PATTERN;
 
-  return async ({ key, request }) => {
+  // `api_keys.allowed_ips` is reserved configuration for a future feature. IP
+  // allowlisting is intentionally unsupported here today, so the request's peer
+  // address is not consumed and callers must not rely on allowed_ips for access
+  // control. Keep this explicit so the stored-but-unused field is not mistaken
+  // for an accidentally omitted security check.
+  return async ({ key }) => {
     // Early out if the key is blatantly malformed, skips needing an actual
     // database lookup.
     if (!keyPattern.test(key)) {
@@ -284,12 +214,13 @@ export function createGenericKeyAdapter(options: GenericKeyAdapterOptions = {}):
     }
 
     const apiKey = await validateApiKey(key);
-    enforceAllowedIp(apiKey, request.ipAddress);
 
     // Resolve status before consuming quota or recording usage: a suspended
     // tenant or owner did not make an authenticated request.
     const caller = await buildCaller(apiKey);
 
+    // Rate limiting - make sure we enforce before we write usage so it doesn't
+    // continue to be incremeneted despite failing.
     await enforceKeyQuota(apiKey);
     await recordApiKeyUsage(apiKey.id);
 

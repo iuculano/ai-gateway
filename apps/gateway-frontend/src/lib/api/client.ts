@@ -1,4 +1,4 @@
-import type { ApiType } from 'gateway-api/routes';
+import type { ApiType } from 'gateway-backend/routes';
 import { hc, type PickResponseByStatusCode } from 'hono/client';
 
 export class ApiError extends Error {

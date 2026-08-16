@@ -1,7 +1,6 @@
 import { z } from '@hono/zod-openapi';
 import { createSchema } from '@repo/hono';
 
-
 const livez = createSchema({
   response: z.object({
     status: z.literal('alive'),

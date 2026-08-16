@@ -2,32 +2,30 @@ import type { ObjectStorageClient } from './object-storage';
 
 /**
  * How many reads may be in flight at once when reading many objects.
- *
- * Batch reads fan out one request per key. Unbounded, a 250-key batch opens 250
- * sockets at once, which is how a caller-supplied number turns into a
- * self-inflicted denial of service. This caps the fan-out without serialising
- * it - the whole point of the batch read is that the requests overlap.
  */
 const DEFAULT_MAX_CONCURRENT_READS = 32;
 
 /**
  * zstd level.
  *
- * 3 is the point on the curve where JSON compresses hard without the write
- * becoming CPU-bound. A 10KB chat payload lands around 150 bytes.
+ * 3 seems like a good balance, seems faster than gzip and compresses better.
+ * You probably don't want to touch this unless you have a great reason.
  */
 const DEFAULT_COMPRESSION_LEVEL = 3;
 
+/**
+ * Options for constructing a CompressedJsonStore.
+ */
 export interface CompressedJsonStoreOptions {
+  /** How many reads may be in flight at once when reading many objects. */
   maxConcurrentReads?: number;
+
+  /** Zstandard compression level. */
   compressionLevel?: number;
 }
 
 /**
  * Stores JSON payloads, zstd compressed, over any ObjectStorageClient.
- *
- * Layered over the byte port rather than folded into it so that compression and
- * batching are written once and every backend inherits them.
  */
 export class CompressedJsonStore {
   private readonly maxConcurrentReads: number;
@@ -39,6 +37,10 @@ export class CompressedJsonStore {
   ) {
     this.maxConcurrentReads = options.maxConcurrentReads ?? DEFAULT_MAX_CONCURRENT_READS;
     this.compressionLevel = options.compressionLevel ?? DEFAULT_COMPRESSION_LEVEL;
+
+    if (!Number.isInteger(this.maxConcurrentReads) || this.maxConcurrentReads <= 0) {
+      throw new RangeError('maxConcurrentReads must be a positive integer');
+    }
   }
 
   /**
@@ -100,17 +102,14 @@ export class CompressedJsonStore {
    * A map of key to payload, containing only the keys that resolved.
    */
   async getManyJson<T = unknown>(paths: string[]): Promise<Map<string, T>> {
-    const unique = [...new Set(paths)];
+    const uniquePaths = [...new Set(paths)];
     const results = new Map<string, T>();
 
-    // A shared cursor rather than fixed-size chunks: chunking would make every
-    // window wait for its own slowest read before the next one starts, which is
-    // the barrier this is trying to avoid. Workers just take the next key.
-    let cursor = 0;
+    let index = 0;
 
     const worker = async (): Promise<void> => {
-      while (cursor < unique.length) {
-        const path = unique[cursor++];
+      while (index < uniquePaths.length) {
+        const path = uniquePaths[index++];
         if (path === undefined) {
           return;
         }
@@ -126,7 +125,7 @@ export class CompressedJsonStore {
       }
     };
 
-    await Promise.all(Array.from({ length: Math.min(this.maxConcurrentReads, unique.length) }, () => worker()));
+    await Promise.all(Array.from({ length: Math.min(this.maxConcurrentReads, uniquePaths.length) }, () => worker()));
 
     return results;
   }

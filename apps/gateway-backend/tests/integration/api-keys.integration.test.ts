@@ -2,6 +2,7 @@
 // the order of these imports does not matter. See the test:integration script.
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
 import { runWithCaller } from '@repo/hono';
+import { redis } from '@repo/redis';
 import Services from '../../src/api/api-keys/api-keys.services';
 import {
   admin,
@@ -193,6 +194,21 @@ test('an update records the before and after values', async () => {
 
   expect(update?.difference).toEqual({ name: { old: 'ci', new: 'renamed' } });
   expect((await readApiKeyRow(created.id))?.name).toBe('renamed');
+});
+
+test('changing a rate-limit policy clears its current Redis window', async () => {
+  const created = await asTenant(acme, () =>
+    Services.createApiKey({ name: 'limited', rate_limit_requests: 10, rate_limit_window: 60 }),
+  );
+  const key = created._unsafeUnwrap();
+  const quotaKey = `api-keys:quota:${key.id}`;
+
+  await redis.set(quotaKey, '7', { EX: 60 });
+
+  const updated = await asTenant(acme, () => Services.updateApiKey(key.id, { rate_limit_requests: 20 }));
+
+  expect(updated.isOk()).toBe(true);
+  expect(await redis.get(quotaKey)).toBeNull();
 });
 
 test('the active filter excludes revoked keys', async () => {

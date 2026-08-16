@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, uuid, text, jsonb, timestamp, integer } from 'drizzle-orm/pg-core';
+import { integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * Templatable prompts that can be versioned and used in inference requests.
@@ -21,7 +21,9 @@ export const prompts = pgTable('prompts', {
  */
 export const promptVersions = pgTable('prompt_versions', {
   id: uuid().primaryKey().default(sql`uuidv7()`),
-  prompt_id: uuid().notNull().references(() => prompts.id, { onDelete: 'cascade' }),
+  prompt_id: uuid()
+    .notNull()
+    .references(() => prompts.id, { onDelete: 'cascade' }),
   prompt: text().notNull(),
   version: integer().notNull(),
   created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),

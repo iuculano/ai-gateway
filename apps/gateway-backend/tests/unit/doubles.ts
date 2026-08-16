@@ -113,6 +113,10 @@ const scopedDb: any = {
   insert: () => queryBuilder(),
   update: () => queryBuilder(),
   delete: () => queryBuilder(),
+  execute: (...args: unknown[]) => {
+    database.calls.push({ method: 'execute', args });
+    return nextRows();
+  },
 
   async transaction(callback: (tx: unknown) => Promise<unknown>) {
     const record = { committed: false, rolledBack: false };
@@ -141,10 +145,14 @@ export const cache = {
   /** Set to make every command reject, which is what a redis outage looks like. */
   failure: null as Error | null,
 
+  /** Redis keys deleted by the service, in call order. */
+  deleted: [] as string[],
+
   reset() {
     cache.usage = {};
     cache.quota = {};
     cache.failure = null;
+    cache.deleted = [];
   },
 };
 
@@ -194,6 +202,16 @@ const redis = {
 
     return cache.usage[idFromKey(key)]?.[field] ?? null;
   },
+
+  async del(key: string) {
+    if (cache.failure) {
+      throw cache.failure;
+    }
+
+    cache.deleted.push(key);
+    delete cache.quota[idFromKey(key)];
+    return 1;
+  },
 };
 
 // --- audit logs --------------------------------------------------------------
@@ -237,10 +255,10 @@ function buildAuditLogServices(real: RealAuditLogServices) {
     // suite testing this module needs the rest of it intact.
     ...real,
 
-    async createAuditLog(context: Caller, body: unknown, executor?: unknown) {
+    async createAuditLog(body: unknown, executor?: unknown) {
       if (audit.passthrough) {
         // biome-ignore lint/suspicious/noExplicitAny: handing the real signature straight back through
-        return real.createAuditLog(context, body as any, executor as any);
+        return real.createAuditLog(body as any, executor as any);
       }
 
       audit.calls.push({ body, transactional: executor !== undefined });
@@ -400,11 +418,11 @@ export async function installModuleMocks() {
     connectRedis: async () => {},
   }));
 
-  // Same reasoning as redis: the real module builds an S3 client from the
-  // environment on first use, and a unit test has no bucket.
+  // The server initializes the real store on startup. Unit tests use the
+  // in-memory stand-in above instead.
   mock.module('@repo/object-storage', () => ({
     objectStorage,
-    createObjectStorageFromEnvironment: notStubbed('createObjectStorageFromEnvironment'),
+    createObjectStorage: notStubbed('createObjectStorage'),
   }));
 
   mock.module('../../src/api/audit-logs/audit-logs.services', () => ({ default: auditLogServices }));

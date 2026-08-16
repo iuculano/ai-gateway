@@ -1,10 +1,13 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { assertNever } from '@repo/core';
-import { getCaller, zodExceptionHook } from '@repo/hono';
+import { zodExceptionHook } from '@repo/hono';
 import { HTTPException } from 'hono/http-exception';
 import Routes from './audit-logs.routes';
 import Services, { type GetAuditLogFailure } from './audit-logs.services';
 
+/**
+ * The HTTP translations, one per service failure union.
+ */
 function toGetAuditLogHttpException(failure: GetAuditLogFailure): HTTPException {
   const { code } = failure;
 
@@ -19,6 +22,7 @@ function toGetAuditLogHttpException(failure: GetAuditLogFailure): HTTPException 
 
 /**
  * GET /audit-logs/:id
+ *
  * Retrieve a specific audit log by id.
  */
 const getAuditLog = defineOpenAPIRoute({
@@ -26,10 +30,8 @@ const getAuditLog = defineOpenAPIRoute({
   handler: async (c) => {
     const params = c.req.valid('param');
 
-    const result = await Services.getAuditLog(getCaller(), params.id);
+    const result = await Services.getAuditLog(params.id);
 
-    // Nothing catches the service call: a rejected promise is a malfunction,
-    // and the global error handler is what turns those into a sanitized 500.
     return result.match(
       (log) => c.json(log, 200),
       (failure) => {
@@ -41,6 +43,7 @@ const getAuditLog = defineOpenAPIRoute({
 
 /**
  * GET /audit-logs
+ *
  * Retrieve a list of audit logs.
  */
 const listAuditLogs = defineOpenAPIRoute({
@@ -48,7 +51,7 @@ const listAuditLogs = defineOpenAPIRoute({
   handler: async (c) => {
     const query = c.req.valid('query');
 
-    const result = await Services.listAuditLogs(getCaller(), query);
+    const result = await Services.listAuditLogs(query);
 
     return c.json(result, 200);
   },

@@ -1,7 +1,11 @@
 import { createRoute } from '@hono/zod-openapi';
 import { httpError } from '@repo/core';
 import { authorize } from '@repo/hono';
-import { bearerSecurity, protectedRouteErrors, validatedProtectedRouteErrors } from '../../../../../packages/hono/src/openapi/route-helpers';
+import {
+  bearerSecurity,
+  protectedRouteErrors,
+  validatedProtectedRouteErrors,
+} from '../../../../../packages/hono/src/openapi/route-helpers';
 import { SCOPES } from '../../authorization';
 import Schemas from './logs.schemas';
 
@@ -208,7 +212,7 @@ const listLogs = createRoute({
 });
 
 /**
- * Registered BEFORE /logs/:id, and that ordering is load-bearing.
+ * Registered BEFORE /logs/:id.
  *
  * `/logs/stats` and `/logs/:id` are both GET and both match this path. If the
  * parameterised route wins, "stats" is bound to :id, fails the uuidv7 check and

@@ -1,4 +1,5 @@
 import { prometheus } from '@hono/prometheus';
+import type { Context } from 'hono';
 
 /**
  * The prometheus registry, built on first use rather than at import time.
@@ -24,4 +25,16 @@ export const requestMetrics = () => metrics().registerMetrics;
 /**
  * The /metrics endpoint prometheus scrapes.
  */
-export const exposeMetrics = () => metrics().printMetrics;
+export const exposeMetrics = () => {
+  const printMetrics = metrics().printMetrics;
+
+  return async (c: Context): Promise<Response> => {
+    const response = await printMetrics(c);
+
+    // Hono's fast path for c.text() constructs a bare Response without the
+    // documented text/plain header. Prometheus accepts this media type and
+    // scrapers should not have to guess the exposition format.
+    response.headers.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    return response;
+  };
+};

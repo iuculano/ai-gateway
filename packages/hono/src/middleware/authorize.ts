@@ -1,13 +1,13 @@
 import type { Context, Next } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
-import type { Actor } from './authenticate';
+import type { Caller } from './authenticate';
 
 export interface AuthorizeOptions {
   scopes?: readonly string[];
 
   /** Caller actor types allowed to reach the route. Omit to allow every type. */
-  actorTypes?: readonly Actor['type'][];
+  actorTypes?: readonly Caller['actor']['type'][];
 }
 
 /**
@@ -15,8 +15,8 @@ export interface AuthorizeOptions {
  * authenticate() - it must run after it in the chain.
  *
  * Actor-type checks run before scope checks. Scope checks are conjunctive.
- * 
- * @param options 
+ *
+ * @param options
  * Set of options to configure the middleware.
  *
  * @returns

@@ -23,8 +23,10 @@ export const apiKeys = pgTable(
     scopes: text().notNull().default(''),
     rate_limit_requests: integer(),
     rate_limit_window: integer(),
-    // Enforced against the authenticated request's network peer by the generic
-    // key adapter. Proxy deployments must make that peer boundary explicit.
+    // Reserved for future IP-allowlist support. This value is currently stored
+    // and returned as configuration only: authentication intentionally does not
+    // enforce it yet. Do not treat allowed_ips as a security control until that
+    // support is implemented.
     allowed_ips: cidr().array(),
     expires_at: timestamp({ withTimezone: true }),
     revoked_at: timestamp({ withTimezone: true }),

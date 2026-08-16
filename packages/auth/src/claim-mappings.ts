@@ -6,6 +6,10 @@
  *
  * @param value
  * The raw value of the scopes claim from the IDP.
+ *
+ * @returns
+ * An array of scope names, or an empty array if the claim is missing or
+ * invalid.
  */
 export function normalizeScopes(value: unknown): string[] {
   // Formatted like: 'scope1 scope2 scope3'
@@ -15,7 +19,7 @@ export function normalizeScopes(value: unknown): string[] {
 
   // If it's an array, it's already in the format we want.
   if (Array.isArray(value)) {
-    return value as string[];
+    return value.filter((scope): scope is string => typeof scope === 'string' && scope.length > 0);
   }
 
   return [];
@@ -27,6 +31,9 @@ export function normalizeScopes(value: unknown): string[] {
  *
  * @param value
  * The raw value of the roles claim from the IDP.
+ *
+ * @returns
+ * An array of role names, or an empty array if the claim is missing or invalid.
  */
 export function normalizeRoles(value: unknown): string[] {
   // Handle a single role sent as a bare string. An empty string means no roles.
@@ -38,7 +45,7 @@ export function normalizeRoles(value: unknown): string[] {
   // the claim is untrusted input, and a mixed array would otherwise put
   // non-strings into a string[].
   if (Array.isArray(value)) {
-    return value as string[];
+    return value.filter((role): role is string => typeof role === 'string' && role.length > 0);
   }
 
   // Roles mapped as an object keys. For example, Zitadel...

@@ -46,9 +46,6 @@ const listApiKeys = createSchema({
   }),
 
   response: z.object({
-    // total_requests is redis-backed rather than a column, hydrated onto each
-    // row after the query - the table has a Requests column, and a per-row call
-    // to the stats endpoint to fill it would be one request per key.
     data: z.array(apiKeyShape.extend({ total_requests: z.number().int().nonnegative() })),
     meta: z.object({
       oldest_id: z.uuidv7().nullable(),
@@ -74,11 +71,6 @@ const createApiKey = createSchema({
       rate_limit_requests: z.number().int().min(1).nullish(),
       rate_limit_window: z.number().int().min(1).optional(),
     })
-    // A quota with no window to spend it in cannot be enforced, and the key
-    // would be unusable rather than merely unlimited: the fixed-window limiter
-    // reads the window on every request the key authenticates. Body-local here
-    // because at creation the body IS the whole row - the update path has to
-    // check the merged row instead, see UpdateApiKeyFailure.
     .refine((body) => body.rate_limit_requests == null || body.rate_limit_window != null, {
       message: 'rate_limit_window is required when rate_limit_requests is set',
       path: ['rate_limit_window'],

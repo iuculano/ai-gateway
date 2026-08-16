@@ -48,28 +48,3 @@ test('deleting a previously resolved user takes effect immediately', async () =>
 
   await expect(resolveUser('https://idp-a.example', 'subject-1', profile)).rejects.toMatchObject({ status: 403 });
 });
-
-test('a legacy external_id is claimed without changing the local user id', async () => {
-  const [legacy] = await admin`
-    insert into users (username, email, external_id)
-    values ('legacy', 'legacy@example.test', 'legacy-subject')
-    returning id
-  `;
-
-  const resolved = await resolveUser('https://idp-a.example', 'legacy-subject', profile);
-
-  expect(resolved).toBe(legacy?.id);
-
-  const [user] = await admin`select external_id from users where id = ${resolved}`;
-  const [identity] = await admin`
-    select external_idp, external_id
-    from user_identities
-    where user_id = ${resolved}
-  `;
-
-  expect(user?.external_id).toBeNull();
-  expect(identity).toMatchObject({
-    external_idp: 'https://idp-a.example',
-    external_id: 'legacy-subject',
-  });
-});

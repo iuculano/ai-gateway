@@ -33,48 +33,6 @@ async function findUserByExternalIdentity(issuer: string, externalId: string): P
 }
 
 /**
- * Claims a pre-user_identities row for an issuer without breaking its existing
- * foreign keys. Setting users.external_id to null makes the bridge one-shot:
- * another issuer with the same subject cannot later collapse onto this human.
- */
-async function claimLegacyIdentity(issuer: string, externalId: string): Promise<string | null> {
-  try {
-    return await db.transaction(async (tx) => {
-      const [legacy] = await tx
-        .update(users)
-        .set({ external_id: null })
-        .where(eq(users.external_id, externalId))
-        .returning({ id: users.id, status: users.status });
-
-      if (!legacy) {
-        return null;
-      }
-
-      if (legacy.status !== 'active') {
-        throw new HTTPException(403, {
-          cause: 'User is not active',
-        });
-      }
-
-      await tx.insert(userIdentities).values({
-        user_id: legacy.id,
-        external_idp: issuer,
-        external_id: externalId,
-      });
-
-      return legacy.id;
-    });
-  } catch (error) {
-    // A concurrent request may have created the exact identity first.
-    const retry = await findUserByExternalIdentity(issuer, externalId);
-    if (retry) {
-      return retry;
-    }
-    throw error;
-  }
-}
-
-/**
  * Retrieves a user by local id.
  *
  * Full rows are read on every key-authentication attempt so a deleted owner is
@@ -94,11 +52,6 @@ export async function resolveUser(issuer: string, externalId: string, profile: U
   const existing = await findUserByExternalIdentity(issuer, externalId);
   if (existing) {
     return existing;
-  }
-
-  const legacy = await claimLegacyIdentity(issuer, externalId);
-  if (legacy) {
-    return legacy;
   }
 
   try {

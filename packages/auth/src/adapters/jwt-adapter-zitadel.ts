@@ -1,11 +1,11 @@
-import type { JWTAuthAdapter } from '@repo/hono';
+import type { JWTAuthAdapter } from '@repo/hono/auth-adapter';
 import { HTTPException } from 'hono/http-exception';
 import type { JWTPayload } from 'jose';
 
 import { normalizeRoles, normalizeScopes } from '../claim-mappings';
 import { resolveOrganization } from '../organizations';
 import { rolesToScopes } from '../role-scopes';
-import { fetchUserInfo, verifyAccessToken } from '../token-helpers';
+import { fetchUserInfo, loadOpenIDProvider, verifyAccessToken } from '../token-helpers';
 import { resolveUser } from '../users';
 
 // Where Zitadel puts the claims we care about.
@@ -19,19 +19,26 @@ const CLAIMS = {
 // A type (not an interface) so it overlaps with the Record<string, unknown>
 // that fetchUserInfo() returns.
 type ZitadelUserInfo = {
-  sub: string;
-  preferred_username: string;
-  email?: string;
-  name?: string;
-  given_name?: string;
-  family_name?: string;
+  sub?: unknown;
+  preferred_username?: unknown;
+  email?: unknown;
+  name?: unknown;
+  given_name?: unknown;
+  family_name?: unknown;
   [CLAIMS.roles]?: unknown;
 };
 
+/**
+ * Options for the Zitadel adapter.
+ */
 export interface ZitadelAdapterOptions {
+  /** Mapping of roles to scopes. */
   roleScopesMap: Record<string, string[]>;
 
+  /** The issuer of the access tokens. */
   issuer: string;
+
+  /** The audience of the access tokens. */
   audience: string;
 }
 
@@ -39,9 +46,10 @@ export interface ZitadelAdapterOptions {
  * Fetches the userinfo response and resolves the caller to our local user
  * id (provisioned just-in-time on first sight).
  */
-async function resolveTokenUser(token: string, issuer: string, externalUserId: string) {
-  // Token's valid, try to fetch additional user info from the userinfo endpoint.
-  const userInfo = (await fetchUserInfo(token, issuer)) as ZitadelUserInfo;
+async function resolveTokenUser(token: string, issuer: string, userinfoUri: string, externalUserId: string) {
+  // Token's valid, try to fetch additional user info from the userinfo
+  // endpoint.
+  const userInfo = (await fetchUserInfo(token, userinfoUri)) as ZitadelUserInfo;
 
   if (userInfo.sub !== externalUserId) {
     throw new HTTPException(401, {
@@ -50,15 +58,15 @@ async function resolveTokenUser(token: string, issuer: string, externalUserId: s
   }
 
   const username = userInfo.preferred_username;
-  if (!username) {
+  if (typeof username !== 'string' || username.length === 0) {
     // Valid userinfo, but we can't identify the caller without a username.
     throw new HTTPException(500, {
       cause: 'Userinfo response: missing required claims',
     });
   }
 
-  const email = userInfo.email ?? username;
-  const displayName = userInfo.name || undefined;
+  const email = typeof userInfo.email === 'string' && userInfo.email.length > 0 ? userInfo.email : username;
+  const displayName = typeof userInfo.name === 'string' && userInfo.name.length > 0 ? userInfo.name : undefined;
 
   const userId = await resolveUser(issuer, externalUserId, {
     username: username,
@@ -94,23 +102,27 @@ function resolveScopes(
 }
 
 /**
- * Builds an adapter for Zitadel-issued access tokens: verifies the JWT
- * against the expected issuer and audience, resolves the organization and
- * user (both provisioned just-in-time on first sight), and applies the
- * injected role -> scope policy to produce a Caller.
+ * Authentication adapter for handing Zitadel issued access tokens.
  */
-export function createZitadelAdapter(options: ZitadelAdapterOptions): JWTAuthAdapter {
+export async function createZitadelAdapter(options: ZitadelAdapterOptions): Promise<JWTAuthAdapter> {
+  const provider = await loadOpenIDProvider(options.issuer);
+
   return async ({ token }) => {
     // Verification first. Nothing of the following should be trusted until the
     // token is verified.
-    const payload = await verifyAccessToken(token, options.issuer, options.audience);
+    const payload = await verifyAccessToken(token, provider, options.audience);
 
     // Zitadel scopes tokens to a resource owner - that's our
     // tenant/organization.
-    const externalOrganizationId = payload[CLAIMS.organizationId] as string;
+    const externalOrganizationId = payload[CLAIMS.organizationId];
     const externalUserId = payload.sub;
 
-    if (!externalOrganizationId || !externalUserId) {
+    if (
+      typeof externalOrganizationId !== 'string' ||
+      externalOrganizationId.length === 0 ||
+      typeof externalUserId !== 'string' ||
+      externalUserId.length === 0
+    ) {
       // Technically a valid token, but missing a claim we need to identify the
       // caller. Somehow? No idea how these would be missing in practice...
       throw new HTTPException(401, {
@@ -123,14 +135,14 @@ export function createZitadelAdapter(options: ZitadelAdapterOptions): JWTAuthAda
     const { userId, userInfo, username, email, displayName } = await resolveTokenUser(
       token,
       options.issuer,
+      provider.userinfoUri,
       externalUserId,
     );
 
-    const organization = await resolveOrganization(
-      options.issuer,
-      externalOrganizationId,
-      payload[CLAIMS.organizationName] as string | undefined,
-    );
+    const rawOrganizationName = payload[CLAIMS.organizationName];
+    const organizationName =
+      typeof rawOrganizationName === 'string' && rawOrganizationName.length > 0 ? rawOrganizationName : undefined;
+    const organization = await resolveOrganization(options.issuer, externalOrganizationId, organizationName);
 
     const scopes = resolveScopes(payload, userInfo, options.roleScopesMap);
 
@@ -147,8 +159,12 @@ export function createZitadelAdapter(options: ZitadelAdapterOptions): JWTAuthAda
           username: username,
           email: email,
           displayName: displayName,
-          firstName: userInfo.given_name || undefined,
-          lastName: userInfo.family_name || undefined,
+          firstName:
+            typeof userInfo.given_name === 'string' && userInfo.given_name.length > 0 ? userInfo.given_name : undefined,
+          lastName:
+            typeof userInfo.family_name === 'string' && userInfo.family_name.length > 0
+              ? userInfo.family_name
+              : undefined,
         },
       },
 

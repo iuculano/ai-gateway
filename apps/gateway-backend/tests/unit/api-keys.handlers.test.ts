@@ -1,5 +1,5 @@
 import { beforeEach, expect, mock, test } from 'bun:test';
-import type { Actor, Caller } from '@repo/hono';
+import type { Caller } from '@repo/hono';
 import {
   apiKeyRow,
   audit,
@@ -29,13 +29,13 @@ const log = {
 const userActor = {
   type: 'user',
   user: { id: USER_ID, username: 'alex', email: 'alex@example.com' },
-} satisfies Actor;
+} satisfies Caller['actor'];
 
 const apiKeyActor = {
   type: 'api_key',
   key: { id: KEY_ID, name: 'ci' },
   owner: userActor.user,
-} satisfies Actor;
+} satisfies Caller['actor'];
 
 const caller: Caller = {
   organization: { id: ORGANIZATION_ID, name: 'acme' },

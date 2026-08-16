@@ -105,6 +105,7 @@ function evaluateOne(row: GuardrailRow, target: 'request' | 'response', content:
  */
 async function evaluateGuardrails(body: EvaluateGuardrailsBody): Promise<EvaluateGuardrailsResponse> {
   const caller = getCaller();
+
   const conditions = [
     eq(guardrails.organization_id, caller.organization.id),
     eq(guardrails.enabled, true),
@@ -259,7 +260,6 @@ async function createRegexGuardrail(body: CreateRegexGuardrailBody): Promise<Cre
     }
 
     await AuditLogServices.createAuditLog(
-      caller,
       {
         event: 'guardrails.created',
         target_type: 'guardrail',
@@ -338,7 +338,6 @@ async function updateRegexGuardrail(
     }
 
     await AuditLogServices.createAuditLog(
-      caller,
       {
         event: 'guardrails.updated',
         target_type: 'guardrail',
@@ -385,7 +384,6 @@ async function deleteGuardrail(id: string): Promise<Result<DeleteGuardrailRespon
     }
 
     await AuditLogServices.createAuditLog(
-      caller,
       {
         event: 'guardrails.deleted',
         target_type: 'guardrail',

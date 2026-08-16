@@ -1,5 +1,5 @@
 /**
- * The byte-level port every backing store implements.
+ * The byte-level client that every backing store implements.
  *
  * Deliberately small and untyped beyond bytes.
  */

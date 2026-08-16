@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
 import { createGenericKeyAdapter } from '@repo/auth';
 import { runWithCaller } from '@repo/hono';
+import { redis } from '@repo/redis';
 import Services from '../../src/api/api-keys/api-keys.services';
 import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
 
@@ -23,7 +24,7 @@ beforeEach(async () => {
   acme = await seedTenant('acme');
 });
 
-async function issueKey(overrides: { scopes?: string; allowed_ips?: string[] } = {}) {
+async function issueKey(overrides: { scopes?: string; rate_limit_requests?: number; rate_limit_window?: number } = {}) {
   const caller = callerFor(acme, ['api-keys:write', 'chat-completions:write']);
 
   const result = await runWithCaller(caller, () => Services.createApiKey({ name: 'ci', ...overrides }));
@@ -106,38 +107,51 @@ test('suspending an organization invalidates a previously used key immediately',
   await expect(authenticateKey(key.key)).rejects.toMatchObject({ status: 401 });
 });
 
-test('an allowlisted IPv4 network accepts a matching peer', async () => {
-  const key = await issueKey({ allowed_ips: ['192.0.2.0/24'] });
+test('successful authentication records usage that the API-key stats endpoint reports', async () => {
+  const key = await issueKey();
+  const startedAt = Date.now();
 
-  const caller = await authenticateKey(key.key, '192.0.2.42');
+  await authenticateKey(key.key);
+  await authenticateKey(key.key);
 
-  expect(caller.actor.type).toBe('api_key');
+  const stats = await runWithCaller(callerFor(acme, ['api-keys:read']), () => Services.getApiKeyStats(key.id));
+  const value = stats._unsafeUnwrap();
+
+  expect(value.total_requests).toBe(2);
+  expect(value.last_used_at?.getTime()).toBeGreaterThanOrEqual(startedAt);
+  expect(value.current_window).toBeNull();
 });
 
-test('an IPv4 allowlist accepts an IPv4-mapped IPv6 peer', async () => {
-  const key = await issueKey({ allowed_ips: ['192.0.2.0/24'] });
+test('a limited key rejects excess authentication without recording it as successful usage', async () => {
+  const key = await issueKey({ rate_limit_requests: 1, rate_limit_window: 60 });
 
-  const caller = await authenticateKey(key.key, '::ffff:192.0.2.42');
+  await authenticateKey(key.key);
 
-  expect(caller.actor.type).toBe('api_key');
+  let failure: unknown;
+  try {
+    await authenticateKey(key.key);
+  } catch (error) {
+    failure = error;
+  }
+
+  expect(failure).toMatchObject({ status: 429 });
+  const response = (failure as { res?: Response }).res;
+  expect(response?.headers.get('Retry-After')).toMatch(/^\d+$/);
+  expect(response?.headers.get('RateLimit-Policy')).toBe('1;w=60');
+  expect(await redis.hGet(`api-keys:usage:${key.id}`, 'total_requests')).toBe('1');
 });
 
-test('an allowlisted IPv6 network accepts a matching peer', async () => {
-  const key = await issueKey({ allowed_ips: ['2001:db8::/32'] });
+test('updating a limited key resets its live window and the new policy takes effect', async () => {
+  const key = await issueKey({ rate_limit_requests: 1, rate_limit_window: 60 });
 
-  const caller = await authenticateKey(key.key, '2001:db8::42');
+  await authenticateKey(key.key);
+  await expect(authenticateKey(key.key)).rejects.toMatchObject({ status: 429 });
 
-  expect(caller.actor.type).toBe('api_key');
-});
+  const updated = await runWithCaller(callerFor(acme, ['api-keys:write']), () =>
+    Services.updateApiKey(key.id, { rate_limit_requests: 2 }),
+  );
+  expect(updated.isOk()).toBe(true);
 
-test('an allowlisted key rejects a peer outside its networks', async () => {
-  const key = await issueKey({ allowed_ips: ['192.0.2.0/24', '2001:db8::/32'] });
-
-  await expect(authenticateKey(key.key, '198.51.100.10')).rejects.toMatchObject({ status: 401 });
-});
-
-test('an allowlisted key rejects a request with no peer address', async () => {
-  const key = await issueKey({ allowed_ips: ['192.0.2.0/24'] });
-
-  await expect(authenticate({ key: key.key, request: {} })).rejects.toMatchObject({ status: 401 });
+  await expect(authenticateKey(key.key)).resolves.toMatchObject({ organization: { id: acme.organizationId } });
+  expect(await redis.hGet(`api-keys:usage:${key.id}`, 'total_requests')).toBe('2');
 });

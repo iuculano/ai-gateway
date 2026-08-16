@@ -4,18 +4,6 @@ import { createSchema } from '@repo/hono';
 const webhookShape = z.object({
   id: z.uuidv7(),
   name: z.string(),
-  // The three nullable columns. Each is written the same way for two separate
-  // reasons, and both are load-bearing:
-  //
-  // .nullish() because the column is nullable, so a row without one comes back
-  // from postgres as null. Declared .optional() alone, filter and tags rejected
-  // that row outright - which made every read of a webhook created without them
-  // a 500, and that is the ordinary case rather than an edge one.
-  //
-  // .optional() outermost because a transform at the outside makes the KEY
-  // required in the inferred input type. This shape is also the base for the
-  // create and update bodies, so that would oblige a caller to pass
-  // `filter: undefined` explicitly rather than just leaving it out.
   description: z
     .string()
     .nullish()

@@ -200,6 +200,20 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
     }
   }
 
+  // Do not require object storage for an entirely missing batch. Apart from
+  // avoiding a pointless remote call, this preserves the tenancy boundary:
+  // ids filtered out by the scoped query never cause any storage access.
+  if (keysByLogId.size === 0) {
+    return Schemas.batch.response.parse({
+      data: {},
+      meta: {
+        requested: requested.length,
+        returned: 0,
+        missing: requested,
+      },
+    });
+  }
+
   const payloadsByKey = await objectStorage.getManyJson([...keysByLogId.values()]);
 
   const data: Record<string, unknown> = {};
@@ -546,14 +560,6 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
  * Written before the provider is called so that a request which dies in flight
  * still leaves a trace. The row starts 'incomplete' and one of completeLog or
  * failLog resolves it.
- *
- * The organization is passed in rather than read from the ambient service
- * context, and that is load-bearing for the streaming path. completeLog runs
- * after the response stream has drained, which is a continuation the request's
- * AsyncLocalStorage scope is not guaranteed to still cover - reading the tenant
- * there would be a coin flip, and losing it would silently orphan every
- * streamed log as 'incomplete'. Naming it explicitly also makes these three
- * callable from a background drain, which getCaller() would refuse.
  *
  * @param organizationId
  * The tenant the log belongs to.

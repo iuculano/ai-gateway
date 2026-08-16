@@ -207,6 +207,7 @@ test('getLogPayloadBatch never turns an unseen id into an object key', async () 
   // The scoped query returns nothing for the foreign id, so it never reaches
   // object storage - which has no idea who is asking and would happily serve it.
   database.script(rows());
+  objects.failure = new Error('object storage must not be called');
 
   const batch = await Services.getLogPayloadBatch([foreignId], 'request');
 
@@ -231,4 +232,49 @@ test('startLog rejects rather than returning a failure', async () => {
   await expect(Services.startLog('org', { model: 'gpt-4-turbo', provider: 'openai' })).rejects.toThrow(
     'Failed to open log',
   );
+});
+
+test('completeLog stores both payloads before publishing their references', async () => {
+  database.script(rows());
+
+  await Services.completeLog('org', LOG_ID, {
+    request: { messages: ['hello'] },
+    response: { answer: 'hi' },
+    input_tokens: 2,
+    output_tokens: 1,
+  });
+
+  expect(objects.stored).toEqual({
+    [REQUEST_KEY]: { messages: ['hello'] },
+    [RESPONSE_KEY]: { answer: 'hi' },
+  });
+  expect(database.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
+    status: 'complete',
+    request_object_reference: REQUEST_KEY,
+    response_object_reference: RESPONSE_KEY,
+    input_tokens: 2,
+    output_tokens: 1,
+  });
+});
+
+test('completeLog does not publish object references when storage fails', async () => {
+  objects.failure = new Error('bucket unavailable');
+
+  await expect(Services.completeLog('org', LOG_ID, { request: { messages: ['hello'] } })).rejects.toThrow(
+    'bucket unavailable',
+  );
+
+  expect(database.calls).toHaveLength(0);
+});
+
+test('failLog stores the request and marks the row failed', async () => {
+  database.script(rows());
+
+  await Services.failLog('org', LOG_ID, { request: { messages: ['hello'] } });
+
+  expect(objects.stored[REQUEST_KEY]).toEqual({ messages: ['hello'] });
+  expect(database.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
+    status: 'failed',
+    request_object_reference: REQUEST_KEY,
+  });
 });

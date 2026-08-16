@@ -1,8 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { zodExceptionHook } from '@repo/hono';
 import Routes from './health.routes';
 import Services from './health.services';
-import { zodExceptionHook } from '@repo/hono';
-
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
 
@@ -14,9 +13,12 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
  * - 200 on success.
  */
 app.openapi(Routes.livez, async (c) => {
-  return c.json({
-    status: 'alive' as const ,
-  }, 200);
+  return c.json(
+    {
+      status: 'alive' as const,
+    },
+    200,
+  );
 });
 
 /**
@@ -27,9 +29,12 @@ app.openapi(Routes.livez, async (c) => {
  * - 200 on success.
  */
 app.openapi(Routes.healthz, async (c) => {
-  return c.json({
-    status: 'ok' as const,
-  }, 200);
+  return c.json(
+    {
+      status: 'ok' as const,
+    },
+    200,
+  );
 });
 
 /**
@@ -51,11 +56,13 @@ app.openapi(Routes.readyz, async (c) => {
 
   const allHealthy = Object.values(checks).every(Boolean);
 
-  return c.json({
-    status: allHealthy ? 'ok' as const : 'degraded' as const,
-    checks,
-  },
-  allHealthy ? 200 : 503);
+  return c.json(
+    {
+      status: allHealthy ? ('ok' as const) : ('degraded' as const),
+      checks,
+    },
+    allHealthy ? 200 : 503,
+  );
 });
 
 export default app;

@@ -1,13 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { createGenericKeyAdapter, createZitadelAdapter } from '@repo/auth';
-import {
-  authenticate,
-  callerContext,
-  errorHandler,
-  exposeMetrics,
-  requestLogger,
-  requestMetrics,
-} from '@repo/hono';
+import { authenticate, callerContext, errorHandler, exposeMetrics, requestLogger, requestMetrics } from '@repo/hono';
+import { createObjectStorage } from '@repo/object-storage';
 import { connectRedis } from '@repo/redis';
 import { requestId } from 'hono/request-id';
 import { secureHeaders } from 'hono/secure-headers';
@@ -17,6 +11,14 @@ import { environment } from './environment';
 import { apiRoutes } from './routes';
 
 export const app = new OpenAPIHono();
+
+createObjectStorage({
+  bucket: environment.S3_BUCKET,
+  endpoint: environment.S3_ENDPOINT,
+  region: environment.S3_REGION,
+  accessKeyId: environment.S3_ACCESS_KEY_ID,
+  secretAccessKey: environment.S3_SECRET_ACCESS_KEY,
+});
 
 await connectRedis();
 
@@ -51,7 +53,7 @@ app.doc31('/open-api.json', {
 app.use(
   '/v1/*',
   authenticate({
-    jwtAdapter: createZitadelAdapter({
+    jwtAdapter: await createZitadelAdapter({
       roleScopesMap: ROLE_SCOPES_MAP,
       issuer: environment.IDENTITY_PROVIDER_TOKEN_ISSUER,
       audience: environment.IDENTITY_PROVIDER_TOKEN_AUDIENCE,

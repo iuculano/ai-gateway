@@ -35,7 +35,9 @@ export type GetApiKeyFailure = {
   id: string;
 };
 
-/** Statistics are gated on the same lookup, so they refuse for the same reason. */
+/**
+ * Statistics are gated on the same lookup, so they refuse for the same reason.
+ */
 export type GetApiKeyStatsFailure = {
   code: 'API_KEY_NOT_FOUND';
   id: string;
@@ -52,23 +54,23 @@ export type CreateApiKeyFailure = {
 };
 
 export type UpdateApiKeyFailure =
-  {
-    code: 'UNGRANTABLE_SCOPES';
-    held: string[];
-    ungrantable: string[];
-  } |
-  {
-    code: 'API_KEY_NOT_FOUND';
-    id: string;
-  } |
-  {
-    code: 'API_KEY_REVOKED';
-    id: string;
-  } |
-  {
-    code: 'RATE_LIMIT_WINDOW_REQUIRED';
-    id: string;
-  };
+  | {
+      code: 'UNGRANTABLE_SCOPES';
+      held: string[];
+      ungrantable: string[];
+    }
+  | {
+      code: 'API_KEY_NOT_FOUND';
+      id: string;
+    }
+  | {
+      code: 'API_KEY_REVOKED';
+      id: string;
+    }
+  | {
+      code: 'RATE_LIMIT_WINDOW_REQUIRED';
+      id: string;
+    };
 
 /**
  * Revocation is idempotent, so revoking an already revoked key is a success
@@ -90,6 +92,10 @@ export type RevokeApiKeyFailure = {
  */
 function hashApiKey(key: string): string {
   return createHash('sha256').update(key).digest('hex');
+}
+
+function apiKeyQuotaKey(id: string): string {
+  return `api-keys:quota:${id}`;
 }
 
 /**
@@ -134,14 +140,15 @@ async function getApiKeyStats(id: string): Promise<Result<GetApiKeyStatsResponse
   }
 
   const key = found.value;
+  const quotaKey = apiKeyQuotaKey(id);
 
   // Grab the redis state for this key.
   // biome-ignore format: looks nicer
   const [usage, counter, pttl] = await redis
     .multi()
     .hGetAll(`api-keys:usage:${id}`) // total_requests, last_used_at
-    .get(`api-keys:quota:${id}`) // current fixed-window count
-    .pTTL(`api-keys:quota:${id}`) // ms left in the window
+    .get(quotaKey) // current fixed-window count
+    .pTTL(quotaKey) // ms left in the window
     .execTyped();
 
   // usage is never null: a key that has never been used comes back as an empty
@@ -293,7 +300,7 @@ async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKey
       // Swallowed so the refusal below is what reaches the caller - a failed
       // write about the refusal must not replace the refusal itself. This is
       // the one place a failed audit write is deliberately dropped.
-      await AuditLogServices.createAuditLog(caller, {
+      await AuditLogServices.createAuditLog({
         event: 'api-keys.created',
         target_type: 'api_key',
         status: 'failure',
@@ -321,11 +328,11 @@ async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKey
 
     if (!row) {
       // Mysterious database persistence failure, not a refusal...
+      // Should probaly never land here in practice, just throw...
       throw new Error('Failed to insert API key');
     }
 
     await AuditLogServices.createAuditLog(
-      caller,
       {
         event: 'api-keys.created',
         target_type: 'api_key',
@@ -377,7 +384,7 @@ async function updateApiKey(
       // Swallowed so the refusal below is what reaches the caller - a failed
       // write about the refusal must not replace the refusal itself. This is
       // the one place a failed audit write is deliberately dropped.
-      await AuditLogServices.createAuditLog(caller, {
+      await AuditLogServices.createAuditLog({
         event: 'api-keys.updated',
         target_type: 'api_key',
         target_id: id, // Unlike creation, the target already exists here.
@@ -453,7 +460,6 @@ async function updateApiKey(
     }
 
     await AuditLogServices.createAuditLog(
-      caller,
       {
         event: 'api-keys.updated',
         target_type: 'api_key',
@@ -463,6 +469,18 @@ async function updateApiKey(
       },
       tx,
     );
+
+    // The fixed-window counter's TTL is established only when Redis creates the
+    // counter. Reusing it after either half of the policy changes would combine
+    // the new database policy with the old count and expiry. Clear the window as
+    // part of the update operation so the next request starts coherently under
+    // the new policy. A Redis failure throws and rolls the database/audit
+    // transaction back rather than committing a policy whose stale window is
+    // still active.
+    const rateLimitChanged = 'rate_limit_requests' in difference || 'rate_limit_window' in difference;
+    if (rateLimitChanged) {
+      await redis.del(apiKeyQuotaKey(row.id));
+    }
 
     return ok(row);
   });
@@ -527,7 +545,6 @@ async function revokeApiKey(id: string): Promise<Result<RevokeApiKeyResponse, Re
     }
 
     await AuditLogServices.createAuditLog(
-      caller,
       {
         event: 'api-keys.revoked',
         target_type: 'api_key',

@@ -28,8 +28,6 @@ function toUpdateRegexGuardrailHttpException(failure: UpdateRegexGuardrailFailur
   const { code } = failure;
 
   switch (code) {
-    // Covers both a missing row and one that is not a regex guardrail. The
-    // service does not distinguish them, so neither can this.
     case 'GUARDRAIL_NOT_FOUND':
       return new HTTPException(404);
 

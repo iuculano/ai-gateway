@@ -10,9 +10,9 @@ import { TEAMS, weightedCatalogue } from './catalogue';
  * minutes: a million-row insert becomes twenty round trips carrying a few
  * hundred bytes each, instead of a million parameter bindings.
  *
- * Everything here runs on the ADMIN connection because bulk seeding is setup,
- * not the thing under test. Measurements use the application role and the same
- * explicit organization predicates as production queries.
+ * Everything here runs on the admin connection because bulk seeding is setup,
+ * not the thing under test. Measurements use the runtime connection and the
+ * same explicit organization predicates as production queries.
  */
 
 /**
@@ -240,7 +240,11 @@ select
   case when status = 'complete'
        then coalesce($11::text, 'logs/' || $1::text || '/' || id::text || '/response.json.zst') end,
 
-  jsonb_build_object($8::text, $9::text, 'env', env, 'team', team),
+  -- A unique value exercises the high-cardinality end of a GIN index. Real
+  -- callers often attach trace/request ids; a seed containing only six teams
+  -- and four environments would materially understate that index's size and
+  -- write cost.
+  jsonb_build_object($8::text, $9::text, 'env', env, 'team', team, 'trace', id::text),
   created_at,
   created_at
 from shaped

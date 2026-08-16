@@ -25,14 +25,6 @@ export const SCOPES = {
  */
 export const ROLE_SCOPES_MAP: Record<string, string[]> = {
   admin: Object.values(SCOPES), // Everything
-  // guardrailsRead, not Write: reading the rules and running them against
-  // content is ordinary use, but changing what the gateway will refuse is an
-  // administrative act.
-  //
-  // modelsRead, not Write, for the same reason and one more: `models` is a
-  // single global catalogue with no organization_id, so a write there is not
-  // scoped to the caller's tenant the way every other write in this API is. It
-  // also carries the per-token costs, which is to say the billing inputs.
   user: [
     SCOPES.apiKeysRead,
     SCOPES.auditLogsRead,

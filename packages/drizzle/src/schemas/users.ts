@@ -12,31 +12,20 @@ export const userStatus = pgEnum('user_status', ['active', 'deleted']);
  * This is intended to give a stable database-local identity to a user, it is
  *
  */
-export const users = pgTable(
-  'users',
-  {
-    id: uuid().primaryKey().default(sql`uuidv7()`),
+export const users = pgTable('users', {
+  id: uuid().primaryKey().default(sql`uuidv7()`),
 
-    username: text().notNull(),
-    email: text().notNull(),
-    name: text(),
-    status: userStatus().notNull().default('active'), // 'deleted' = tombstone JIT path must check this
-    // Legacy migration bridge. New identities live in user_identities; an old
-    // row is claimed once by its first issuer-qualified login and then cleared.
-    external_id: text(),
+  username: text().notNull(),
+  email: text().notNull(),
+  name: text(),
+  status: userStatus().notNull().default('active'), // 'deleted' = tombstone JIT path must check this
 
-    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
-    updated_at: timestamp({ withTimezone: true })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (t) => [
-    // Keeps unclaimed legacy identities unique while allowing many migrated
-    // rows whose external_id has been cleared to null.
-    uniqueIndex('users_external_idx').on(t.external_id),
-  ],
-);
+  created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
 
 export const userIdentities = pgTable(
   'user_identities',

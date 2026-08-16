@@ -4,13 +4,16 @@
   "module": "index.ts",
   "exports": {
     ".": "./index.ts",
+    "./auth-adapter": "./src/auth-adapter.ts",
     "./middleware": "./src/middleware/index.ts",
     "./openapi": "./src/openapi/route-helpers.ts",
     "./util": "./src/util/index.ts"
   },
   "types": "./index.ts",
   "scripts": {
-    "check-types": "bunx tsc --noEmit"
+    "check-types": "bunx tsc --noEmit",
+    "test": "bun test tests",
+    "test:coverage": "bun test --coverage tests"
   },
   "dependencies": {
     "@hono/prometheus": "^1.0.3",

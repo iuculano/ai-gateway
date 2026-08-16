@@ -1,11 +1,10 @@
+import { swaggerUI } from '@hono/swagger-ui';
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { swaggerUI } from '@hono/swagger-ui'
-import healthHandlers from './api/health/health.handlers';
-
-// Middleware
-import { secureHeaders } from 'hono/secure-headers'
-import { requestId } from 'hono/request-id'
 import { errorHandler } from '@repo/hono';
+import { requestId } from 'hono/request-id';
+// Middleware
+import { secureHeaders } from 'hono/secure-headers';
+import healthHandlers from './api/health/health.handlers';
 import { environment } from './environment';
 
 import { tickWebhookProcessor } from './worker/webhook-processor';
@@ -24,12 +23,14 @@ app.doc31('/open-api.json', {
   },
 });
 
-app.get('/docs', swaggerUI({
-  url: '/open-api.json'
-}));
+app.get(
+  '/docs',
+  swaggerUI({
+    url: '/open-api.json',
+  }),
+);
 
 app.route('/', healthHandlers);
-
 
 let shuttingDown = false;
 
@@ -50,7 +51,6 @@ const shutdown = () => {
 
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);
-
 
 export default {
   fetch: app.fetch,

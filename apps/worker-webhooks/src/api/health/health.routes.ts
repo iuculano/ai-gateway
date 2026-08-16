@@ -1,7 +1,6 @@
 import { createRoute } from '@hono/zod-openapi';
 import Schemas from './health.schemas';
 
-
 const livez = createRoute({
   method: 'get' as const,
   path: '/livez',
@@ -59,4 +58,4 @@ export default {
   livez,
   healthz,
   readyz,
-}
+};

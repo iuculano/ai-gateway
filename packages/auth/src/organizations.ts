@@ -2,12 +2,24 @@ import { and, db, eq } from '@repo/drizzle';
 import { organizations } from '@repo/drizzle/schemas';
 import { HTTPException } from 'hono/http-exception';
 
+/**
+ * Simplified representation of an organization.
+ */
 export interface Organization {
   id: string;
   name: string;
   status: string;
 }
 
+/**
+ * Converts a database row into an Organization object.
+ *
+ * @param row
+ * The database row representing an organization.
+ *
+ * @returns
+ * The corresponding Organization object.
+ */
 function toOrganization(row: typeof organizations.$inferSelect): Organization {
   return {
     id: row.id,
@@ -16,8 +28,19 @@ function toOrganization(row: typeof organizations.$inferSelect): Organization {
   };
 }
 
-/** Turns a display name into a URL-safe slug fragment. */
-function slugify(value: string): string {
+/**
+ * Turns a display name into a URL-safe slug.
+ *
+ * Collapses non-alphanumeric characters into a single dash, lowercases, and
+ * trims leading and trailing dashes.
+ *
+ * @param value
+ * The display name to convert.
+ *
+ * @returns
+ * A URL-safe slug derived from the display name.
+ */
+function toSlug(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -29,8 +52,18 @@ function slugify(value: string): string {
  *
  * This lookup deliberately is not authorization-cached. Suspending a tenant
  * must affect the next authentication attempt.
+ *
+ * @param issuer
+ * The external identity provider's issuer.
+ *
+ * @param id
+ * The external identity provider's organization id.
+ *
+ * @returns
+ * The organization if found and active, or null if not found.
  */
 async function findOrganizationByExternalIdpId(issuer: string, id: string): Promise<Organization | null> {
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select()
     .from(organizations)
@@ -55,13 +88,31 @@ async function findOrganizationByExternalIdpId(issuer: string, id: string): Prom
  * Callers such as the key adapter must decide how a non-active row is reported.
  */
 export async function getOrganization(id: string): Promise<Organization | null> {
-  const [row] = await db.select().from(organizations).where(eq(organizations.id, id)).limit(1);
+  // biome-ignore format: looks nicer
+  const [row] = await db
+    .select()
+    .from(organizations)
+    .where(eq(organizations.id, id))
+    .limit(1);
 
   return row ? toOrganization(row) : null;
 }
 
 /**
  * Resolves and, on first sight, provisions an issuer-qualified organization.
+ *
+ * @param issuer
+ * The external identity provider's issuer.
+ *
+ * @param id
+ * The external identity provider's organization id.
+ *
+ * @param name
+ * Optional display name for the organization. If not provided, the external id
+ * is used.
+ *
+ * @returns
+ * The resolved or newly provisioned organization.
  */
 export async function resolveOrganization(issuer: string, id: string, name?: string): Promise<Organization> {
   const existing = await findOrganizationByExternalIdpId(issuer, id);
@@ -79,7 +130,7 @@ export async function resolveOrganization(issuer: string, id: string, name?: str
         external_id: id,
         name: displayName,
         // Suffix with the external id so equal display names do not collide.
-        slug: `${slugify(displayName) || 'org'}-${slugify(id)}`,
+        slug: `${toSlug(displayName) || 'org'}-${toSlug(id)}`,
       })
       .returning();
 

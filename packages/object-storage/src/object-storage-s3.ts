@@ -1,14 +1,24 @@
 import { S3Client } from 'bun';
 import type { ObjectStorageClient } from './object-storage';
 
+/**
+ * Options for constructing an S3ObjectStorageClient.
+ */
 export interface S3ObjectStorageClientOptions {
+  /** The S3 bucket name. */
   bucket: string;
-  /** Omit for real AWS; set it for MinIO and other S3-compatible stores. */
+
+  /** The S3 endpoint URL. Optional for AWS. */
   endpoint?: string;
+
+  /** The S3 region. */
   region?: string;
+
+  /** The S3 access key ID. */
   accessKeyId?: string;
+
+  /** The S3 secret access key. */
   secretAccessKey?: string;
-  sessionToken?: string;
 }
 
 /**
@@ -26,7 +36,6 @@ export class S3ObjectStorageClient implements ObjectStorageClient {
       bucket: options.bucket,
       accessKeyId: options.accessKeyId,
       secretAccessKey: options.secretAccessKey,
-      sessionToken: options.sessionToken,
     });
   }
 
@@ -62,12 +71,7 @@ export class S3ObjectStorageClient implements ObjectStorageClient {
 }
 
 /**
- * Whether an error from the S3 client means "no such object".
- *
- * Deliberately narrow. AccessDenied is NOT treated as absence even though some
- * S3-compatible stores return it in place of NoSuchKey - a credential or policy
- * problem that reads as "no data" is a misconfiguration that would look like an
- * empty store and never get investigated.
+ * Helper to try and figure out if an error actually means "not found."
  */
 function isNotFound(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) {

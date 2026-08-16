@@ -35,6 +35,10 @@
   // Frontend dev server + backend API.
   "forwardPorts": [5173, 3000],
 
+  // Gives commands inside the devcontainer a stable route to services exposed
+  // by the host's docker-compose.yml (postgres, valkey, and MinIO).
+  "runArgs": ["--add-host=host.docker.internal:host-gateway"],
+
   "postCreateCommand": "bun install turbo --global"
 
   // Features to add to the dev container. More info: https://containers.dev/features.

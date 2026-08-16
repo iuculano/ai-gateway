@@ -29,9 +29,6 @@ const listAuditLogs = createSchema({
 
     status: z.enum(['success', 'failure']).optional(),
     actor_id: z.uuid().optional(),
-    // Pairs with actor_id, which is interpreted against it - see the filter in
-    // listAuditLogs. The service has always applied this one; it was simply
-    // never declared here, so the field could not survive validation.
     actor_type: z.enum(['user', 'api_key', 'system']).optional(),
     target_type: z.string().optional(),
     target_id: z.uuid().optional(),
@@ -49,6 +46,7 @@ const listAuditLogs = createSchema({
   }),
 });
 
+// This is a bit of a horrorshow...
 const auditEventValues = [
   'api-keys.created',
   'api-keys.updated',

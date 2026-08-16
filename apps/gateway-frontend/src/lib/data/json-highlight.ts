@@ -1,19 +1,3 @@
-/**
- * A JSON tokenizer for the payload panels.
- *
- * Hand-rolled rather than pulled from a highlighting library: the input is
- * always `JSON.stringify(value, null, 2)` output, so the grammar is tiny and
- * already canonically formatted. Shiki or highlight.js would be a megabyte of
- * dependency to colour five token types.
- *
- * It returns TOKENS rather than an HTML string, and that is the load-bearing
- * decision. These payloads are arbitrary model output and user prompts - a
- * prompt containing `<img src=x onerror=...>` is a perfectly ordinary thing to
- * log. Emitting markup for `{@html}` would make that execute in the dashboard
- * of whoever opened the row: stored XSS, delivered by the debugging tool. An
- * array rendered through `{#each}` keeps Svelte's escaping on every value.
- */
-
 export type TokenKind = 'key' | 'string' | 'number' | 'keyword' | 'punctuation';
 
 export interface JsonToken {

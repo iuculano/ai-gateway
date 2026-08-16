@@ -1,4 +1,5 @@
 import type { Caller } from '@repo/hono';
+import type { CompressedJsonStore } from '@repo/object-storage';
 import { SQL } from 'bun';
 
 /**
@@ -22,10 +23,10 @@ function required(name: string): string {
 
   if (!value) {
     throw new Error(
-      `${name} is unset, so the integration tier has no database to run against.\n\n` +
-        '  docker compose up -d postgres valkey\n' +
+      `${name} is unset, so the integration tier cannot initialize its external services.\n\n` +
+        '  docker compose up -d postgres valkey minio minio-init\n' +
         '  bun run test:db:setup\n\n' +
-        'Both connection strings are in apps/backend/.env.example. This fails rather than ' +
+        'The local test values are in apps/gateway-backend/.env.example. This fails rather than ' +
         'skipping on purpose: a suite that turns green when its infrastructure is missing ' +
         'is worse than one that fails.',
     );
@@ -53,26 +54,49 @@ function assertIsTestDatabase(connectionString: string): void {
   }
 }
 
-const applicationConnectionString = required('POSTGRES_TEST_CONNECTION_STRING');
-const adminConnectionString = required('POSTGRES_TEST_ADMIN_CONNECTION_STRING');
+/** Refuses to flush Redis' default database, which development also uses. */
+function assertIsTestRedis(connectionString: string): void {
+  const database = Number(new URL(connectionString).pathname.replace(/^\//, '') || '0');
 
-assertIsTestDatabase(applicationConnectionString);
+  if (!Number.isInteger(database) || database <= 0) {
+    throw new Error(
+      'Refusing to run: REDIS_TEST_URL must select a numbered database above 0, because the ' +
+        'integration tier flushes it between tests.',
+    );
+  }
+}
+
+const adminConnectionString = required('POSTGRES_TEST_ADMIN_CONNECTION_STRING');
+const redisConnectionString = required('REDIS_TEST_URL');
+const objectStorageOptions = {
+  endpoint: required('S3_TEST_ENDPOINT'),
+  bucket: required('S3_TEST_BUCKET'),
+  accessKeyId: required('S3_TEST_ACCESS_KEY_ID'),
+  secretAccessKey: required('S3_TEST_SECRET_ACCESS_KEY'),
+  region: process.env.S3_TEST_REGION ?? 'us-east-1',
+};
+
 assertIsTestDatabase(adminConnectionString);
+assertIsTestRedis(redisConnectionString);
 
 // Must happen before the first query, not before the first import - see the
 // module comment. Set unconditionally: a stale value from a developer's .env
 // would otherwise point the whole suite at the development database.
-process.env.POSTGRES_CONNECTION_STRING = applicationConnectionString;
+process.env.POSTGRES_CONNECTION_STRING = adminConnectionString;
+process.env.REDIS_URL = redisConnectionString;
 
 /**
- * The privileged connection, used only by the harness.
+ * The harness's direct database connection.
  *
- * Test assertions read through this rather than through the application's
- * client, so "the row is really there" is answered by something that does not
- * share the code under test's opinion about what it can see. Truncation needs
- * it too - app_user has DML grants and no TRUNCATE.
+ * Test assertions and fixture setup use this independently from the shared
+ * Drizzle client used by the services under test. There is deliberately no
+ * separate application role: tenant isolation is implemented and tested in the
+ * services' explicit organization predicates, not through database RLS.
  */
 export const admin = new SQL(adminConnectionString);
+
+let integrationObjectStorage: CompressedJsonStore | undefined;
+let flushIntegrationRedis: (() => Promise<unknown>) | undefined;
 
 /** Tables the harness owns, in an order that satisfies the foreign keys. */
 const TABLES = [
@@ -91,15 +115,50 @@ const TABLES = [
  * Opens the external services used by the integration tests.
  */
 export async function prepareSuite(): Promise<void> {
-  // Nothing mocks redis here, and importing @repo/redis no longer connects -
-  // so the suite opens the connection the way the app's boot does. Services
-  // that hydrate usage counts reach it for real.
-  const { connectRedis } = await import('@repo/redis');
-  await connectRedis();
+  // Nothing is mocked here, so initialize all external clients before a test
+  // enters runWithCaller(). Bun's SQL driver may otherwise establish its first
+  // connection from inside AsyncLocalStorage and lose that ambient scope while
+  // opening the socket, making only the first service call fail spuriously.
+  const [{ db }, { connectRedis, redis }, { createObjectStorage }] = await Promise.all([
+    import('@repo/drizzle'),
+    import('@repo/redis'),
+    import('@repo/object-storage'),
+  ]);
+
+  integrationObjectStorage ??= createObjectStorage(objectStorageOptions);
+  flushIntegrationRedis ??= () => redis.flushDb();
+  await Promise.all([db.execute('SELECT 1'), connectRedis()]);
 }
 
 export async function resetDatabase(): Promise<void> {
-  await admin.unsafe(`truncate table ${TABLES.join(', ')} restart identity cascade`);
+  const objectReferences = await admin`
+    select request_object_reference, response_object_reference
+    from logs
+    where request_object_reference is not null or response_object_reference is not null
+  `;
+  const keys = objectReferences.flatMap(
+    (row: { request_object_reference?: unknown; response_object_reference?: unknown }) =>
+      [row.request_object_reference, row.response_object_reference].filter(
+        (key): key is string => typeof key === 'string',
+      ),
+  );
+
+  if (keys.length > 0) {
+    if (!integrationObjectStorage) {
+      throw new Error('prepareSuite() must initialize object storage before resetDatabase() cleans payloads');
+    }
+
+    await integrationObjectStorage.deleteMany(keys);
+  }
+
+  if (!flushIntegrationRedis) {
+    throw new Error('prepareSuite() must initialize Redis before resetDatabase() cleans test state');
+  }
+
+  await Promise.all([
+    admin.unsafe(`truncate table ${TABLES.join(', ')} restart identity cascade`),
+    flushIntegrationRedis(),
+  ]);
 }
 
 export interface Tenant {

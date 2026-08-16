@@ -1,4 +1,5 @@
-export * from './authenticate';
+export type { Caller } from './authenticate';
+export { authenticate } from './authenticate';
 export * from './authorize';
 export * from './caller-context';
 export * from './error-handler';

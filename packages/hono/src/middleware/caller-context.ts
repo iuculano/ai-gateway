@@ -51,8 +51,6 @@ export interface RunWithCallerOptions {
   logger?: Logger;
 }
 
-
-
 /** The identity recorded as the actor of an operation. */
 export function getActorId(caller: Caller): string {
   return caller.actor.type === 'api_key' ? caller.actor.key.id : caller.actor.user.id;

@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "gateway-frontend",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -9,11 +9,12 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check-types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
   },
   "dependencies": {
     "@repo/redis": "workspace:*",
-    "gateway-api": "workspace:*",
+    "gateway-backend": "workspace:*",
     "hono": "^4.12.26"
   },
   "devDependencies": {
@@ -21,7 +22,7 @@
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@internationalized/date": "^3.12.0",
     "@lucide/svelte": "^1.23.0",
-    "@sveltejs/adapter-auto": "^7.0.1",
+    "@sveltejs/adapter-node": "^5.5.7",
     "@sveltejs/kit": "^2.63.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/vite": "^4.3.2",

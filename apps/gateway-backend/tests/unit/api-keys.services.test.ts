@@ -188,6 +188,36 @@ test('updateApiKey allows a limit change on a key that already has a window', as
   const updated = expectOk(await update({ rate_limit_requests: 100 }));
 
   expect(updated.rate_limit_requests).toBe(100);
+  expect(cache.deleted).toEqual([`api-keys:quota:${KEY_ID}`]);
+});
+
+test('updateApiKey rolls the database change back when its quota reset fails', async () => {
+  database.script(
+    rows(apiKeyRow({ rate_limit_requests: 10, rate_limit_window: 60 })),
+    rows(apiKeyRow({ rate_limit_requests: 100, rate_limit_window: 60 })),
+  );
+  cache.failure = new Error('redis connection lost');
+
+  await expect(update({ rate_limit_requests: 100 })).rejects.toThrow('redis connection lost');
+
+  expect(database.transactions[0]?.rolledBack).toBe(true);
+});
+
+test('updateApiKey leaves the quota window intact for unrelated changes', async () => {
+  database.script(
+    rows(apiKeyRow({ rate_limit_requests: 10, rate_limit_window: 60 })),
+    rows(apiKeyRow({ name: 'renamed', rate_limit_requests: 10, rate_limit_window: 60 })),
+  );
+
+  expect(expectOk(await update({ name: 'renamed' })).name).toBe('renamed');
+  expect(cache.deleted).toHaveLength(0);
+});
+
+test('updateApiKey leaves the quota window intact for a no-op policy patch', async () => {
+  database.script(rows(apiKeyRow({ rate_limit_requests: 10, rate_limit_window: 60 })));
+
+  expect((await update({ rate_limit_requests: 10 })).isOk()).toBe(true);
+  expect(cache.deleted).toHaveLength(0);
 });
 
 test('an unrelated patch on a key already missing its window is not blocked', async () => {
@@ -437,8 +467,8 @@ test('listApiKeys rejects when the query fails', async () => {
 test('createApiKey writes the caller context rather than the request body', async () => {
   database.script(rows(apiKeyRow()));
 
-  // Row-level security is what enforces this at the database, but the service
-  // must not hand it a tenant that the request body asked for.
+  // The service must always take the tenant from the caller rather than trusting
+  // a value smuggled into the request body.
   await create({ name: 'ci', organization_id: 'somebody-else' } as CreateApiKeyBody);
 
   const values = database.calls.find((call) => call.method === 'values')?.args[0] as Record<string, unknown>;

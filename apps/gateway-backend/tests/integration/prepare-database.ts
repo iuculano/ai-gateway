@@ -27,36 +27,7 @@ if (!databaseName.endsWith('_test')) {
   throw new Error(`Refusing to prepare "${databaseName}": an integration database's name must end in "_test".`);
 }
 
-// The password app_user gets in the test cluster. Roles are cluster-wide, so if
-// the developer has already bootstrapped app_user for the development database
-// this leaves it alone rather than rotating a password they are using.
-const applicationPassword = process.env.POSTGRES_TEST_APP_PASSWORD ?? 'app_user';
-
-const repositoryRoot = new URL('../../../../', import.meta.url);
-const sqlDirectory = new URL('packages/drizzle/sql/', repositoryRoot);
-const drizzlePackage = new URL('packages/drizzle/', repositoryRoot);
-
-/**
- * Runs the application-role DDL against the test database.
- *
- * 002 is written for psql, which the devcontainer does not have and Bun's
- * driver is not: its `\set` meta-commands are not SQL, and `:'app_password'`
- * is psql-side interpolation. Both are handled here rather than by keeping a
- * second copy of the grants, so the bootstrap has exactly one definition and
- * this cannot drift from it.
- */
-async function applyFile(sql: SQL, name: string): Promise<void> {
-  const text = await Bun.file(new URL(name, sqlDirectory)).text();
-
-  const statements = text
-    .split('\n')
-    .filter((line) => !line.startsWith('\\'))
-    .join('\n')
-    .replaceAll(":'app_password'", `'${applicationPassword}'`);
-
-  await sql.unsafe(statements);
-  console.log(`applied ${name}`);
-}
+const drizzlePackage = new URL('../../../../packages/drizzle/', import.meta.url);
 
 async function run(command: string[], environment: Record<string, string>): Promise<void> {
   const result = Bun.spawnSync(command, {
@@ -88,18 +59,8 @@ try {
   await maintenance.close();
 }
 
-const sql = new SQL(adminConnectionString);
-
-try {
-  await run(['bunx', '--bun', 'drizzle-kit', 'push', '--config=drizzle.config.ts', '--force'], {
-    POSTGRES_ADMIN_CONNECTION_STRING: adminConnectionString,
-  });
-
-  // Grants are per-database even though the role is cluster-wide, so this has
-  // to run against the test database specifically.
-  await applyFile(sql, '002-application-role.sql');
-} finally {
-  await sql.close();
-}
+await run(['bunx', '--bun', 'drizzle-kit', 'push', '--config=drizzle.config.ts', '--force'], {
+  POSTGRES_ADMIN_CONNECTION_STRING: adminConnectionString,
+});
 
 console.log(`\n${databaseName} is ready.`);

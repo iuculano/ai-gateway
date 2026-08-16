@@ -9,7 +9,8 @@ import modelHandlers from './api/models/models.handlers';
 import webhookHandlers from './api/webhooks/webhooks.handlers';
 
 /**
- * Routes mounted below /v1 by the backend and below /api by the frontend.
+ * Shared, unprefixed route tree with Hono's inferred route types intact.
+ * The backend mounts it at /v1; the frontend client mounts it at /api.
  */
 export const apiRoutes = new OpenAPIHono()
   .route('/', analyticsHandlers)

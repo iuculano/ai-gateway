@@ -1,14 +1,15 @@
 {
   "name": "worker-webhooks",
   "scripts": {
-    "dev": "bun --env-file=.env --inspect --hot src/index.ts"
+    "check-types": "bunx tsc --noEmit",
+    "dev": "bun --env-file=.env --hot src/index.ts"
   },
   "dependencies": {
     "@hono/swagger-ui": "^0.5.3",
     "@hono/zod-openapi": "^1.2.2",
-    "@repo/core": "../../packages/core/",
-    "@repo/drizzle": "../../packages/drizzle/",
-    "@repo/hono": "../../packages/hono/",
+    "@repo/core": "workspace:*",
+    "@repo/drizzle": "workspace:*",
+    "@repo/hono": "workspace:*",
     "hono": "^4.11.9"
   }
 }

@@ -81,7 +81,6 @@ export function zodExceptionHook(result: ErrorHook) {
  */
 export function errorHandler() {
   return (err: Error, c: Context) => {
-    const requestId: string | undefined = c.var.requestId;
     const log = c.var.logger ?? logger;
 
     // If it's an HTTPException, we probably threw it intentionally.
@@ -111,7 +110,7 @@ export function errorHandler() {
 
       // An HTTPException can carry a prebuilt Response - hono's own middleware
       // and our adapters use it to attach headers (WWW-Authenticate,
-      // Retry-After, RateLimit-*). 
+      // Retry-After, RateLimit-*).
       //
       // Pass these headers along to the final response.
       if (err.res) {

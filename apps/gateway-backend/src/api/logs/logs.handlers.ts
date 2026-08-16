@@ -61,6 +61,7 @@ function toDeleteLogHttpException(failure: DeleteLogFailure): HTTPException {
 
 /**
  * GET /logs/:id
+ *
  * Retrieve a specific log by id.
  */
 const getLog = defineOpenAPIRoute({
@@ -69,8 +70,6 @@ const getLog = defineOpenAPIRoute({
     const params = c.req.valid('param');
     const result = await Services.getLog(params.id);
 
-    // Nothing catches the service call: a rejected promise is a malfunction,
-    // and the global error handler is what turns those into a sanitized 500.
     return result.match(
       (log) => c.json(log, 200),
       (failure) => {
@@ -82,6 +81,7 @@ const getLog = defineOpenAPIRoute({
 
 /**
  * GET /logs/:id/request
+ *
  * Retrieve the request payload as it was submitted.
  */
 const getLogRequest = defineOpenAPIRoute({
@@ -101,6 +101,7 @@ const getLogRequest = defineOpenAPIRoute({
 
 /**
  * GET /logs/:id/response
+ *
  * Retrieve the response payload as it was returned.
  */
 const getLogResponse = defineOpenAPIRoute({
@@ -120,6 +121,7 @@ const getLogResponse = defineOpenAPIRoute({
 
 /**
  * POST /logs/batch/request
+ *
  * Retrieve many request payloads at once, fetched concurrently.
  */
 const getLogRequestBatch = defineOpenAPIRoute({
@@ -134,6 +136,7 @@ const getLogRequestBatch = defineOpenAPIRoute({
 
 /**
  * POST /logs/batch/response
+ *
  * Retrieve many response payloads at once, fetched concurrently.
  */
 const getLogResponseBatch = defineOpenAPIRoute({
@@ -148,6 +151,7 @@ const getLogResponseBatch = defineOpenAPIRoute({
 
 /**
  * GET /logs
+ *
  * Retrieve a list of logs.
  */
 const listLogs = defineOpenAPIRoute({
@@ -162,6 +166,7 @@ const listLogs = defineOpenAPIRoute({
 
 /**
  * GET /logs/stats
+ *
  * Totals for the organization, counted or estimated depending on size.
  */
 const getLogStats = defineOpenAPIRoute({
@@ -175,6 +180,7 @@ const getLogStats = defineOpenAPIRoute({
 
 /**
  * DELETE /logs/:id
+ *
  * Delete a log and both of its stored payloads.
  */
 const deleteLog = defineOpenAPIRoute({
@@ -194,8 +200,6 @@ const deleteLog = defineOpenAPIRoute({
 });
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
-  // Before getLog. /logs/stats would otherwise be swallowed by /logs/:id and
-  // answer 400 - see the note on the route.
   getLogStats,
   getLog,
   getLogRequest,

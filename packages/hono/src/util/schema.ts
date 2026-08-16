@@ -1,5 +1,11 @@
 import type { z } from '@hono/zod-openapi';
 
+/**
+ * Definition of a schema object for request and response validation.
+ *
+ * Each property is optional, and if provided, should be a Zod schema that
+ * describes the expected shape of that part of the request or response.
+ */
 export interface Schema {
   params?: z.ZodType;
   query?: z.ZodType;

@@ -18,11 +18,15 @@ export function parseTags(tags: string | undefined): Record<string, string> | un
 
   const pairs = tags.split(',');
   for (const pair of pairs) {
-    const [key, value] = pair.split(':');
-
-    if (key && value) {
-      tagsToFilter[key] = value;
+    const separator = pair.indexOf(':');
+    if (separator <= 0 || separator === pair.length - 1) {
+      continue;
     }
+
+    const key = pair.slice(0, separator);
+    const value = pair.slice(separator + 1);
+
+    tagsToFilter[key] = value;
   }
 
   return tagsToFilter;

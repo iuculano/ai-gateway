@@ -1,5 +1,5 @@
 {
-  "name": "gateway-api",
+  "name": "gateway-backend",
   "type": "module",
   "module": "src/index.ts",
   "types": "src/index.ts",
@@ -12,9 +12,11 @@
     "start": "bun run src/index.ts",
     "check-types": "bunx tsc --noEmit",
     "test": "bun test --parallel tests/unit",
+    "test:coverage": "bun test --coverage --parallel tests/unit",
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration",
     "test:db:setup": "bun run tests/integration/prepare-database.ts",
-    "stress:logs": "bun run tests/stress/logs.stress.ts"
+    "stress:logs": "bun run tests/stress/logs.stress.ts",
+    "stress:gateway": "bun run tests/stress/gateway.stress.ts"
   },
   "dependencies": {
     "@ai-sdk/azure": "^4.0.37",

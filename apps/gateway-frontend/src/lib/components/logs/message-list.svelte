@@ -30,8 +30,6 @@ const ROLE_COLORS: Record<TurnRole, string> = {
 			</span>
 
 			{#if turn.text}
-				<!-- whitespace-pre-wrap so a prompt's own line breaks and indentation
-				     survive; they are frequently load-bearing in a system prompt. -->
 				<p class="m-0 text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap text-zinc-300">{turn.text}</p>
 			{/if}
 

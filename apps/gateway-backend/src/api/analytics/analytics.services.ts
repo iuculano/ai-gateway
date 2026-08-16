@@ -1,5 +1,5 @@
 import { createCacheKey, parseTags } from '@repo/core';
-import { and, db, eq, gte, lte, max, min, sql, sum } from '@repo/drizzle';
+import { and, db, eq, gte, lte, max, min, sql } from '@repo/drizzle';
 import { logs } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
 import { redis } from '@repo/redis';
@@ -7,6 +7,8 @@ import Schemas, { type AnalyticsBody, type AnalyticsResponse } from './analytics
 
 /**
  * Queries the analytics data based on the provided parameters.
+ *
+ * TODO ADD ROLLUPS SO THIS ISN'T AS AWFUL.
  *
  * @param request
  * The parameters for querying analytics data.
@@ -65,8 +67,8 @@ async function queryAnalytics(request: AnalyticsBody): Promise<AnalyticsResponse
       cost_total: sql<number>`COALESCE(SUM(${logs.input_cost}), 0) + COALESCE(SUM(${logs.output_cost}), 0)`.mapWith(
         Number,
       ),
-      cost_input: sum(logs.input_cost).mapWith(Number),
-      cost_output: sum(logs.output_cost).mapWith(Number),
+      cost_input: sql<number>`COALESCE(SUM(${logs.input_cost}), 0)`.mapWith(Number),
+      cost_output: sql<number>`COALESCE(SUM(${logs.output_cost}), 0)`.mapWith(Number),
 
       average_latency_ms: sql<number>`ROUND(AVG(${logs.response_time_ms}))`.mapWith(Number),
       maximum_latency_ms: max(logs.response_time_ms).mapWith(Number),

@@ -1,7 +1,6 @@
 import { beforeEach, expect, test } from 'bun:test';
 import {
   audit,
-  callerFixture,
   database,
   failsWith,
   installModuleMocks,
@@ -62,7 +61,7 @@ function auditRow(overrides: Record<string, unknown> = {}) {
 test('getAuditLog returns AUDIT_LOG_NOT_FOUND as a value', async () => {
   database.script(rows());
 
-  expect(expectErr(await Services.getAuditLog(callerFixture, AUDIT_ID))).toEqual({
+  expect(expectErr(await Services.getAuditLog(AUDIT_ID))).toEqual({
     code: 'AUDIT_LOG_NOT_FOUND',
     id: AUDIT_ID,
   });
@@ -71,7 +70,7 @@ test('getAuditLog returns AUDIT_LOG_NOT_FOUND as a value', async () => {
 test('getAuditLog returns Ok with the actor resolved', async () => {
   database.script(rows(auditRow()));
 
-  const result = await Services.getAuditLog(callerFixture, AUDIT_ID);
+  const result = await Services.getAuditLog(AUDIT_ID);
 
   expect(result.isOk()).toBe(true);
   expect(result._unsafeUnwrap().actor_name).toBe('Alex');
@@ -80,7 +79,7 @@ test('getAuditLog returns Ok with the actor resolved', async () => {
 test('getAuditLog rejects when the query fails', async () => {
   database.script(failsWith(new Error('connection terminated')));
 
-  await expect(Services.getAuditLog(callerFixture, AUDIT_ID)).rejects.toThrow('connection terminated');
+  await expect(Services.getAuditLog(AUDIT_ID)).rejects.toThrow('connection terminated');
 });
 
 // --- the operations that stay plain promises ---------------------------------
@@ -88,7 +87,7 @@ test('getAuditLog rejects when the query fails', async () => {
 test('listAuditLogs stays a plain promise', async () => {
   database.script(rows(auditRow()));
 
-  const page = await Services.listAuditLogs(callerFixture, { limit: 50 });
+  const page = await Services.listAuditLogs({ limit: 50 });
 
   // Deliberately not a Result: there is no expected failure to model.
   expect('isOk' in page).toBe(false);
@@ -101,7 +100,7 @@ test('createAuditLog rejects when the insert returns no row', async () => {
   database.script(rows());
 
   await expect(
-    Services.createAuditLog(callerFixture, {
+    Services.createAuditLog({
       event: 'api-keys.created',
       target_type: 'api_key',
       status: 'success',

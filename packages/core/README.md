@@ -1,15 +1,14 @@
-# db
+# @repo/core
 
-To install dependencies:
+Shared dependency-free application helpers, schemas, pagination utilities, and
+logging configuration for the AI gateway workspace.
+
+## Tests
+
+The suite is hermetic and requires no external services:
 
 ```bash
-bun install
+cd packages/core
+bun run test
+bun run test:coverage
 ```
-
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.3.9. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

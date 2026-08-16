@@ -81,6 +81,14 @@ function patch(path: string, body: unknown) {
   });
 }
 
+function post(path: string, body: unknown) {
+  return request(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 async function message(response: Response): Promise<string> {
   const body = (await response.json()) as { error: { message: string } };
   return body.error.message;
@@ -113,6 +121,31 @@ test('DELETE /logs/:id maps LOG_NOT_FOUND to 404', async () => {
   database.script(rows());
 
   expect((await request(`/logs/${LOG_ID}`, { method: 'DELETE' })).status).toBe(404);
+});
+
+test('static collection routes are not swallowed by parameter routes', async () => {
+  database.script(
+    rows({ total: 0 }),
+    rows({
+      complete: 0,
+      failed: 0,
+      incomplete: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      input_cost: 0,
+      output_cost: 0,
+    }),
+  );
+  expect((await request('/logs/stats')).status).toBe(200);
+
+  database.script(rows());
+  expect((await request('/webhooks/outbox')).status).toBe(200);
+
+  database.script(rows());
+  expect((await request('/webhooks/deliveries')).status).toBe(200);
+
+  database.script(rows());
+  expect((await post('/guardrails/evaluate', { request: 'safe' })).status).toBe(200);
 });
 
 test('log payload handlers preserve the reason for each 404', async () => {

@@ -5,4 +5,3 @@
 export function assertNever(code: never): never {
   throw new Error(`Unhandled service failure code: ${JSON.stringify(code)}`);
 }
-

@@ -23,12 +23,11 @@
 
     "noErrorTruncation": true,
 
-    "baseUrl": ".",
     "paths": {
-      "@api/*": ["src/api/*"],
-      "@db/*": ["src/db/*"],
-      "@lib/*": ["src/lib/*"],
-      "@middleware/*": ["src/middleware/*"]
-    },
-  },
+      "@api/*": ["./src/api/*"],
+      "@db/*": ["./src/db/*"],
+      "@lib/*": ["./src/lib/*"],
+      "@middleware/*": ["./src/middleware/*"]
+    }
+  }
 }

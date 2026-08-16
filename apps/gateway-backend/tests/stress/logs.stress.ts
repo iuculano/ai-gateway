@@ -12,9 +12,9 @@
  * Each run ADDS to what is already there, so the sizes above accumulate. Pass
  * --out results.jsonl to collect the rows and diff the curve afterwards.
  *
- * Everything is measured at the SERVICE layer through the application role, so
- * the SQL, organization predicates, index choices and the zod parse of every
- * returned row are all in the measurement.
+ * Everything is measured at the SERVICE layer through the runtime database
+ * connection, so the SQL, organization predicates, index choices and the zod
+ * parse of every returned row are all in the measurement.
  * The HTTP layer above it is deliberately not: authentication, routing and JSON
  * serialization cost the same at twenty thousand rows as at two million,
  * because they scale with the PAGE, and a page is capped at 250. Putting them
@@ -36,7 +36,7 @@ import { connectRedis, redis } from '@repo/redis';
 import { SQL } from 'bun';
 import AnalyticsServices from '../../src/api/analytics/analytics.services';
 import LogsServices from '../../src/api/logs/logs.services';
-import { commonestModel, rarestModel } from './catalogue';
+import { commonestModel, rarestModel, TEAMS } from './catalogue';
 import { measure, type Result, report, type Scenario } from './harness';
 import {
   ABSENT_ENV_TAG,
@@ -58,8 +58,14 @@ stress:logs - seed inference logs and measure the read paths that scale with the
   --chunk <n>                 rows per insert statement    (default: 25000)
   --iterations <n>            measured runs per scenario   (default: 25)
   --warmup <n>                discarded runs per scenario  (default: 3)
+  --concurrency <n>           operations issued per run    (default: 1)
+  --groups <csv>              list,tags,stats,analytics    (default: all)
+  --match <text>              run scenarios containing text
+  --max-p95-ms <n>            p95 ceiling; 0 disables      (default: 0)
+  --fail-on-thresholds        exit non-zero on failures or p95 breaches
   --out <path>                append results as JSONL
   --explain                   print query plans after the table
+  --require-indexes           fail unless absent model/tag probes use their indexes
   --borrow-payloads           point seeded rows at a real log's stored payloads
   --skip-seed                 measure what is already there
   --reset                     delete this tenant's seeded rows, then exit
@@ -73,8 +79,14 @@ const { values } = parseArgs({
     chunk: { type: 'string', default: '25000' },
     iterations: { type: 'string', default: '25' },
     warmup: { type: 'string', default: '3' },
+    concurrency: { type: 'string', default: '1' },
+    groups: { type: 'string', default: 'list,tags,stats,analytics' },
+    match: { type: 'string' },
+    'max-p95-ms': { type: 'string', default: '0' },
+    'fail-on-thresholds': { type: 'boolean', default: false },
     out: { type: 'string' },
     explain: { type: 'boolean', default: false },
+    'require-indexes': { type: 'boolean', default: false },
     'borrow-payloads': { type: 'boolean', default: false },
     'skip-seed': { type: 'boolean', default: false },
     reset: { type: 'boolean', default: false },
@@ -121,6 +133,40 @@ function integer(name: string, raw: string): number {
   return parsed;
 }
 
+function positiveInteger(name: string, raw: string): number {
+  const parsed = integer(name, raw);
+
+  if (parsed === 0) {
+    throw new Error(`--${name} must be greater than zero`);
+  }
+
+  return parsed;
+}
+
+function nonNegativeNumber(name: string, raw: string): number {
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`--${name} must be a non-negative number, got "${raw}"`);
+  }
+
+  return parsed;
+}
+
+type ScenarioGroup = 'list' | 'tags' | 'stats' | 'analytics';
+
+function scenarioGroups(raw: string): Set<ScenarioGroup> {
+  const allowed: ScenarioGroup[] = ['list', 'tags', 'stats', 'analytics'];
+  const groups = [...new Set(raw.split(',').map((entry) => entry.trim()))];
+  const unknown = groups.filter((entry) => !allowed.includes(entry as ScenarioGroup));
+
+  if (groups.length === 0 || unknown.length > 0) {
+    throw new Error(`--groups must contain only ${allowed.join(', ')}, got "${raw}"`);
+  }
+
+  return new Set(groups as ScenarioGroup[]);
+}
+
 function required(name: string): string {
   const value = process.env[name];
 
@@ -142,10 +188,9 @@ const adminConnectionString = required('POSTGRES_ADMIN_CONNECTION_STRING');
 /**
  * The two connections must name the same database.
  *
- * Seeding runs as the superuser and measuring runs as app_user, which is the
- * whole design - but it also means a mismatched pair produces a harness that
- * cheerfully seeds one database and benchmarks an empty other one. That failure
- * looks like excellent performance.
+ * Seeding uses the admin connection and measuring uses the runtime connection.
+ * A mismatched pair produces a harness that cheerfully seeds one database and
+ * benchmarks an empty other one. That failure looks like excellent performance.
  */
 {
   const application = new URL(applicationConnectionString);
@@ -189,11 +234,17 @@ if (values.reset) {
 }
 
 const count = integer('count', values.count);
-const iterations = integer('iterations', values.iterations);
+const iterations = positiveInteger('iterations', values.iterations);
 const warmup = integer('warmup', values.warmup);
+const concurrency = positiveInteger('concurrency', values.concurrency);
+const groups = scenarioGroups(values.groups);
+const match = values.match?.toLowerCase();
+const maxP95Ms = nonNegativeNumber('max-p95-ms', values['max-p95-ms']);
 
 console.log(`organization  ${organization.slug} (${organization.id})`);
 console.log(`database      ${new URL(applicationConnectionString).pathname.replace(/^\//, '')}`);
+console.log(`groups        ${[...groups].join(', ')}`);
+console.log(`concurrency   ${concurrency}`);
 
 if (!values['skip-seed'] && count > 0) {
   const startedAt = performance.now();
@@ -219,7 +270,7 @@ if (!values['skip-seed'] && count > 0) {
     organizationId: organization.id,
     count: count,
     windowDays: integer('window-days', values['window-days']),
-    chunkSize: integer('chunk', values.chunk),
+    chunkSize: positiveInteger('chunk', values.chunk),
     payloads: payloads,
     onProgress: (inserted, total) => {
       progress(`seeding       ${inserted.toLocaleString('en-US')} / ${total.toLocaleString('en-US')}`);
@@ -261,6 +312,17 @@ const [deep] = await admin`
 
 const deepCursor: string | undefined = deep?.id;
 
+// The seeder gives every synthetic row a unique trace tag. Read one back so
+// the scenario remains valid across additive runs and when a real tenant also
+// contains untagged production rows.
+const [unique] = await admin`
+  select tags->>'trace' as value
+  from logs
+  where organization_id = ${organization.id} and tags ? 'trace'
+  limit 1
+`;
+const uniqueTraceTag: string | undefined = typeof unique?.value === 'string' ? unique.value : undefined;
+
 // Analytics reaches redis before it reaches postgres, so the connection has to
 // be open or every one of those scenarios rejects on the first call.
 await connectRedis();
@@ -268,9 +330,14 @@ await connectRedis();
 const common = commonestModel();
 const rare = rarestModel();
 
+interface GroupedScenario extends Scenario {
+  group: ScenarioGroup;
+}
+
 /** Runs `listLogs` as the selected tenant and reports how many rows came back. */
-function list(name: string, query: Parameters<typeof LogsServices.listLogs>[0]): Scenario {
+function list(group: ScenarioGroup, name: string, query: Parameters<typeof LogsServices.listLogs>[0]): GroupedScenario {
   return {
+    group: group,
     name: name,
     run: async () => {
       const page = await asTenant(() => LogsServices.listLogs(query));
@@ -293,10 +360,15 @@ function list(name: string, query: Parameters<typeof LogsServices.listLogs>[0]):
  * service's explicit organization filter is wrong rather than the query being
  * unexpectedly fast.
  */
-function analytics(name: string, body: Parameters<typeof AnalyticsServices.queryAnalytics>[0]): Scenario {
+function analytics(
+  group: ScenarioGroup,
+  name: string,
+  body: Parameters<typeof AnalyticsServices.queryAnalytics>[0],
+): GroupedScenario {
   const cacheKey = createCacheKey('analytics:', { organization_id: organization.id, ...body });
 
   return {
+    group: group,
     name: name,
     run: async () => {
       await redis.del(cacheKey);
@@ -308,35 +380,73 @@ function analytics(name: string, body: Parameters<typeof AnalyticsServices.query
   };
 }
 
-const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+/** Issues the same service operation concurrently inside one measured run. */
+function concurrentScenario(scenario: GroupedScenario): GroupedScenario {
+  if (concurrency === 1) {
+    return scenario;
+  }
 
-const scenarios: Scenario[] = [
-  list('list head (limit 25)', { limit: 25 }),
-  list('list head (limit 250)', { limit: 250 }),
+  return {
+    ...scenario,
+    name: `${scenario.name} x${concurrency}`,
+    run: async () => {
+      const rows = await Promise.all(Array.from({ length: concurrency }, () => scenario.run()));
+      return rows.reduce((total, count) => total + count, 0);
+    },
+  };
+}
+
+const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+const firstTeam = TEAMS[0] as string;
+const lastTeam = TEAMS.at(-1) as string;
+
+const allScenarios: GroupedScenario[] = [
+  list('list', 'list head (limit 25)', { limit: 25 }),
+  list('list', 'list head (limit 250)', { limit: 250 }),
 
   ...(deepCursor
-    ? [list(`list after_id @ ${deepOffset.toLocaleString('en-US')}`, { limit: 25, after_id: deepCursor })]
+    ? [
+        list('list', `list after_id @ ${deepOffset.toLocaleString('en-US')}`, {
+          limit: 25,
+          after_id: deepCursor,
+        }),
+        list('list', `list before_id @ ${deepOffset.toLocaleString('en-US')}`, {
+          limit: 25,
+          before_id: deepCursor,
+        }),
+      ]
     : []),
 
-  list(`list model=${common.model} (common)`, { limit: 25, model: common.model }),
-  list(`list model=${rare.model} (rare)`, { limit: 25, model: rare.model }),
-  list('list status=failed', { limit: 25, status: 'failed' }),
-  list(`list tags env:${COMMON_ENV_TAG} (common)`, { limit: 25, tags: `env:${COMMON_ENV_TAG}` }),
-  list(`list tags env:${RARE_ENV_TAG} (rare)`, { limit: 25, tags: `env:${RARE_ENV_TAG}` }),
+  list('list', `list model=${common.model} (common)`, { limit: 25, model: common.model }),
+  list('list', `list model=${rare.model} (rare)`, { limit: 25, model: rare.model }),
+  list('list', 'list model=absent (no matches)', { limit: 25, model: '__no_such_model__' }),
+  list('list', 'list provider=openai', { limit: 25, provider: 'openai' }),
+  list('list', 'list status=failed', { limit: 25, status: 'failed' }),
 
-  // The pair below is the point of this whole section.
-  //
-  // Both filters match nothing, and both are one typo away in the dashboard's
-  // filter box - but `model` is covered by logs_org_model_idx and `tags` is
-  // not, in any way the planner will use here. The indexed one answers in
-  // microseconds; the tag one walks every row in the table before it can say
-  // "none", and that walk is the only cost in this harness that grows with the
-  // size being tested. Measuring them side by side is what makes the
-  // difference impossible to argue with.
-  list('list model=absent (no matches)', { limit: 25, model: '__no_such_model__' }),
-  list(`list tags env:${ABSENT_ENV_TAG} (no matches)`, { limit: 25, tags: `env:${ABSENT_ENV_TAG}` }),
+  list('tags', `list tags env:${COMMON_ENV_TAG} (common)`, { limit: 25, tags: `env:${COMMON_ENV_TAG}` }),
+  list('tags', `list tags env:${RARE_ENV_TAG} (rare)`, { limit: 25, tags: `env:${RARE_ENV_TAG}` }),
+  list('tags', `list tags env:${ABSENT_ENV_TAG} (absent)`, { limit: 25, tags: `env:${ABSENT_ENV_TAG}` }),
+  list('tags', `list tags team:${firstTeam}`, { limit: 25, tags: `team:${firstTeam}` }),
+  list('tags', `list tags env:${COMMON_ENV_TAG},team:${firstTeam}`, {
+    limit: 25,
+    tags: `env:${COMMON_ENV_TAG},team:${firstTeam}`,
+  }),
+  list('tags', `list tags env:${RARE_ENV_TAG},team:${lastTeam}`, {
+    limit: 25,
+    tags: `env:${RARE_ENV_TAG},team:${lastTeam}`,
+  }),
+  ...(uniqueTraceTag
+    ? [list('tags', 'list tags trace=<unique> (high-cardinality)', { limit: 25, tags: `trace:${uniqueTraceTag}` })]
+    : []),
+  list('tags', `list tags env:${COMMON_ENV_TAG} + model + status`, {
+    limit: 25,
+    tags: `env:${COMMON_ENV_TAG}`,
+    model: common.model,
+    status: 'complete',
+  }),
 
   {
+    group: 'stats',
     // Not an endpoint. It is here because "show the total" is the first thing
     // anyone adds to a dashboard, and it is the one read whose cost is O(rows)
     // with no cursor to save it.
@@ -349,11 +459,37 @@ const scenarios: Scenario[] = [
       return rows[0]?.total ?? 0;
     },
   },
+  {
+    group: 'stats',
+    name: 'log stats (exact below 100k, sampled above)',
+    run: async () => {
+      const result = await asTenant(() => LogsServices.getLogStats());
+      return result.total;
+    },
+  },
 
-  analytics('analytics (all time)', {}),
-  analytics('analytics (last 24h)', { start_date: dayAgo }),
-  analytics(`analytics (model=${common.model})`, { model: common.model }),
+  analytics('analytics', 'analytics (all time)', {}),
+  analytics('analytics', 'analytics (last 24h)', { start_date: dayAgo }),
+  analytics('analytics', `analytics (model=${common.model})`, { model: common.model }),
+  analytics('analytics', `analytics (tags env:${COMMON_ENV_TAG})`, { tags: `env:${COMMON_ENV_TAG}` }),
+  analytics('analytics', `analytics (tags env:${RARE_ENV_TAG})`, { tags: `env:${RARE_ENV_TAG}` }),
+  analytics('analytics', `analytics (tags env:${ABSENT_ENV_TAG})`, { tags: `env:${ABSENT_ENV_TAG}` }),
+  analytics('analytics', `analytics (tags env:${RARE_ENV_TAG},team:${lastTeam})`, {
+    tags: `env:${RARE_ENV_TAG},team:${lastTeam}`,
+  }),
+  ...(uniqueTraceTag
+    ? [analytics('analytics', 'analytics (tags trace=<unique>)', { tags: `trace:${uniqueTraceTag}` })]
+    : []),
 ];
+
+const scenarios = allScenarios
+  .filter((scenario) => groups.has(scenario.group))
+  .filter((scenario) => !match || scenario.name.toLowerCase().includes(match))
+  .map(concurrentScenario);
+
+if (scenarios.length === 0) {
+  throw new Error('No scenarios matched --groups and --match');
+}
 
 const results: Result[] = [];
 
@@ -365,6 +501,13 @@ for (const scenario of scenarios) {
 clearProgress();
 console.log(`${iterations} iterations per scenario, ${warmup} discarded\n`);
 console.log(report(results));
+
+const thresholdFailures = results.flatMap((result) => [
+  ...(result.error ? [`${result.name}: ${result.error}`] : []),
+  ...(!result.error && maxP95Ms > 0 && result.p95 > maxP95Ms
+    ? [`${result.name}: p95 ${result.p95.toFixed(2)}ms exceeds ${maxP95Ms}ms`]
+    : []),
+]);
 
 /**
  * Plans for the queries whose shape decides everything above.
@@ -427,6 +570,46 @@ if (values.explain) {
   }
 }
 
+if (values['require-indexes']) {
+  const indexProbes = [
+    {
+      name: 'absent model',
+      index: 'logs_org_model_idx',
+      statement: sql`
+        explain (format json)
+        select * from logs
+        where organization_id = ${organization.id}
+          and model = '__no_such_model__'
+        order by id desc
+        limit 26
+      `,
+    },
+    {
+      name: 'absent tag',
+      index: 'logs_tags_idx',
+      statement: sql`
+        explain (format json)
+        select * from logs
+        where organization_id = ${organization.id}
+          and tags @> ${{ env: ABSENT_ENV_TAG }}::jsonb
+        order by id desc
+        limit 26
+      `,
+    },
+  ];
+
+  for (const probe of indexProbes) {
+    const rows = await db.execute<Record<string, unknown>>(probe.statement);
+    const plan = JSON.stringify(Object.values(rows[0] ?? {})[0]);
+    const found = plan.includes(probe.index);
+    console.log(`index probe   ${probe.name}: ${found ? probe.index : 'MISSING'}`);
+    if (!found) {
+      console.log(`index plan    ${plan}`);
+      thresholdFailures.push(`${probe.name}: query plan did not use ${probe.index}`);
+    }
+  }
+}
+
 if (values.out) {
   // Appended rather than rewritten: the whole point is comparing this run to
   // the smaller ones before it.
@@ -448,6 +631,16 @@ if (values.out) {
 
   await Bun.write(values.out, `${existing}${lines}\n`);
   console.log(`\nappended ${results.length} rows to ${values.out}`);
+}
+
+if (thresholdFailures.length > 0) {
+  console.log('\nthreshold failures:');
+  for (const failure of thresholdFailures) {
+    console.log(`  ${failure}`);
+  }
+  if (values['fail-on-thresholds'] || values['require-indexes']) {
+    process.exitCode = 1;
+  }
 }
 
 await admin.close();
