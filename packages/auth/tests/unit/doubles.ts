@@ -135,7 +135,34 @@ export const usage = {
   },
 };
 
+export const authCache = {
+  values: new Map<string, string>(),
+  gets: [] as string[],
+  sets: [] as { key: string; value: string; options: unknown }[],
+  deletes: [] as string[],
+
+  reset() {
+    authCache.values.clear();
+    authCache.gets = [];
+    authCache.sets = [];
+    authCache.deletes = [];
+  },
+};
+
 const redis = {
+  async get(key: string) {
+    authCache.gets.push(key);
+    return authCache.values.get(key) ?? null;
+  },
+  async set(key: string, value: string, options: unknown) {
+    authCache.sets.push({ key, value, options });
+    authCache.values.set(key, value);
+    return 'OK';
+  },
+  async del(key: string) {
+    authCache.deletes.push(key);
+    return authCache.values.delete(key) ? 1 : 0;
+  },
   multi() {
     const operations: { method: string; args: unknown[] }[] = [];
     const pipeline = {
@@ -186,6 +213,7 @@ export function resetDoubles(): void {
   database.script();
   quota.reset();
   usage.reset();
+  authCache.reset();
 }
 
 export const ORGANIZATION_ID = '01912d3f-9b4a-7c3d-8e2f-000000000001';

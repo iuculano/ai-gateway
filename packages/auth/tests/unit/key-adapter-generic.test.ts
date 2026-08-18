@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { HTTPException } from 'hono/http-exception';
 import {
   apiKeyRow,
+  authCache,
   database,
   installAuthMocks,
   KEY_ID,
@@ -39,6 +41,11 @@ function authenticate(key = VALID_KEY) {
 }
 
 describe('createGenericKeyAdapter', () => {
+  test('rejects invalid cache TTLs when the adapter is created', () => {
+    expect(() => createGenericKeyAdapter({ cacheTtlSeconds: -1 })).toThrow(RangeError);
+    expect(() => createGenericKeyAdapter({ cacheTtlSeconds: 1.5 })).toThrow(RangeError);
+  });
+
   test('rejects malformed keys before hashing, storage, or rate limiting', async () => {
     const error = await rejectedHttpException(authenticate('not-an-api-key'));
 
@@ -129,6 +136,52 @@ describe('createGenericKeyAdapter', () => {
         { method: 'hSet', args: [`api-keys:usage:${KEY_ID}`, 'last_used_at', expect.any(Number)] },
       ],
     ]);
+  });
+
+  test('reuses a Redis authorization snapshot and skips all database reads on a cache hit', async () => {
+    database.script(rows(apiKeyRow()), rows(organizationRow()), rows(userRow()));
+    const adapter = createGenericKeyAdapter({ cacheTtlSeconds: 60 });
+    const request = { key: VALID_KEY, request: { ipAddress: '203.0.113.8' } };
+
+    const first = await adapter(request);
+    const second = await adapter(request);
+
+    const hash = createHash('sha256').update(VALID_KEY).digest('hex');
+    const cacheKey = `api-keys:auth:v1:${hash}`;
+    expect(second).toEqual(first);
+    expect(database.consumed).toBe(3);
+    expect(authCache.gets).toEqual([cacheKey, cacheKey]);
+    expect(authCache.sets).toEqual([
+      {
+        key: cacheKey,
+        value: expect.any(String),
+        options: { expiration: { type: 'EX', value: 60 } },
+      },
+    ]);
+    expect(usage.pipelines).toHaveLength(2);
+  });
+
+  test('does not use an authorization snapshot after the API key expiry', async () => {
+    const expiresAt = new Date(Date.now() + 60_000);
+    database.script(rows(apiKeyRow({ expires_at: expiresAt })), rows(organizationRow()), rows(userRow()));
+    const adapter = createGenericKeyAdapter({ cacheTtlSeconds: 60 });
+    const request = { key: VALID_KEY, request: { ipAddress: '203.0.113.8' } };
+
+    await adapter(request);
+
+    const [cacheKey, serialized] = [...authCache.values.entries()][0] ?? [];
+    if (!cacheKey || !serialized) {
+      throw new Error('Expected the first authentication to populate Redis');
+    }
+    const expired = JSON.parse(serialized);
+    expired.key.expiresAtMs = Date.now() - 1;
+    authCache.values.set(cacheKey, JSON.stringify(expired));
+    database.script(rows(apiKeyRow({ expires_at: new Date(Date.now() - 1) })));
+
+    const error = await rejectedHttpException(adapter(request));
+    expect(error.cause).toBe('Invalid API key: expired');
+    expect(authCache.deletes).toEqual([cacheKey]);
+    expect(usage.pipelines).toHaveLength(1);
   });
 
   test('enforces a configured fixed-window quota before recording usage', async () => {

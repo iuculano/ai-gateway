@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { invalidateGenericKeyAuthCache } from '@repo/auth';
 import { diffFields, probe, toPage } from '@repo/core';
 import { and, db, desc, eq, isNull, lt } from '@repo/drizzle';
 import { apiKeys } from '@repo/drizzle/schemas';
@@ -482,6 +483,8 @@ async function updateApiKey(
       await redis.del(apiKeyQuotaKey(row.id));
     }
 
+    await invalidateGenericKeyAuthCache(row.key_hash);
+
     return ok(row);
   });
 
@@ -562,6 +565,8 @@ async function revokeApiKey(id: string): Promise<Result<RevokeApiKeyResponse, Re
       },
       tx,
     );
+
+    await invalidateGenericKeyAuthCache(row.key_hash);
 
     return ok(undefined);
   });

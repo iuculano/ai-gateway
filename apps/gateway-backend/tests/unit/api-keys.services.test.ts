@@ -108,6 +108,7 @@ test('updateApiKey returns Ok and audits the difference', async () => {
     target_id: KEY_ID,
     difference: { name: { old: 'ci', new: 'renamed' } },
   });
+  expect(cache.deleted).toEqual([`api-keys:auth:v1:${'a'.repeat(64)}`]);
 });
 
 test('updateApiKey returns Ok for a no-op and writes nothing', async () => {
@@ -188,7 +189,7 @@ test('updateApiKey allows a limit change on a key that already has a window', as
   const updated = expectOk(await update({ rate_limit_requests: 100 }));
 
   expect(updated.rate_limit_requests).toBe(100);
-  expect(cache.deleted).toEqual([`api-keys:quota:${KEY_ID}`]);
+  expect(cache.deleted).toEqual([`api-keys:quota:${KEY_ID}`, `api-keys:auth:v1:${'a'.repeat(64)}`]);
 });
 
 test('updateApiKey rolls the database change back when its quota reset fails', async () => {
@@ -210,7 +211,7 @@ test('updateApiKey leaves the quota window intact for unrelated changes', async 
   );
 
   expect(expectOk(await update({ name: 'renamed' })).name).toBe('renamed');
-  expect(cache.deleted).toHaveLength(0);
+  expect(cache.deleted).toEqual([`api-keys:auth:v1:${'a'.repeat(64)}`]);
 });
 
 test('updateApiKey leaves the quota window intact for a no-op policy patch', async () => {
@@ -332,6 +333,7 @@ test('revokeApiKey returns Ok and records what changed', async () => {
       revoked_by: { old: null, new: USER_ID },
     },
   });
+  expect(cache.deleted).toEqual([`api-keys:auth:v1:${'a'.repeat(64)}`]);
 });
 
 test('revokeApiKey is idempotent for an already revoked key', async () => {

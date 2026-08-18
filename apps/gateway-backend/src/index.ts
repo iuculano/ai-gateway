@@ -61,6 +61,7 @@ app.use(
 
     keyAdapter: createGenericKeyAdapter({
       keyPattern: /^aik_[a-zA-Z0-9]{60}$/,
+      cacheTtlSeconds: environment.API_KEY_AUTH_CACHE_TTL_SECONDS,
     }),
   }),
 );
