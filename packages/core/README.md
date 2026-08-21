@@ -9,6 +9,6 @@ The suite is hermetic and requires no external services:
 
 ```bash
 cd packages/core
-bun run test
-bun run test:coverage
+bun run test:unit
+bun run test:unit:coverage
 ```
