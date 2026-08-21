@@ -96,6 +96,7 @@ jobs:
       POSTGRES_TEST_ADMIN_CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/ai_gateway_test
       REDIS_TEST_URL:                        redis://localhost:6379/15
       REDIS_PACKAGE_TEST_URL:                redis://localhost:6379/14
+      REDIS_FRONTEND_TEST_URL:               redis://localhost:6379/13
       S3_TEST_ENDPOINT:                      http://localhost:9000
       S3_TEST_ACCESS_KEY_ID:                 minioadmin
       S3_TEST_SECRET_ACCESS_KEY:             minioadmin

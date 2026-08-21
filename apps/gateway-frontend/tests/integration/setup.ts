@@ -17,17 +17,21 @@ mock.module('$env/dynamic/private', () => ({
     OIDC_REFRESH_ENABLED: 'true',
     SESSION_IDLE_SECONDS: '3600',
     SESSION_ABSOLUTE_SECONDS: '86400',
-    REDIS_URL: process.env.REDIS_TEST_URL,
+    REDIS_URL: process.env.REDIS_FRONTEND_TEST_URL,
   },
 }));
 
 mock.module('$app/environment', () => ({ dev: true, browser: false, building: false }));
 
-if (!process.env.REDIS_TEST_URL) {
+if (!process.env.REDIS_FRONTEND_TEST_URL) {
   throw new Error(
-    'Missing REDIS_TEST_URL. Point it at a dedicated logical database, for example ' +
+    'Missing REDIS_FRONTEND_TEST_URL. Point it at a logical database of its own, for example ' +
       'redis://host.docker.internal:6379/13.',
   );
 }
 
-process.env.REDIS_URL = process.env.REDIS_TEST_URL;
+// Its OWN database, not REDIS_TEST_URL's. Turbo runs the packages' integration
+// tasks in parallel, and this suite deletes the keys it made; sharing database
+// 15 with the backend suite would mean deleting keys mid-run out from under it.
+// Same reasoning that put the redis package's own suite on database 14.
+process.env.REDIS_URL = process.env.REDIS_FRONTEND_TEST_URL;

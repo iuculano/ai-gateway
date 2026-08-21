@@ -89,7 +89,14 @@ beforeEach(() => {
 
 afterAll(async () => {
   await connectRedis();
-  await redis.flushDb();
+
+  // Only this suite's keys. flushDb() would empty whatever database the
+  // environment happens to point at, which is a loaded gun aimed at a
+  // concurrently running suite the moment somebody reuses a URL.
+  const keys = await redis.keys('relay:session:*');
+  if (keys.length > 0) {
+    await redis.del(keys);
+  }
 });
 
 describe('getValidSession', () => {
