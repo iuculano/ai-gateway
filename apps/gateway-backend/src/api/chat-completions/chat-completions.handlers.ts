@@ -1,10 +1,12 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
+import { assertNever } from '@repo/core';
 import { type Caller, getActorId, getCaller, zodExceptionHook } from '@repo/hono';
 import { consumeFixedWindowCounter } from '@repo/redis';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
+import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
-import type { RateLimitPolicy } from './chat-completions.schemas';
+import type { ChatCompletionBody, RateLimitPolicy } from './chat-completions.schemas';
 import Services from './chat-completions.services';
 
 /**
@@ -92,6 +94,96 @@ async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promis
 }
 
 /**
+ * The HTTP translation for a prompt that could not be expanded.
+ */
+function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPException {
+  const { code } = failure;
+
+  switch (code) {
+    // Only requests that actually name a prompt are held to this, so the
+    // challenge names the scope rather than failing the whole endpoint.
+    case 'PROMPT_FORBIDDEN':
+      return new HTTPException(403, {
+        message: `Expanding a prompt requires the '${failure.required}' scope`,
+        res: new Response(null, {
+          headers: { 'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${failure.required}"` },
+        }),
+      });
+
+    case 'PROMPT_NOT_FOUND':
+      return new HTTPException(404, {
+        message: `No prompt named '${failure.name}'`,
+      });
+
+    case 'PROMPT_NO_ACTIVE_VERSION':
+      return new HTTPException(422, {
+        message: `Prompt '${failure.name}' has no active version. Publish one, or pin a version on the request.`,
+      });
+
+    case 'PROMPT_VERSION_NOT_FOUND':
+      return new HTTPException(404, {
+        message: `Prompt '${failure.name}' has no version ${failure.version}`,
+      });
+
+    // 422 rather than 400: the body is well formed, and what is wrong is a
+    // fact about the template it named. The names are listed because the
+    // caller cannot see the template to work them out.
+    case 'PROMPT_VARIABLES_MISSING':
+      return new HTTPException(422, {
+        message: `Prompt '${failure.name}' v${failure.version} requires variables that were not supplied: ${failure.missing.join(', ')}`,
+      });
+
+    default:
+      return assertNever(code);
+  }
+}
+
+/**
+ * Expands a prompt reference into a leading system message.
+ *
+ * Returns a rewritten body rather than mutating: everything downstream - the
+ * provider call, the log, the token accounting - should see one request, and
+ * that request is the expanded one.
+ *
+ * Deliberately shaped as "resolve a reference into messages" rather than
+ * "prepend a system message", so that a per-message reference, or a prompt
+ * whose version carries a whole conversation, is a second call site here and
+ * not a redesign.
+ *
+ * @param body
+ * The validated request body, which may or may not name a prompt.
+ *
+ * @returns
+ * The body to send upstream, and the version that was expanded when one was.
+ *
+ * @throws {HTTPException}
+ * When the prompt cannot be resolved or rendered.
+ */
+async function expandPrompt(body: ChatCompletionBody): Promise<{ body: ChatCompletionBody; version: number | null }> {
+  if (!body.prompt) {
+    return { body, version: null };
+  }
+
+  const resolved = await PromptServices.resolvePrompt(body.prompt);
+
+  if (resolved.isErr()) {
+    throw toResolvePromptHttpException(resolved.error);
+  }
+
+  // `prompt` is dropped on the way through - it is this gateway's field, and
+  // the provider has no idea what it means.
+  const { prompt: _reference, ...rest } = body;
+
+  return {
+    body: {
+      ...rest,
+      messages: [{ role: 'system', content: resolved.value.prompt }, ...body.messages],
+    },
+    version: resolved.value.version,
+  };
+}
+
+/**
  * POST /chat/completions
  * Generate a chat completion, streamed or whole.
  */
@@ -109,14 +201,25 @@ const createChatCompletion = defineOpenAPIRoute({
       });
     }
 
+    // Before anything reaches the provider, and before the stream commits the
+    // 200 - a prompt that will not expand has to be a normal error response.
+    const expanded = await expandPrompt(body);
+
+    // Which version actually produced this, echoed for the same reason as
+    // ai-log-id. Without it, "what did we send" is unanswerable once the
+    // active version moves.
+    if (expanded.version !== null) {
+      c.res.headers.set('ai-prompt-version', String(expanded.version));
+    }
+
     // Echoed so a caller can fetch the stored payloads afterwards without
     // having to guess which log row was theirs.
     const echoLogId = (logId: string) => {
       c.res.headers.set('ai-log-id', logId);
     };
 
-    if (!body.stream) {
-      const completion = await Services.createChatCompletion(headers, body, echoLogId);
+    if (!expanded.body.stream) {
+      const completion = await Services.createChatCompletion(headers, expanded.body, echoLogId);
       return c.json(completion, 200);
     }
 
@@ -125,7 +228,7 @@ const createChatCompletion = defineOpenAPIRoute({
     // Once the stream opens, the 200 is committed and nothing can change it -
     // including the ai-log-id header, which is why the log has to be opened
     // before this point rather than when the stream finishes.
-    const chunks = Services.streamChatCompletion(headers, body, echoLogId);
+    const chunks = Services.streamChatCompletion(headers, expanded.body, echoLogId);
     const first = await chunks.next();
 
     return streamSSE(c, async (sse) => {

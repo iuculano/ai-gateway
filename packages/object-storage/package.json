@@ -8,12 +8,13 @@
   "types": "./index.ts",
   "scripts": {
     "check-types": "bunx tsc --noEmit",
-    "test": "bun test tests/unit",
+    "test:unit": "bun test --isolate tests/unit",
+    "test:unit:coverage": "bun test --coverage tests/unit",
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {},
   "devDependencies": {
-    "@types/bun": "^1.3.9"
+    "@types/bun": "^1.4.0"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"

@@ -79,30 +79,21 @@ function copyMeta(ev: MouseEvent) {
 	{#snippet cells()}
 		<span class="font-mono text-xs text-zinc-400"><span class="text-zinc-600">{occ.short} · </span>{occ.time}</span>
 		<span class="inline-flex min-w-0 items-center gap-[9px]">
-			{#if e.actorType === 'user'}
-				<span
-					class="flex size-6 flex-none items-center justify-center rounded-full text-[10.5px] font-semibold"
-					style:background={e.actorTone + '26'}
-					style:color={e.actorTone}
-				>
-					{e.initials}
-				</span>
-			{:else if e.actorType === 'api_key'}
-				<span class="flex size-6 flex-none items-center justify-center rounded-[7px] bg-emerald-500/14 text-emerald-500">
-					<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="5" cy="8" r="2.6" stroke="currentColor" stroke-width="1.4" /><path d="M7.6 8H14M11.4 8v2.2M13.2 8v1.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-				</span>
-			{:else}
-				<span class="flex size-6 flex-none items-center justify-center rounded-[7px] bg-track text-zinc-500">
-					<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg>
-				</span>
-			{/if}
-			<span class="flex min-w-0 flex-col leading-[1.25]">
-				<span class="overflow-hidden text-[13px] font-medium text-ellipsis whitespace-nowrap text-zinc-200">
-					{e.actorName}
-				</span>
-				<span class="text-[10.5px] text-zinc-600">{actorTypeLabel}</span>
+			<!-- A tone dot rather than an initials block. The 32px avatar was the
+			     tallest thing in the row and set the row height on its own; this keeps
+			     the same deterministic colour at the height logs' rows run at. -->
+			<span
+				class="size-[7px] flex-none rounded-full"
+				style:background={e.actorType === 'user' ? e.actorTone : e.actorType === 'api_key' ? '#10b981' : '#71717a'}
+			></span>
+			<span class="overflow-hidden text-[12.5px] font-medium text-ellipsis whitespace-nowrap text-zinc-200">
+				{e.actorName}
 			</span>
 		</span>
+
+		<!-- Lifted out from under the actor name, where it made every row two lines. -->
+		<span class="text-[12.5px] whitespace-nowrap text-zinc-500">{actorTypeLabel}</span>
+
 		<span class="inline-flex min-w-0 items-center gap-2">
 			<code class="font-mono text-xs whitespace-nowrap text-zinc-300">{e.action}</code>
 			{#if e.targetLabel}

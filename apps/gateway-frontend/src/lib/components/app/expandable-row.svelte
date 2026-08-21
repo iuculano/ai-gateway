@@ -8,6 +8,12 @@ import type { Snippet } from 'svelte';
  * py-3/gap-3.5 on keys and py-[11px]/gap-3 on the other two, with the expanded
  * panel indented 54px on one and 58px on the others.
  *
+ * The height is FIXED rather than padding-driven. Padding plus content meant a
+ * row was as tall as whatever it happened to hold - 40px on logs and audit,
+ * 50px anywhere with an h-7 action button - so one shared component produced two
+ * row rhythms depending on the page. min-h-10 with slim padding puts every row
+ * at 40px and still clears a 28px button.
+ *
  * `cols` must be the same value handed to the TableCard above it, so the
  * header and the rows stay in one grid.
  */
@@ -30,7 +36,7 @@ let {
 
 <div class="border-b border-hairline last:border-b-0">
 	<div
-		class="grid cursor-pointer items-center gap-3 px-[18px] py-[11px] transition-colors duration-100 hover:bg-surface-3 {expanded
+		class="grid min-h-10 cursor-pointer items-center gap-3 px-[18px] py-1 transition-colors duration-100 hover:bg-surface-3 {expanded
 			? 'bg-surface-3'
 			: ''}"
 		style:grid-template-columns={cols}

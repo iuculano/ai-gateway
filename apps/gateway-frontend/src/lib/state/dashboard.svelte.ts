@@ -34,6 +34,21 @@ class DashboardState {
     }
   }
 
+  /**
+   * Re-reads the keys without disturbing the table.
+   *
+   * The quiet twin of refresh(): no loading flag, so the rows stay put instead
+   * of blanking to a spinner, and no error assignment, so a failed tick does
+   * not raise a banner over a table that is still readable. It throws, and
+   * AutoRefresh switches itself off on the way past.
+   */
+  async refreshQuietly(): Promise<void> {
+    if (this.loading) return;
+
+    const result = await listApiKeys();
+    this.keys = result.data;
+  }
+
   /** Creates a key and returns it including the plaintext (shown once). */
   async create(input: CreateApiKeyInput): Promise<CreatedApiKey> {
     const created = await createApiKey(input);

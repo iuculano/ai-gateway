@@ -4,7 +4,7 @@ import { createSchema } from '@repo/hono';
 import { createInsertSchema, createSelectSchema, createUpdateSchema } from 'drizzle-orm/zod';
 
 const apiKeyShape = createSelectSchema(apiKeys).omit({
-  organization_id: true, //internal detail
+  organization_id: true, // internal detail
   key_hash: true, // this should only be included in the create response
 });
 
@@ -67,6 +67,8 @@ const createApiKey = createSchema({
       revoked_at: true, // server-generated
     })
     .extend({
+      name: z.string().trim().min(1).max(100),
+      description: z.string().trim().max(250).nullish(),
       expires_at: z.coerce.date().nullable().optional(),
       rate_limit_requests: z.number().int().min(1).nullish(),
       rate_limit_window: z.number().int().min(1).optional(),
@@ -99,6 +101,10 @@ const updateApiKey = createSchema({
       revoked_at: true, // server-generated
     })
     .extend({
+      // Optional, unlike on create: this is a PATCH, and requiring a name to
+      // change a rate limit would be a regression.
+      name: z.string().trim().min(1).max(100).optional(),
+      description: z.string().trim().max(250).nullish(),
       expires_at: z.coerce.date().nullable().optional(),
       rate_limit_requests: z.number().int().min(1).nullish(),
       rate_limit_window: z.number().int().min(1).optional(),

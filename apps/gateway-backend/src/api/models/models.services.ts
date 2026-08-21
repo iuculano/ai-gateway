@@ -1,6 +1,7 @@
-import { probe, toPage } from '@repo/core';
-import { and, db, desc, eq, lt } from '@repo/drizzle';
+import { isProvider, probe, toPage } from '@repo/core';
+import { and, asc, db, desc, eq, isNull, lt, or } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
+import { getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
 import Schemas, {
   type CreateModelRequest,
@@ -9,6 +10,7 @@ import Schemas, {
   type GetModelResponse,
   type ListModelsRequest,
   type ListModelsResponse,
+  type ListProvidersResponse,
   type UpdateModelRequest,
   type UpdateModelResponse,
 } from './models.schemas';
@@ -82,18 +84,19 @@ async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, Ge
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
-  const result = await db
+  const [result] = await db
     .select()
     .from(models)
-    .where(and(eq(models.provider, split[0] as string), eq(models.name, split[1] as string)));
+    .where(and(eq(models.provider, split[0] as string), eq(models.name, split[1] as string)))
+    .limit(1);
 
-  if (!result[0]) {
+  if (!result) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
   // I'm wondering if I even need to cache here - the query is very cheap.
   // This endpoint is called on every inference, though, maybe worth it?
-  const parsed = Schemas.getModel.response.parse(result[0]);
+  const parsed = Schemas.getModel.response.parse(result);
   return ok(parsed);
 }
 
@@ -120,6 +123,62 @@ async function listModels(request: ListModelsRequest): Promise<ListModelsRespons
   const parsed = Schemas.listModels.response.parse(toPage(rows, request.limit));
 
   return parsed;
+}
+
+/**
+ * The whole catalogue, grouped by provider.
+ *
+ * Unpaginated on purpose. Every figure the dashboard shows for a provider - the
+ * price range, the model count, the widest context - is an aggregate over all
+ * of that provider's models, and a page boundary running through the middle of
+ * one would turn each of those into a statement about a page instead. At the
+ * low hundreds of rows the catalogue holds, that is a trade worth making;
+ * listModels remains for anything that wants a cursor.
+ *
+ * Scoped to global rows plus the caller's own. Built-ins carry no
+ * organization_id and belong to everyone; custom rows belong to exactly one
+ * organization and must not be visible to another.
+ *
+ * Deliberately not a Result: an empty catalogue is a catalogue, and there is no
+ * outcome here a caller could correct.
+ */
+async function listProviders(): Promise<ListProvidersResponse> {
+  const organizationId = getCaller().organization.id;
+
+  const rows = await db
+    .select()
+    .from(models)
+    .where(or(isNull(models.organization_id), eq(models.organization_id, organizationId)))
+    .orderBy(asc(models.provider), asc(models.name));
+
+  // Grouped from the raw rows rather than parsed ones. The response shape
+  // transforms dates into strings, so it is not idempotent - running it over
+  // its own output would reject every timestamp it had already converted.
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const existing = grouped.get(row.provider);
+    if (existing) {
+      existing.push(row);
+    } else {
+      grouped.set(row.provider, [row]);
+    }
+  }
+
+  const data = [...grouped.entries()]
+    .map(([provider, providerRows]) => ({
+      id: provider,
+      routable: isProvider(provider),
+      synced_at: providerRows.reduce<Date | null>(
+        (latest, row) => (row.synced_at && (!latest || row.synced_at > latest) ? row.synced_at : latest),
+        null,
+      ),
+      models: providerRows,
+    }))
+    // Routable providers first: a catalogue entry you can actually call is
+    // worth more than one you can only read about.
+    .sort((a, b) => Number(b.routable) - Number(a.routable) || a.id.localeCompare(b.id));
+
+  return Schemas.listProviders.response.parse({ data });
 }
 
 /**
@@ -188,6 +247,7 @@ export default {
   getModel,
   getModelBySlug,
   listModels,
+  listProviders,
   createModel,
   updateModel,
   deleteModel,

@@ -2,20 +2,27 @@
   "name": "ai-gateway-workspace",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.0",
   "scripts": {
-    "build": "turbo run build",
-    "check-types": "turbo run check-types",
     "dev": "turbo run dev",
-    "synth": "turbo run synth",
-    "test": "turbo run test",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test:unit test:integration",
+    "test:unit": "turbo run test:unit",
+    "test:unit:coverage": "turbo run test:unit:coverage",
     "test:integration": "turbo run test:integration",
-    "stress:logs": "bun run --cwd apps/gateway-backend stress:logs",
-    "stress:gateway": "bun run --cwd apps/gateway-backend stress:gateway",
+    "test:db:setup": "turbo run test:db:setup",
+    "db:generate": "turbo run db:generate",
+    "db:migrate": "turbo run db:migrate",
+    "db:push": "turbo run db:push",
+    "check": "bunx biome ci",
     "lint": "bunx biome lint",
     "lint:fix": "bunx biome lint --write",
     "format": "bunx biome format",
-    "format:fix": "bunx biome format --write"
+    "format:fix": "bunx biome format --write",
+    "stress:logs": "bun run --cwd apps/gateway-backend stress:logs",
+    "stress:gateway": "bun run --cwd apps/gateway-backend stress:gateway"
   },
   "workspaces": [
     "apps/*",
@@ -26,6 +33,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
-    "turbo": "^2.10.10"
+    "turbo": "^2.10.11"
   }
 }

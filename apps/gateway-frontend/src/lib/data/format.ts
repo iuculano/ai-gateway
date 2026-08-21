@@ -144,6 +144,32 @@ export function fmtCostTotal(dollars: number): string {
   return `$${dollars.toFixed(2)}`;
 }
 
+/**
+ * A catalogue price, in dollars per million tokens.
+ *
+ * null is not zero. An unpublished price and a genuinely free one are different
+ * claims, and rendering the first as '$0.00' is how a gateway ends up quietly
+ * reporting that a month of inference cost nothing - so the unknown case says
+ * so in words and the caller colours it differently.
+ *
+ * Three decimals below a cent, because the cheapest models price their cached
+ * input at $0.005 and two decimals would round every one of them to zero.
+ */
+export function fmtPricePerMillion(dollars: number | null): string {
+  if (dollars === null) return 'Unpriced';
+  if (dollars === 0) return '$0.00';
+  if (dollars < 0.01) return `$${dollars.toFixed(3)}`;
+  return `$${dollars.toFixed(2)}`;
+}
+
+/** A context window at the scale it is quoted in: 128000 -> '128K'. */
+export function fmtContext(tokens: number | null): string {
+  if (tokens === null || tokens === 0) return '—';
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+  return String(tokens);
+}
+
 /** Thousands separators for token counts: 1284 -> '1,284'. */
 export function fmtTokens(n: number | null): string {
   if (n === null) return '—';
@@ -175,6 +201,19 @@ export function providerTone(provider: string): { label: string; color: string }
   return PROVIDER_TONES[provider.toLowerCase()] ?? { label: humanize(provider), color: '#71717a' };
 }
 
+/** A span of seconds at the coarsest unit that still reads: '45s', '12 min', '3 hr'. */
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr`;
+
+  return `${Math.round(hours / 24)} days`;
+}
+
 /**
  * Countdown to a future timestamp: '45s', '12 min', '3 hr'.
  *
@@ -185,13 +224,34 @@ export function providerTone(provider: string): { label: string; color: string }
 export function timeUntil(iso: string): string {
   const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
   if (seconds <= 0) return 'now';
-  if (seconds < 60) return `${seconds}s`;
 
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
+  return formatDuration(seconds);
+}
 
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hr`;
+/**
+ * How long a past timestamp has been past, as a bare length: '45s', '12 min'.
+ *
+ * Also distinct from timeAgo(), but the other way round: that one is prose for a
+ * moment ('yesterday', 'Jul 05, 2026'), and a queue's waiting column needs a
+ * duration - 'yesterday' does not answer how long a row has been sat there.
+ */
+export function timeSince(iso: string): string {
+  const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds <= 0) return '0s';
 
-  return `${Math.round(hours / 24)} days`;
+  return formatDuration(seconds);
+}
+
+/**
+ * A `Record<string, string>` as one line: 'env=prod · team=billing'.
+ *
+ * Lives here rather than beside any one resource - webhook filters, webhook
+ * tags and prompt tags are all the same jsonb string map, and the summary is
+ * how each of them is rendered into a table cell.
+ */
+export function pairSummary(record?: Record<string, string> | null): string {
+  const entries = Object.entries(record ?? {});
+  if (entries.length === 0) return '—';
+
+  return entries.map(([key, value]) => `${key}=${value}`).join(' · ');
 }

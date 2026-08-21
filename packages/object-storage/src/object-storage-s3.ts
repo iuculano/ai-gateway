@@ -22,21 +22,48 @@ export interface S3ObjectStorageClientOptions {
 }
 
 /**
+ * The slice of Bun's S3Client this adapter actually uses.
+ *
+ * Named so the constructor can take a stand-in. `bun` is a builtin module and
+ * cannot be intercepted with mock.module, so without a seam the only way to
+ * reach the error branches below is to make a real bucket produce each error -
+ * which is precisely what a unit test should not have to arrange.
+ */
+export interface S3FileApi {
+  file(path: string): {
+    bytes(): Promise<Uint8Array>;
+    write(data: Uint8Array): Promise<unknown>;
+    delete(): Promise<unknown>;
+    exists(): Promise<boolean>;
+  };
+}
+
+/**
  * S3 and anything that speaks its API - MinIO, R2, Backblaze.
  *
  * Built on Bun's own S3 client, so there is no SDK dependency here.
  */
 export class S3ObjectStorageClient implements ObjectStorageClient {
-  private readonly s3: S3Client;
+  private readonly s3: S3FileApi;
 
-  constructor(options: S3ObjectStorageClientOptions) {
-    this.s3 = new S3Client({
-      region: options.region ?? 'us-east-1',
-      endpoint: options.endpoint,
-      bucket: options.bucket,
-      accessKeyId: options.accessKeyId,
-      secretAccessKey: options.secretAccessKey,
-    });
+  /**
+   * @param options
+   * Bucket and credentials.
+   *
+   * @param s3
+   * Overrides the client built from `options`. For tests only; production
+   * passes one argument and gets Bun's client.
+   */
+  constructor(options: S3ObjectStorageClientOptions, s3?: S3FileApi) {
+    this.s3 =
+      s3 ??
+      (new S3Client({
+        region: options.region ?? 'us-east-1',
+        endpoint: options.endpoint,
+        bucket: options.bucket,
+        accessKeyId: options.accessKeyId,
+        secretAccessKey: options.secretAccessKey,
+      }) as unknown as S3FileApi);
   }
 
   async read(path: string): Promise<Uint8Array | null> {

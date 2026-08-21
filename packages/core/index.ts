@@ -5,3 +5,4 @@ export * from './src/errors';
 export * from './src/pagination';
 export * from './src/parse-tags';
 export * from './src/pino';
+export * from './src/providers';

@@ -33,6 +33,21 @@ export interface Turn {
 
 const ROLES: TurnRole[] = ['system', 'developer', 'user', 'assistant', 'tool'];
 
+/**
+ * The tint each role is drawn in, shared by the transcript and the playground's
+ * composer so a role is the same colour wherever it appears.
+ *
+ * Roles are always labelled as well. The colour only makes the alternation easy
+ * to scan; it never carries the meaning on its own.
+ */
+export const ROLE_COLORS: Record<TurnRole, string> = {
+  system: '#a1a1aa',
+  developer: '#a1a1aa',
+  user: '#60a5fa',
+  assistant: '#10b981',
+  tool: '#c084fc',
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }

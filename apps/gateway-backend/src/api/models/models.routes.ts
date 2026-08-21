@@ -75,6 +75,34 @@ const listModels = createRoute({
   },
 });
 
+const listProviders = createRoute({
+  method: 'get' as const,
+  // '/providers' rather than '/models/catalog'. The latter collides with
+  // '/models/{id}', and which one wins is decided purely by the order the two
+  // are passed to openapiRoutes() - register the parameterised one first and
+  // every request for the catalogue is rejected as a malformed uuid instead.
+  // Nothing in the type system or the tests catches that, so the collision is
+  // removed rather than ordered around.
+  //
+  // It is also the better name: the response is a list of providers, each
+  // carrying its models. The scope stays models:read - this is the same data.
+  path: '/providers',
+  security: bearerSecurity,
+  middleware: [authorize({ scopes: [SCOPES.modelsRead] })],
+  responses: {
+    ...validatedProtectedRouteErrors,
+    200: {
+      description: 'Catalogue retrieved successfully',
+      content: {
+        'application/json': {
+          schema: Schemas.listProviders.response,
+        },
+      },
+    },
+    500: internalServerError,
+  },
+});
+
 // Write is separated from read deliberately: `models` is one global catalogue
 // with no organization_id, so unlike every other write in this API a change
 // here is not confined to the caller's tenant - and the costs it carries are
@@ -161,6 +189,7 @@ const deleteModel = createRoute({
 export default {
   getModel,
   listModels,
+  listProviders,
   createModel,
   updateModel,
   deleteModel,

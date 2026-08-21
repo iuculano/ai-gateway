@@ -1,8 +1,7 @@
 services:
   postgres:
-    image:          postgres:18
-    container_name: postgres
-    restart:        unless-stopped
+    image:   postgres:18
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
@@ -13,23 +12,30 @@ services:
       POSTGRES_DB:       ai_gateway
     volumes:
       - pg_data:/var/lib/postgresql/18/docker
+    # docker compose up --wait only waits for a healthcheck.
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U postgres -d ai_gateway"]
+      interval: 5s
+      timeout:  5s
+      retries:  5
 
   valkey:
-    image:          valkey/valkey:9
-    container_name: valkey
-    restart:        unless-stopped
+    image:   valkey/valkey:9
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - valkey_data:/data
+    healthcheck:
+      test:     ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout:  5s
+      retries:  5
 
-  # Log request/response payloads. S3-compatible, so the app talks to it with
-  # the same client it would use against real S3 - only S3_ENDPOINT differs.
   minio:
-    image:          minio/minio:latest
-    container_name: minio
-    restart:        unless-stopped
-    command:        server /data --console-address ":9001"
+    image:   minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
     ports:
       - "9000:9000"  # S3 API - must match S3_ENDPOINT
       - "9001:9001"  # web console

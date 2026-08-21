@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { createAzure } from '@ai-sdk/azure';
 import { createOpenAI } from '@ai-sdk/openai';
-import { createCacheKey, type Logger } from '@repo/core';
+import { createCacheKey, type Logger, parseTags } from '@repo/core';
 import { getCaller, getLogger } from '@repo/hono';
 import {
   APICallError,
@@ -23,6 +24,7 @@ import {
 import { HTTPException } from 'hono/http-exception';
 import { LRUCache } from 'lru-cache';
 import LogsService from '../logs/logs.services';
+import WebhookServices from '../webhooks/webhooks.services';
 import type {
   ChatCompletion,
   ChatCompletionBody,
@@ -535,6 +537,9 @@ function toHttpException(error: unknown): HTTPException {
  * continuations do not have to look either up after the ambient scope ends.
  */
 interface OpenLog {
+  /** The log's tags, kept for the webhook fan-out that runs when it closes. */
+  tags?: Record<string, string>;
+
   id: string;
   organizationId: string;
   logger: Logger;
@@ -569,13 +574,16 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
   const logger = getLogger();
   const organizationId = caller.organization.id;
 
+  const tags = parseTags(headers['ai-log-tags']);
+
   try {
     const id = await LogsService.startLog(organizationId, {
       model: model.modelId,
       provider: model.provider,
+      tags: tags,
     });
 
-    return { id, organizationId, logger };
+    return { id, organizationId, logger, tags };
   } catch (error) {
     logger.error({ err: error }, 'Failed to open inference log');
     return null;
@@ -633,6 +641,11 @@ async function closeLog(
   } catch (error) {
     log.logger.error({ err: error, log_id: log.id }, 'Failed to store inference log payloads');
   }
+
+  // After the log is complete, never before: a webhook is handed a log id and
+  // fetches it, and a row still marked 'incomplete' has nothing to show. The
+  // explicit ai-webhook-id queue is separate and already ran.
+  await WebhookServices.fanOutForLog(log.organizationId, log.id, log.tags);
 }
 
 /**
@@ -663,6 +676,48 @@ async function abandonLog(
     });
   } catch (error) {
     log.logger.error({ err: error, log_id: log.id }, 'Failed to mark inference log failed');
+  }
+}
+
+/**
+ * Queues the log for the webhook the request named, if it named one.
+ *
+ * Runs before the provider is called: a bad webhook id should cost nothing, and
+ * finding out after the completion has been generated and paid for would leave
+ * the caller with an answer and an error at the same time.
+ *
+ * @param headers
+ * The gateway headers, carrying the ai-webhook-id control.
+ *
+ * @param log
+ * The log opened for this request, or null when logging was skipped.
+ *
+ * @throws {HTTPException}
+ * 400 when a webhook is requested with logging skipped, 404 when the webhook is
+ * not one of the caller's.
+ */
+async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null): Promise<void> {
+  const webhookId = headers['ai-webhook-id'];
+  if (!webhookId) {
+    return;
+  }
+
+  // The outbox points at a log, and the worker joins through it to build the
+  // delivery. Skipping the log leaves nothing to deliver, so the two headers
+  // are contradictory rather than merely unusual - said plainly instead of
+  // silently dropping one of them.
+  if (!log) {
+    throw new HTTPException(400, {
+      message: 'ai-webhook-id cannot be used with ai-log-skip: a delivery needs a log to point at',
+    });
+  }
+
+  const queued = await WebhookServices.enqueueDelivery(webhookId, log.id);
+
+  if (queued.isErr()) {
+    throw new HTTPException(404, {
+      message: `No webhook with id '${queued.error.id}'`,
+    });
   }
 }
 
@@ -700,6 +755,8 @@ async function createChatCompletion(
   if (log) {
     onLog?.(log.id);
   }
+
+  await queueWebhook(headers, log);
 
   const startedAt = performance.now();
 
@@ -809,6 +866,8 @@ async function* streamChatCompletion(
     onLog?.(log.id);
   }
 
+  await queueWebhook(headers, log);
+
   const startedAt = performance.now();
 
   // Declared before the call because onError closes over it.
@@ -836,21 +895,25 @@ async function* streamChatCompletion(
     },
   });
 
-  // The response metadata is only known once the provider has answered, but
-  // every chunk has to carry a consistent id/created/model. They are resolved
-  // once, here, and reused - awaiting this also surfaces a connection-time
-  // failure before any chunk is emitted, so a bad key is still a clean 401.
-  let response: Awaited<typeof result.response>;
-  try {
-    response = await result.response;
-  } catch (error) {
-    await abandonLog(log, headers, body);
-    throw toHttpException(error);
-  }
-
-  const id = response.id;
-  const created = Math.floor(response.timestamp.getTime() / 1000);
-  const modelId = response.modelId;
+  // Every frame has to carry the same id/created/model, so all three are fixed
+  // once, here - but they are the GATEWAY's, not the provider's.
+  //
+  // The provider's metadata cannot be used, because it is not knowable in time.
+  // `result.response` is one of the SDK's FINAL promises: it settles when
+  // generation has finished, not when the provider has answered. Awaiting it
+  // here held every frame back until the model had produced its last token and
+  // then flushed the lot at once - a stream in shape only. `fullStream` is no
+  // help either; it carries response metadata on `finish-step`, which is just
+  // as late.
+  //
+  // The consequence to be aware of: `model` echoes the id the request asked for
+  // rather than the dated build the provider chose, so a request for `gpt-4o`
+  // reports `gpt-4o` here where the non-streaming path reports
+  // `gpt-4o-2024-08-06`. Recovering the provider's own id would mean
+  // includeRawChunks and parsing provider-specific frames.
+  const id = `chatcmpl-${randomUUID().replaceAll('-', '')}`;
+  const created = Math.floor(Date.now() / 1000);
+  const modelId = model.modelId;
 
   const frame = (
     delta: ChatCompletionChunk['choices'][number]['delta'],
@@ -863,12 +926,16 @@ async function* streamChatCompletion(
     choices: [{ index: 0, delta: delta, finish_reason: finishReason }],
   });
 
-  // OpenAI's first frame announces the role and carries no content.
-  yield frame({ role: 'assistant', content: '' }, null);
-
   // Tool calls stream as fragments identified by an opaque id; the wire format
   // wants a positional index instead, so ids are assigned one on first sight.
   const toolCallIndexes = new Map<string, number>();
+
+  // Whether the opening frame has gone out. The first yield commits the 200 and
+  // its headers, so nothing may be emitted until the provider has accepted the
+  // request - otherwise a rejected credential could no longer be answered with
+  // a 401. This is the job the removed `await result.response` was doing, at
+  // the cost of also waiting for the whole generation.
+  let opened = false;
 
   let finishReason: ChatCompletionFinishReason = 'stop';
   let usage: ChatCompletionUsage | undefined;
@@ -881,6 +948,17 @@ async function* streamChatCompletion(
   const assembledToolCalls: ChatCompletionToolCall[] = [];
 
   for await (const part of result.fullStream) {
+    // `start` is emitted locally the moment streamText() is called and proves
+    // nothing about the provider. Any other part means it has answered, so this
+    // is the earliest safe moment to commit to a 200 - excluding `error`, which
+    // is how onError surfaces a bad credential and must stay answerable.
+    if (!opened && part.type !== 'start' && part.type !== 'error') {
+      opened = true;
+
+      // OpenAI's first frame announces the role and carries no content.
+      yield frame({ role: 'assistant', content: '' }, null);
+    }
+
     switch (part.type) {
       case 'text-delta':
         if (part.text) {
@@ -943,6 +1021,13 @@ async function* streamChatCompletion(
   if (streamError) {
     await abandonLog(log, headers, body);
     throw streamError;
+  }
+
+  // A provider that answered with nothing at all never tripped the gate above,
+  // and a stream whose only frame is a finish reason is malformed. Emit the
+  // opening frame it is owed first.
+  if (!opened) {
+    yield frame({ role: 'assistant', content: '' }, null);
   }
 
   // The terminating frame: an empty delta plus the finish reason.

@@ -50,6 +50,11 @@ const headers = z.object({
   'ai-base-url': z.url().optional(),
   'ai-rate-limit-policy': rateLimitPolicy.optional(),
 
+  // Tags recorded on this request's log, in the same "k1:v1,k2:v2" spelling
+  // the logs list endpoint filters by. These are what a webhook's `filter`
+  // matches against, so a log without them reaches only unfiltered webhooks.
+  'ai-log-tags': z.string().optional(),
+
   'ai-log-skip': z.stringbool().optional(),
   'ai-log-omit-request': z.stringbool().optional(),
   'ai-log-omit-response': z.stringbool().optional(),
@@ -168,12 +173,42 @@ const prediction = z.object({
   content: z.union([z.string(), z.array(textPart)]),
 });
 
+/**
+ * A reference to a stored prompt, expanded before the request leaves here.
+ *
+ * A field of its own rather than a marker inside a message: `content` is where
+ * end-user text flows, and triggering expansion from it would let anyone who
+ * can put words in a conversation pull in a prompt. This field is only ever set
+ * by whoever is calling the API.
+ *
+ * Optional, so a stock OpenAI client that has never heard of it sends exactly
+ * the same body it always did.
+ */
+const promptReference = z.object({
+  /** Resolved within the caller's organization. Names are unique per org. */
+  name: z.string().min(1),
+
+  /**
+   * Pins the version. Omitted, the prompt's active version is used - which is
+   * what makes promoting a version take effect without a redeploy, and what
+   * makes a pinned request reproducible when you would rather it did not.
+   */
+  version: z.number().int().positive().nullish(),
+
+  variables: z.record(z.string(), z.string()).nullish(),
+});
+
 const body = z.object({
   // Either a bare OpenAI model id (`gpt-5`) or a `provider/model` slug
   // (`azure/my-deployment`). A bare id resolves to the openai provider, so a
   // stock OpenAI client works against this endpoint unmodified.
   model: z.string().min(1),
   messages: z.array(message).min(1),
+
+  // Expanded into a leading system message, ahead of `messages`. The array
+  // stays required: a prompt supplies the instructions, the caller still
+  // supplies the turn being answered.
+  prompt: promptReference.nullish(),
 
   frequency_penalty: z.number().min(-2).max(2).nullish(),
   logit_bias: z.record(z.string(), z.number().min(-100).max(100)).nullish(),
@@ -313,6 +348,7 @@ const createChatCompletion = createSchema({
 
 export type ChatCompletionHeaders = z.infer<typeof headers>;
 export type ChatCompletionBody = z.infer<typeof body>;
+export type PromptReference = z.infer<typeof promptReference>;
 export type ChatCompletion = z.infer<typeof completion>;
 export type ChatCompletionChunk = z.infer<typeof completionChunk>;
 export type ChatCompletionMessage = z.infer<typeof message>;

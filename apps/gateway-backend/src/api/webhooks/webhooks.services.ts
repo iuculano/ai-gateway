@@ -1,7 +1,7 @@
 import { parseTags } from '@repo/core';
 import { and, db, desc, eq, lt, sql } from '@repo/drizzle';
 import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
-import { getAccountableUserId, getCaller } from '@repo/hono';
+import { getAccountableUserId, getCaller, getLogger } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
 import Schemas, {
   type CreateWebhookBody,
@@ -29,6 +29,11 @@ import Schemas, {
  * that returns nothing - is the system malfunctioning rather than an answer,
  * and rejects.
  */
+export type EnqueueDeliveryFailure = {
+  code: 'WEBHOOK_NOT_FOUND';
+  id: string;
+};
+
 export type GetWebhookFailure = {
   code: 'WEBHOOK_NOT_FOUND';
   id: string;
@@ -304,7 +309,108 @@ async function submitWebhookRequest(webhookId: string, logId: string) {
   return result[0];
 }
 
+/**
+ * Queues every webhook whose filter the log satisfies.
+ *
+ * The automatic half of fan-out, and the one that makes a webhook's `filter`
+ * mean anything: without it the queue only ever held what a request named
+ * explicitly, so a filter was configuration nothing consulted.
+ *
+ * Matching is done in postgres with `@>` rather than in JS over every webhook
+ * in the organization: the containment operator is what the jsonb GIN index on
+ * the logs side is built for, and pulling every webhook back per request to
+ * compare maps by hand would put a table scan on the inference path.
+ *
+ * A webhook with no filter - null or `{}` - receives everything. That is the
+ * documented meaning of an empty filter, and `@>` alone would not give it:
+ * `NULL @> anything` is null, which is not a match.
+ *
+ * Failures are swallowed and logged. By the time this runs the completion has
+ * been generated and paid for, and losing a notification is strictly better
+ * than turning a served request into an error.
+ *
+ * @param organizationId
+ * Passed explicitly rather than read from the caller: this runs from the
+ * streaming path's continuation, after the request's asynchronous context has
+ * ended.
+ *
+ * @param logId
+ * The log to deliver.
+ *
+ * @param tags
+ * The log's tags, which the filters are matched against.
+ */
+async function fanOutForLog(
+  organizationId: string,
+  logId: string,
+  tags: Record<string, string> | null | undefined,
+): Promise<void> {
+  const payload = JSON.stringify(tags ?? {});
+
+  try {
+    const matched = await db
+      .select({ id: webhooks.id })
+      .from(webhooks)
+      .where(
+        and(
+          eq(webhooks.organization_id, organizationId),
+          sql`(
+            ${webhooks.filter} IS NULL
+            OR ${webhooks.filter} = '{}'::jsonb
+            OR ${payload}::jsonb @> ${webhooks.filter}
+          )`,
+        ),
+      );
+
+    if (matched.length === 0) {
+      return;
+    }
+
+    await db.insert(webhookOutbox).values(matched.map((webhook) => ({ webhook_id: webhook.id, log_id: logId })));
+  } catch (error) {
+    getLogger().error({ err: error, log_id: logId }, 'Failed to fan out webhooks for log');
+  }
+}
+
+/**
+ * Queues one (webhook, log) pair for delivery.
+ *
+ * The counterpart to the worker, which drains this table - nothing else writes
+ * to it, so before this existed the queue could only ever be empty. Automatic
+ * fan-out (every log matched against every webhook's filter) is still absent;
+ * this covers the explicit case, where a request names the webhook it wants
+ * notified.
+ *
+ * The organization predicate is the point of the lookup rather than a
+ * formality: without it a caller could queue their own log id against another
+ * tenant's endpoint, and the worker would dutifully POST it there.
+ *
+ * @param webhookId
+ * The webhook to notify.
+ *
+ * @param logId
+ * The log to deliver. Carried without a foreign key - see the table.
+ */
+async function enqueueDelivery(webhookId: string, logId: string): Promise<Result<void, EnqueueDeliveryFailure>> {
+  const caller = getCaller();
+
+  const [webhook] = await db
+    .select({ id: webhooks.id })
+    .from(webhooks)
+    .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, webhookId)));
+
+  if (!webhook) {
+    return err({ code: 'WEBHOOK_NOT_FOUND', id: webhookId });
+  }
+
+  await db.insert(webhookOutbox).values({ webhook_id: webhookId, log_id: logId });
+
+  return ok(undefined);
+}
+
 export default {
+  enqueueDelivery,
+  fanOutForLog,
   getWebhook,
   listWebhooks,
   createWebhook,

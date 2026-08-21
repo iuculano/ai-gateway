@@ -198,6 +198,29 @@ function copy(text: string, label: string) {
 	{#snippet details()}
 		<DetailGrid items={detailItems} />
 
+		<!-- An anchor, not a ToolbarButton, because this navigates. The playground
+		     reads ?from= and rehydrates the stored request.
+
+		     Only offered when the payload actually exists: `ai-log-skip` and
+		     `ai-log-omit-request` both leave a row whose request was never
+		     written, and there is nothing to replay from those. -->
+		<div class="flex items-center gap-2.5">
+			{#if log.has_request}
+				<a
+					href="/playground?from={log.id}"
+					class="flex h-8 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
+				>
+					<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+					Replay in playground
+				</a>
+				<span class="text-[11.5px] text-zinc-600">Re-send this request to a different model.</span>
+			{:else}
+				<span class="text-[11.5px] text-zinc-600">
+					No stored request, so this call cannot be replayed.
+				</span>
+			{/if}
+		</div>
+
 		{#if payloadError}
 			<Panel>
 				<div class="flex items-center gap-[9px] px-3.5 py-4 text-[12.5px] text-red-400">

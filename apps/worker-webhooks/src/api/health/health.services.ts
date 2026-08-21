@@ -35,6 +35,8 @@ async function checkPostgresTables(requiredTables: string[]): Promise<boolean> {
     // names.
     const result = await db.execute(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`);
 
+    // db.execute resolves to Record<string, unknown>[], so the row cannot be
+    // annotated as a narrower shape here - the cast belongs on the field.
     const rows = result.map((row) => row.table_name as string);
     const allExists = requiredTables.every((table) => rows.includes(table));
 

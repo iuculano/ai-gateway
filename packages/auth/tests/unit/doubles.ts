@@ -1,93 +1,14 @@
 import { mock } from 'bun:test';
+import { createDatabaseDouble, failsWith, KEY_ID, ORGANIZATION_ID, rows, type Step, USER_ID } from '@repo/test-helpers';
 
-export type DatabaseStep = { rows: unknown[] } | { error: Error };
+/** This suite's spelling of the shared step type. */
+export type DatabaseStep = Step;
 
-export const database = {
-  steps: [] as DatabaseStep[],
-  consumed: 0,
-  calls: [] as { method: string; args: unknown[] }[],
-  transactions: [] as { committed: boolean; rolledBack: boolean }[],
+export { failsWith, rows };
 
-  script(...steps: DatabaseStep[]) {
-    database.steps = steps;
-    database.consumed = 0;
-    database.calls = [];
-    database.transactions = [];
-  },
-};
+const { database, db } = createDatabaseDouble();
 
-export function rows(...values: unknown[]): DatabaseStep {
-  return { rows: values };
-}
-
-export function failsWith(error: Error): DatabaseStep {
-  return { error };
-}
-
-function nextRows(): Promise<unknown[]> {
-  const step = database.steps[database.consumed++];
-  if (!step) {
-    return Promise.reject(new Error(`Unscripted database call (query ${database.consumed})`));
-  }
-
-  if ('error' in step) {
-    return Promise.reject(step.error);
-  }
-
-  return Promise.resolve(step.rows);
-}
-
-function queryBuilder(): unknown {
-  const builder: unknown = new Proxy(
-    {},
-    {
-      get(_target, property) {
-        if (property === 'then') {
-          return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) =>
-            nextRows().then(resolve, reject);
-        }
-
-        if (typeof property === 'symbol') {
-          return undefined;
-        }
-
-        return (...args: unknown[]) => {
-          database.calls.push({ method: property, args });
-          return builder;
-        };
-      },
-    },
-  );
-
-  return builder;
-}
-
-function startQuery(method: string, args: unknown[]): unknown {
-  database.calls.push({ method, args });
-  return queryBuilder();
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: reproducing Drizzle's fluent builder types adds no test value
-const db: any = {
-  select: (...args: unknown[]) => startQuery('select', args),
-  insert: (...args: unknown[]) => startQuery('insert', args),
-  update: (...args: unknown[]) => startQuery('update', args),
-  delete: (...args: unknown[]) => startQuery('delete', args),
-
-  async transaction(callback: (tx: unknown) => Promise<unknown>) {
-    const transaction = { committed: false, rolledBack: false };
-    database.transactions.push(transaction);
-
-    try {
-      const result = await callback(db);
-      transaction.committed = true;
-      return result;
-    } catch (error) {
-      transaction.rolledBack = true;
-      throw error;
-    }
-  },
-};
+export { database };
 
 export const quota = {
   calls: [] as { key: string; policy: { limit: number; windowSeconds: number; incrementBy?: number } }[],
@@ -216,9 +137,7 @@ export function resetDoubles(): void {
   authCache.reset();
 }
 
-export const ORGANIZATION_ID = '01912d3f-9b4a-7c3d-8e2f-000000000001';
-export const USER_ID = '01912d3f-9b4a-7c3d-8e2f-000000000002';
-export const KEY_ID = '01912d3f-9b4a-7c3d-8e2f-000000000003';
+export { KEY_ID, ORGANIZATION_ID, USER_ID };
 
 export function organizationRow(overrides: Record<string, unknown> = {}) {
   return {

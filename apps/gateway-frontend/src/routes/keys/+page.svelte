@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
@@ -8,16 +9,18 @@ import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import CreateKeyDialog from '$lib/components/keys/create-key-dialog.svelte';
 import KeyRow from '$lib/components/keys/key-row.svelte';
+import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
 type StatusFilter = 'all' | 'active';
 
 // Shared with KeyRow so the header and the rows sit in one grid.
-const COLS = '24px 1.8fr 1.6fr 1fr 90px 84px 136px';
+const COLS = '24px 1.5fr 88px 1.5fr 1fr 90px 84px 136px';
 
 const COLUMNS = [
   { label: '' },
   { label: 'Name' },
+  { label: 'Scopes' },
   { label: 'Description' },
   { label: 'Created' },
   { label: 'Requests', align: 'right' as const },
@@ -36,6 +39,13 @@ let createOpen = $state(false);
 
 // Load once on mount - NOT $effect, which would re-run whenever the load
 // mutates dashboard.loading and hammer the endpoint on any error.
+const auto = new AutoRefresh();
+
+// The whole body of the effect, so the timer is torn down both when the switch
+// goes off and when the page is left. This list is a single unpaginated read,
+// so it is always showing the head - nothing to gate on.
+$effect(() => auto.schedule(true, () => dashboard.refreshQuietly()));
+
 onMount(() => {
   dashboard.ensureLoaded();
 });
@@ -63,15 +73,7 @@ const filteredKeys = $derived.by(() => {
 
 <StatGrid>
 	<StatCard label="Total keys" value={dashboard.keys.length} />
-	<StatCard label="Active keys" value={activeCount} hint="/ {dashboard.keys.length} total">
-		{#if dashboard.keys.length > 0}
-			<div class="mt-2.5 flex gap-1">
-				{#each dashboard.keys as k (k.id)}
-					<span class="h-1 flex-1 rounded-sm {k.revoked_at === null ? 'bg-emerald-500' : 'bg-zinc-800'}"></span>
-				{/each}
-			</div>
-		{/if}
-	</StatCard>
+	<StatCard label="Active keys" value={activeCount} hint="/ {dashboard.keys.length} total" />
 </StatGrid>
 
 <TableCard
@@ -88,7 +90,10 @@ const filteredKeys = $derived.by(() => {
 	{#snippet toolbar()}
 		<FilterTabs tabs={TABS} bind:value={statusFilter} />
 		<span class="text-[12.5px] text-zinc-600">{filteredKeys.length} of {dashboard.keys.length} keys</span>
-		<div class="ml-auto">
+		<!-- One right-hand group: the automatic and the manual refresh belong
+		     beside each other, and a plain block wrapper stacked them. -->
+		<div class="ml-auto flex items-center gap-2.5">
+			<AutoRefreshToggle {auto} />
 			<ToolbarButton onclick={() => dashboard.refresh()}>
 				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
 				Refresh

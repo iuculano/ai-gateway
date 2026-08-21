@@ -1,68 +1,56 @@
-import { OpenAPIHono } from '@hono/zod-openapi';
+import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { zodExceptionHook } from '@repo/hono';
 import Routes from './health.routes';
 import Services from './health.services';
 
-const app = new OpenAPIHono({ defaultHook: zodExceptionHook });
+// Tables that are required to exist in the database for the service to be
+// considered healthy.
+const requiredTables = ['webhook_deliveries', 'webhook_outbox', 'webhooks'];
 
 /**
  * GET /livez
- * Controller to handle liveliness checks.
+ * Check if the service is alive.
  *
- * @returns
- * - 200 on success.
+ * This endpoint should be considered internal.
  */
-app.openapi(Routes.livez, async (c) => {
-  return c.json(
-    {
-      status: 'alive' as const,
-    },
-    200,
-  );
-});
-
-/**
- * GET /healthz
- * Controller to handle health checks.
- *
- * @returns
- * - 200 on success.
- */
-app.openapi(Routes.healthz, async (c) => {
-  return c.json(
-    {
-      status: 'ok' as const,
-    },
-    200,
-  );
+const livez = defineOpenAPIRoute({
+  route: Routes.livez,
+  handler: async (c) => {
+    return c.json(
+      {
+        status: 'alive' as const,
+      },
+      200,
+    );
+  },
 });
 
 /**
  * GET /readyz
- * Controller to handle readiness checks.
+ * Check if the service is ready by verifying the health of its dependencies.
  *
- * @returns
- * - 200 on success.
- * - 503 if any checks fail.
+ * This endpoint should be considered internal.
  */
-app.openapi(Routes.readyz, async (c) => {
-  // List of tables to check existence of.
-  const tables = ['logs', 'models', 'organizations', 'prompts', 'routers', 'webhooks'];
+const readyz = defineOpenAPIRoute({
+  route: Routes.readyz,
+  handler: async (c) => {
+    const checks = {
+      db: await Services.checkPostgres(),
+      db_tables: await Services.checkPostgresTables(requiredTables),
+    };
 
-  const checks = {
-    db: await Services.checkPostgres(),
-    db_tables: await Services.checkPostgresTables(tables),
-  };
+    const allHealthy = Object.values(checks).every(Boolean);
 
-  const allHealthy = Object.values(checks).every(Boolean);
-
-  return c.json(
-    {
-      status: allHealthy ? ('ok' as const) : ('degraded' as const),
-      checks,
-    },
-    allHealthy ? 200 : 503,
-  );
+    return c.json(
+      {
+        status: allHealthy ? ('ok' as const) : ('degraded' as const),
+        checks,
+      },
+      allHealthy ? 200 : 503,
+    );
+  },
 });
+
+const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([livez, readyz] as const);
 
 export default app;

@@ -8,7 +8,7 @@ import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
 import { Switch } from '$lib/components/ui/switch';
-import { formatDate, initialsOf, timeAgo, timeUntil } from '$lib/data/format';
+import { formatDate, timeAgo, timeUntil } from '$lib/data/format';
 import { SCOPE_OPTIONS } from '$lib/data/scopes';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
@@ -176,22 +176,22 @@ async function remove() {
 
 <ExpandableRow {cols} {expanded} {ontoggle}>
 	{#snippet cells()}
-		<div class="flex min-w-0 items-center gap-[11px]">
-			<div
-				class="flex size-8 flex-none items-center justify-center rounded-[9px] text-xs font-semibold"
-				style:background={revoked ? '#161618' : tone + '1f'}
-				style:color={revoked ? '#52525b' : tone}
-			>
-				{initialsOf(k.name)}
-			</div>
-			<div class="flex min-w-0 flex-col leading-[1.3]">
-				<span class="overflow-hidden text-[13.5px] font-medium text-ellipsis whitespace-nowrap">{k.name}</span>
-				<span class="overflow-hidden text-[11.5px] text-ellipsis whitespace-nowrap text-zinc-600">
-					{scopeList.length} scope{scopeList.length === 1 ? '' : 's'}
-				</span>
-			</div>
-		</div>
-		<span class="overflow-hidden text-[13px] text-ellipsis whitespace-nowrap text-zinc-400">
+		<span class="inline-flex min-w-0 items-center gap-[9px]">
+			<!-- A tone dot rather than an initials block. The 32px avatar was the
+			     tallest thing in the row and set the row height on its own; this keeps
+			     the same deterministic colour at the height logs' rows run at. -->
+			<span
+				class="size-[7px] flex-none rounded-full"
+				style:background={revoked ? '#52525b' : tone}
+			></span>
+			<span class="overflow-hidden text-[13px] font-medium text-ellipsis whitespace-nowrap">{k.name}</span>
+		</span>
+
+		<!-- Lifted out from under the name, where it made every row two lines tall. -->
+		<span class="text-[12.5px] whitespace-nowrap text-zinc-500">
+			{scopeList.length} scope{scopeList.length === 1 ? '' : 's'}
+		</span>
+		<span class="overflow-hidden text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-400">
 			{k.description ?? '—'}
 		</span>
 		<span class="text-[13px] text-zinc-400">{formatDate(k.created_at)}</span>
@@ -323,8 +323,15 @@ async function remove() {
 			</Panel>
 		</div>
 
+		<!-- Two columns, because fourteen scopes stacked singly made this panel
+		     taller than everything above it combined. The px gaps let the
+		     container's bg-line show through as hairlines in both axes, which is
+		     the same separator trick the single-column version used.
+
+		     Assumes an even scope count: an odd one leaves a cell empty and the
+		     hairline colour fills it as a solid block. Fourteen today. -->
 		<Panel title="Permissions &amp; scopes">
-			<div class="flex flex-col gap-px bg-line">
+			<div class="grid gap-px bg-line sm:grid-cols-2">
 				{#each SCOPE_OPTIONS as scope (scope.id)}
 					<div class="flex items-center gap-[11px] bg-surface-2 px-[13px] py-2.5">
 						<div class="flex-1 leading-[1.3]">

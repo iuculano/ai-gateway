@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Turn, TurnRole } from '$lib/data/conversation';
+import { ROLE_COLORS, type Turn } from '$lib/data/conversation';
 
 /**
  * The 'Simple' rendering of a stored payload: the conversation, without the
@@ -8,18 +8,42 @@ import type { Turn, TurnRole } from '$lib/data/conversation';
  * Roles are tinted rather than labelled with colour alone - the label carries
  * the meaning, the tint only makes the alternation easy to scan.
  */
-let { turns }: { turns: Turn[] } = $props();
+let {
+  turns,
+  class: className = 'max-h-72',
+  autoscroll = false,
+}: {
+  turns: Turn[];
+  /**
+   * Height override. A log row can only afford the 72 that is the default; a
+   * page whose whole purpose is the transcript can afford more.
+   */
+  class?: string;
+  /**
+   * Pins the view to the newest text as it grows, for a response still
+   * streaming in. Off by default - a stored payload is not going anywhere, and
+   * moving a reader's scroll position under them would be wrong.
+   */
+  autoscroll?: boolean;
+} = $props();
 
-const ROLE_COLORS: Record<TurnRole, string> = {
-  system: '#a1a1aa',
-  developer: '#a1a1aa',
-  user: '#60a5fa',
-  assistant: '#10b981',
-  tool: '#c084fc',
-};
+let container: HTMLDivElement | null = $state(null);
+
+// The last turn's text is read explicitly so the effect re-runs on every token
+// appended to it, not only when a whole turn is added. Without that a growing
+// message would scroll off the bottom of its own box and leave the reader
+// watching a stationary first line.
+$effect(() => {
+  if (!autoscroll || !container) return;
+
+  void turns.length;
+  void turns.at(-1)?.text;
+
+  container.scrollTop = container.scrollHeight;
+});
 </script>
 
-<div class="flex max-h-72 flex-col gap-3 overflow-auto px-[13px] py-3">
+<div bind:this={container} class="flex flex-col gap-3 overflow-auto px-[13px] py-3 {className}">
 	{#each turns as turn, index (index)}
 		<div class="flex flex-col gap-1">
 			<span

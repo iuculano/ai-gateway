@@ -123,6 +123,19 @@ export function errorHandler() {
         });
       }
 
+      // RFC 6750 requires a 401 to say WHY the credential was rejected, and the
+      // fifteen places that throw one would otherwise each have to remember.
+      // Set centrally, and only when nothing more specific was already
+      // attached above - authorize()'s insufficient_scope is the header that
+      // must survive.
+      //
+      // A BFF renewing tokens needs this to tell a token problem, which a
+      // refresh can fix, from any other reason a 401 might surface, which it
+      // cannot. Without it every 401 looks like a reason to refresh.
+      if (err.status === 401 && !response.headers.has('WWW-Authenticate')) {
+        response.headers.set('WWW-Authenticate', 'Bearer error="invalid_token"');
+      }
+
       return response;
     }
 

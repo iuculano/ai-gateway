@@ -13,20 +13,10 @@ export const apiKeys = pgTable(
     name: text().notNull(),
     description: text(),
     key_hash: text().notNull(),
-    // Write-once: set at creation, never updated. Audit attribution depends on
-    // it - audit_logs rows for an api_key actor store the KEY's id, and the
-    // accountable human is derived by joining through here at read time. Allow
-    // this to change (ownership transfer) and past events silently re-attribute
-    // to the new owner; that is the point at which audit_logs would need to
-    // record the human directly instead.
     creator_id: uuid().references(() => users.id, { onDelete: 'set null' }),
     scopes: text().notNull().default(''),
     rate_limit_requests: integer(),
     rate_limit_window: integer(),
-    // Reserved for future IP-allowlist support. This value is currently stored
-    // and returned as configuration only: authentication intentionally does not
-    // enforce it yet. Do not treat allowed_ips as a security control until that
-    // support is implemented.
     allowed_ips: cidr().array(),
     expires_at: timestamp({ withTimezone: true }),
     revoked_at: timestamp({ withTimezone: true }),

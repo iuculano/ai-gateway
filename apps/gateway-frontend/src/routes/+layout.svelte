@@ -17,7 +17,7 @@ let { children, data } = $props();
 	<Sidebar user={data.user} />
 	<div class="flex min-w-0 flex-1 flex-col">
 		<Topbar />
-		<main class="flex-1 overflow-auto px-8 pt-[26px] pb-[60px]">
+		<main class="flex-1 overflow-auto [scrollbar-gutter:stable] px-8 pt-[26px] pb-[60px]">
 			{@render children()}
 		</main>
 	</div>

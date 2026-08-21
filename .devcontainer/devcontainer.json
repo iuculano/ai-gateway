@@ -10,7 +10,7 @@
     "ghcr.io/christophermacgown/devcontainer-features/minio-client:1": {},
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {},
-    "ghcr.io/devcontainers/features/node:2": {}
+    "ghcr.io/devcontainers-extra/features/act:1": {}
   },
   "customizations": {
     "vscode": {
@@ -19,15 +19,8 @@
         "YoavBls.pretty-ts-errors",
         "oven.bun-vscode",
         "EditorConfig.EditorConfig",
-
-        // The formatter and linter the whole repo is checked against.
         "biomejs.biome",
-
-        // apps/frontend is SvelteKit. Without this there is no IntelliSense,
-        // no diagnostics, and no formatting for .svelte files at all.
         "svelte.svelte-vscode",
-
-        // TypeScript 7's native language service - much faster.
         "TypeScriptTeam.native-preview"
       ]
     }

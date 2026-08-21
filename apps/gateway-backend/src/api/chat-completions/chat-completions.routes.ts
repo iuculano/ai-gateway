@@ -59,6 +59,22 @@ const createChatCompletion = createRoute({
         },
       },
     },
+    404: {
+      description: 'The request named a prompt, or a version of one, that does not exist',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    422: {
+      description: 'The named prompt cannot be expanded - it has no active version, or variables were not supplied',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
     429: {
       description: 'Rate limit exceeded, either here or upstream',
       content: {

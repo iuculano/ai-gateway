@@ -2,6 +2,7 @@
 import { onMount } from 'svelte';
 import { listAuditLogs } from '$lib/api/audit-logs';
 import type { ListMeta } from '$lib/api/types';
+import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
@@ -11,6 +12,7 @@ import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import AuditRow from '$lib/components/audit/audit-row.svelte';
 import { toAuditEvent } from '$lib/data/audit';
 import type { AuditCategory, AuditEvent } from '$lib/data/types';
+import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
 type CatFilter = 'all' | AuditCategory;
@@ -18,12 +20,15 @@ type CatFilter = 'all' | AuditCategory;
 const PAGE_SIZE = 50;
 
 // Shared with AuditRow so the header and the rows sit in one grid.
-const COLS = '24px 118px minmax(120px,1fr) minmax(150px,1.5fr) 104px 112px 86px';
+// The Occurred column is 150px to match the logs table, which renders the same
+// 'Aug 19 · 03:38:08' cell from the same helper. At 118px it clipped.
+const COLS = '24px 150px minmax(110px,1fr) 84px minmax(150px,1.4fr) 104px 112px 86px';
 
 const COLUMNS = [
   { label: '' },
   { label: 'Occurred' },
   { label: 'Actor' },
+  { label: 'Actor type' },
   { label: 'Action' },
   { label: 'Category' },
   { label: 'IP address' },
@@ -59,6 +64,9 @@ let loading = $state(false);
 let loadingMore = $state(false);
 let error: string | null = $state(null);
 
+/** True once loadMore has appended. Auto-refresh re-reads the first page only. */
+let appended = $state(false);
+
 async function load() {
   if (loading) return;
   loading = true;
@@ -68,6 +76,7 @@ async function load() {
     const result = await listAuditLogs({ limit: PAGE_SIZE });
     events = result.data.map(toAuditEvent);
     meta = result.meta;
+    appended = false;
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to load the audit log.';
   } finally {
@@ -86,12 +95,34 @@ async function loadMore() {
     });
     events = [...events, ...result.data.map(toAuditEvent)];
     meta = result.meta;
+    appended = true;
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to load more events.';
   } finally {
     loadingMore = false;
   }
 }
+
+/**
+ * Re-reads the newest page without disturbing the table.
+ *
+ * Sets neither `loading` nor `error`, so the rows stay put and no banner opens
+ * over a table that is still readable. It throws, and AutoRefresh switches
+ * itself off on the way past.
+ */
+async function refresh() {
+  if (loading || loadingMore) return;
+
+  const result = await listAuditLogs({ limit: PAGE_SIZE });
+
+  events = result.data.map(toAuditEvent);
+  meta = result.meta;
+  appended = false;
+}
+
+const auto = new AutoRefresh();
+
+$effect(() => auto.schedule(!appended, refresh));
 
 // Load once on mount - NOT $effect, which would re-run whenever the load
 // mutates loading state and hammer the endpoint on any error.
@@ -154,6 +185,14 @@ const filtered = $derived.by(() => {
 		<span class="text-[12.5px] text-zinc-600">
 			{filtered.length} of {events.length} events{meta?.more_data ? ' loaded' : ''}
 		</span>
+
+		<span class="ml-auto"></span>
+		<AutoRefreshToggle {auto} active={!appended} pausedLabel="paused past page 1" />
+
+		<ToolbarButton disabled={loading} onclick={load}>
+			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			Refresh
+		</ToolbarButton>
 	{/snippet}
 
 	{#each filtered as event (event.id)}

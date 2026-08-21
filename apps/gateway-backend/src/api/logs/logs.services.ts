@@ -570,13 +570,20 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
  * @returns
  * The id of the new log.
  */
-async function startLog(organizationId: string, entry: { model: string; provider: string }): Promise<string> {
+async function startLog(
+  organizationId: string,
+  entry: { model: string; provider: string; tags?: Record<string, string> },
+): Promise<string> {
   const [row] = await db
     .insert(logs)
     .values({
       organization_id: organizationId,
       model: entry.model,
       provider: entry.provider,
+      // Written at open rather than at close, because this is what webhook
+      // fan-out matches on and the column is nullable - a log that never got
+      // tags is distinguishable from one tagged with nothing.
+      tags: entry.tags,
       status: 'incomplete',
     })
     .returning({ id: logs.id });

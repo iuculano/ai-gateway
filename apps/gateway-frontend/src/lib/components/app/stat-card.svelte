@@ -1,19 +1,23 @@
 <script lang="ts">
-import type { Snippet } from 'svelte';
-
 /**
  * One figure in the strip above a table.
  *
  * The three pages had three different cards - 20px / 25px / 27px values, label
  * above on two and below on a third, and three paddings. This is the settled
  * shape: label on top, figure beneath, optional hint alongside it.
+ *
+ * Deliberately closed to extra content. StatGrid stretches every card in a row
+ * to the tallest, so one card carrying something extra silently makes every
+ * card on THAT page taller than the same card on every other page - which is
+ * exactly the drift this component exists to remove. The keys page had a bar
+ * strip under its figure and cost all four of its cards 14px. Anything that
+ * varies the height belongs beside the grid, not inside a card.
  */
 let {
   label,
   value,
   hint,
   accent,
-  children,
 }: {
   label: string;
   /** Pre-formatted. Callers own their own units and precision. */
@@ -22,8 +26,6 @@ let {
   hint?: string;
   /** Optional swatch colour, for cards that carry a status meaning. */
   accent?: string;
-  /** Anything that belongs under the figure, like the keys page's bar strip. */
-  children?: Snippet;
 } = $props();
 </script>
 
@@ -40,5 +42,4 @@ let {
 			<span class="mb-px text-[13px] text-zinc-600">{hint}</span>
 		{/if}
 	</div>
-	{@render children?.()}
 </div>

@@ -7,12 +7,6 @@ const livez = createSchema({
   }),
 });
 
-const healthz = createSchema({
-  response: z.object({
-    status: z.literal('ok'),
-  }),
-});
-
 const readyz = createSchema({
   response: z.object({
     status: z.union([z.literal('ok'), z.literal('degraded')]),
@@ -25,6 +19,5 @@ const readyz = createSchema({
 
 export default {
   livez,
-  healthz,
   readyz,
 };

@@ -36,7 +36,17 @@ const loggerOptions: LoggerOptions = {
   timestamp: pino.stdTimeFunctions.isoTime,
 };
 
-if (nodeEnv === 'production') {
+// 'test' takes the plain logger for the same reason production does, but for a
+// different problem: pino.transport() spawns a worker thread through
+// thread-stream, and when the process ends that worker's exit surfaces as an
+// unhandled 'error' event. Bun's test runner counts that as a failure AND tears
+// the run down where it stands, so any test file that had not registered yet
+// dies with "Cannot call describe() after the test run has completed" - four
+// files across the workspace never ran at all.
+//
+// Nobody reads pretty-printed output from a test run, so there is nothing to
+// lose by writing plain JSON there.
+if (nodeEnv === 'production' || nodeEnv === 'test') {
   logger = pino(loggerOptions);
 } else {
   logger = pino(
@@ -49,7 +59,13 @@ if (nodeEnv === 'production') {
             colorize: true,
             translateTime: 'SYS:HH:MM:ss.l',
             // The service identity is noise on every dev line.
-            ignore: 'service.name,service.version,deployment.environment',
+            //
+            // The dots are escaped because pino-pretty reads an unescaped dot
+            // as a path separator: 'service.name' means "the `name` field
+            // inside `service`", which is not what these flat, dotted keys are.
+            // Unescaped, this option silently matched nothing and every dev
+            // line carried all three fields anyway.
+            ignore: 'service\\.name,service\\.version,deployment\\.environment',
           },
 
           // For now, just use the same log level

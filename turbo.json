@@ -3,15 +3,29 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".svelte-kit/**", "build/**"]
+      "outputs": [".svelte-kit/**", "build/**", "dist/**"]
     },
     "check-types": {
       "dependsOn": ["^check-types"]
     },
-    "test": {
+    "dev": {
+      "persistent": true,
+      "cache": false
+    },
+    "start": {
+      "persistent": true,
+      "cache": false
+    },
+    "test:unit": {
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"],
       "outputs": []
     },
+    "test:unit:coverage": {
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"],
+      "outputs": ["coverage/**"]
+    },
     "test:integration": {
+      "dependsOn": ["test:db:setup"],
       "cache": false,
       "env": [
         "POSTGRES_TEST_ADMIN_CONNECTION_STRING",
@@ -24,9 +38,9 @@
         "S3_TEST_SECRET_ACCESS_KEY"
       ]
     },
-    "dev": {
-      "persistent": true,
-      "cache": false
+    "test:db:setup": {
+      "cache": false,
+      "env": ["POSTGRES_TEST_ADMIN_CONNECTION_STRING"]
     },
     "db:generate": {
       "cache": false
@@ -37,14 +51,6 @@
     },
     "db:push": {
       "cache": false
-    },
-    "synth": {
-      "inputs": ["src/**/*.ts", "cdk8s.yaml"],
-      "outputs": ["manifests/**"]
-    },
-    "//#lint": {
-      "inputs": ["apps/**/*.ts", "apps/**/*.svelte", "packages/**/*.ts", "biome.json"],
-      "outputs": []
     }
   }
 }

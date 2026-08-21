@@ -125,8 +125,6 @@ const getGuardrail = defineOpenAPIRoute({
 
     const result = await Services.getGuardrail(params.id);
 
-    // Nothing catches the service call: a rejected promise is a malfunction,
-    // and the global error handler is what turns those into a sanitized 500.
     return result.match(
       (guardrail) => c.json(guardrail, 200),
       (failure) => {

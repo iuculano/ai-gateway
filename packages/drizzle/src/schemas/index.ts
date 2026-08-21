@@ -4,5 +4,6 @@ export * from './guardrails';
 export * from './logs';
 export * from './models';
 export * from './organizations';
+export * from './prompts';
 export * from './users';
 export * from './webhooks';

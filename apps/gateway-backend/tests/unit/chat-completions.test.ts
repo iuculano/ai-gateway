@@ -4,7 +4,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionHeaders,
 } from '../../src/api/chat-completions/chat-completions.schemas';
-import { callerFixture, installModuleMocks, LOG_ID, resetDoubles } from './doubles';
+import { callerFixture, installModuleMocks, LOG_ID, logCapture, resetDoubles } from './doubles';
 
 await installModuleMocks();
 
@@ -83,35 +83,6 @@ mock.module('ai', () => ({
   },
 }));
 
-const logState = {
-  started: [] as Array<{ organizationId: string; entry: unknown }>,
-  completed: [] as Array<{ organizationId: string; id: string; entry: Record<string, unknown> }>,
-  failed: [] as Array<{ organizationId: string; id: string; entry: Record<string, unknown> }>,
-
-  reset() {
-    logState.started = [];
-    logState.completed = [];
-    logState.failed = [];
-  },
-};
-
-mock.module('../../src/api/logs/logs.services', () => ({
-  default: {
-    async startLog(organizationId: string, entry: unknown) {
-      logState.started.push({ organizationId, entry });
-      return LOG_ID;
-    },
-
-    async completeLog(organizationId: string, id: string, entry: Record<string, unknown>) {
-      logState.completed.push({ organizationId, id, entry });
-    },
-
-    async failLog(organizationId: string, id: string, entry: Record<string, unknown>) {
-      logState.failed.push({ organizationId, id, entry });
-    },
-  },
-}));
-
 const { runWithCaller } = await import('@repo/hono');
 const { default: Services } = await import('../../src/api/chat-completions/chat-completions.services');
 
@@ -165,7 +136,9 @@ function body(overrides: Partial<ChatCompletionBody> = {}): ChatCompletionBody {
 beforeEach(() => {
   resetDoubles();
   aiState.reset();
-  logState.reset();
+  // This suite watches the log lifecycle rather than running it. Every other
+  // suite leaves passthrough on and gets the real module.
+  logCapture.passthrough = false;
   rateLimitState.result = {
     limit: 2,
     isLimited: false,
@@ -215,13 +188,13 @@ test('a non-streaming completion maps provider output and closes its inference l
     stopSequences: ['END'],
     maxRetries: 0,
   });
-  expect(logState.started).toEqual([
+  expect(logCapture.started).toEqual([
     {
       organizationId: callerFixture.organization.id,
       entry: { model: 'test-model', provider: 'openai' },
     },
   ]);
-  expect(logState.completed[0]).toMatchObject({
+  expect(logCapture.completed[0]).toMatchObject({
     organizationId: callerFixture.organization.id,
     id: LOG_ID,
     entry: {
@@ -231,7 +204,7 @@ test('a non-streaming completion maps provider output and closes its inference l
       response: { id: responseMetadata.id },
     },
   });
-  expect(logState.failed).toHaveLength(0);
+  expect(logCapture.failed).toHaveLength(0);
 });
 
 test('a provider timeout becomes a 504 and marks the open log failed', async () => {
@@ -241,8 +214,8 @@ test('a provider timeout becomes a 504 and marks the open log failed', async () 
     runWithCaller(callerFixture, () => Services.createChatCompletion(headers(), body())),
   ).rejects.toMatchObject({ status: 504 });
 
-  expect(logState.completed).toHaveLength(0);
-  expect(logState.failed[0]).toMatchObject({
+  expect(logCapture.completed).toHaveLength(0);
+  expect(logCapture.failed[0]).toMatchObject({
     organizationId: callerFixture.organization.id,
     id: LOG_ID,
     entry: { request: { model: 'openai/test-model' } },
@@ -257,7 +230,7 @@ test('an unsupported response format is rejected before provider or logging work
   ).rejects.toMatchObject({ status: 400 });
 
   expect(aiState.generateCalls).toHaveLength(0);
-  expect(logState.started).toHaveLength(0);
+  expect(logCapture.started).toHaveLength(0);
 });
 
 test('a stream emits OpenAI chunks and stores the assembled completion after it drains', async () => {
@@ -288,11 +261,11 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
   expect(chunks[3]).toMatchObject({ choices: [{ delta: {}, finish_reason: 'length' }] });
   expect(chunks[4]).toMatchObject({ choices: [], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } });
 
-  expect(logState.completed[0]?.entry.response).toMatchObject({
+  expect(logCapture.completed[0]?.entry.response).toMatchObject({
     choices: [{ message: { content: 'Hello stream' }, finish_reason: 'length' }],
     usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
   });
-  expect(logState.failed).toHaveLength(0);
+  expect(logCapture.failed).toHaveLength(0);
 });
 
 test('the HTTP handler exposes successful fixed-window quota headers', async () => {

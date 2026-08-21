@@ -1,6 +1,7 @@
 import { mock } from 'bun:test';
 import type { apiKeys, logs, models, webhooks } from '@repo/drizzle/schemas';
 import type { Caller } from '@repo/hono';
+import { createDatabaseDouble, failsWith, KEY_ID, ORGANIZATION_ID, rows, type Step, USER_ID } from '@repo/test-helpers';
 
 /**
  * The stand-ins the unit tier runs against.
@@ -12,126 +13,13 @@ import type { Caller } from '@repo/hono';
 
 // --- database ----------------------------------------------------------------
 
-/** One scripted answer to one database round trip. */
-export type Step = { rows: unknown[] } | { error: Error };
+export type { Step };
 
-/** A query that answers with these rows. Pass nothing for an empty result. */
-export function rows(...values: unknown[]): Step {
-  return { rows: values };
-}
+export { failsWith, rows };
 
-/** A query that rejects - the channel every unexpected failure travels down. */
-export function failsWith(error: Error): Step {
-  return { error };
-}
+const { database, db: scopedDb } = createDatabaseDouble();
 
-export const database = {
-  steps: [] as Step[],
-  consumed: 0,
-
-  /** One entry per transaction opened, in order, recording how it ended. */
-  transactions: [] as { committed: boolean; rolledBack: boolean }[],
-
-  /**
-   * Every builder method the services called, with its arguments.
-   *
-   * What a query was ASKED to do, as opposed to what it was told in reply -
-   * the only way to assert on the values a write actually carried.
-   */
-  calls: [] as { method: string; args: unknown[] }[],
-
-  /**
-   * The answers this test's queries get, in the order they are issued.
-   *
-   * A query beyond the end of the script rejects rather than returning nothing:
-   * an unscripted call is the test being wrong, and an empty result would read
-   * as a deliberate "no rows" and quietly pass.
-   */
-  script(...steps: Step[]) {
-    database.steps = steps;
-    database.consumed = 0;
-    database.transactions = [];
-    database.calls = [];
-  },
-
-  reset() {
-    database.script();
-  },
-};
-
-function nextRows(): Promise<unknown[]> {
-  const step = database.steps[database.consumed++];
-
-  if (!step) {
-    return Promise.reject(new Error(`Unscripted database call (query ${database.consumed})`));
-  }
-
-  if ('error' in step) {
-    return Promise.reject(step.error);
-  }
-
-  return Promise.resolve(step.rows);
-}
-
-/**
- * A query builder that accepts any chain and resolves to the next scripted
- * answer.
- *
- * Every method returns the builder itself, so .select().from().where() and
- * .update().set().where().returning() both work without naming them.
- */
-function queryBuilder(): unknown {
-  const builder: unknown = new Proxy(
-    {},
-    {
-      get(_target, property) {
-        if (property === 'then') {
-          return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) =>
-            nextRows().then(resolve, reject);
-        }
-
-        // Symbols are the runtime asking questions (Symbol.toStringTag and
-        // friends), not the service calling a query method.
-        if (typeof property === 'symbol') {
-          return undefined;
-        }
-
-        return (...args: unknown[]) => {
-          database.calls.push({ method: property, args });
-          return builder;
-        };
-      },
-    },
-  );
-
-  return builder;
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: a stand-in for drizzle's builder, which is not worth reproducing in types
-const scopedDb: any = {
-  select: () => queryBuilder(),
-  insert: () => queryBuilder(),
-  update: () => queryBuilder(),
-  delete: () => queryBuilder(),
-  execute: (...args: unknown[]) => {
-    database.calls.push({ method: 'execute', args });
-    return nextRows();
-  },
-
-  async transaction(callback: (tx: unknown) => Promise<unknown>) {
-    const record = { committed: false, rolledBack: false };
-    database.transactions.push(record);
-
-    try {
-      const value = await callback(scopedDb);
-      record.committed = true;
-      return value;
-    } catch (error) {
-      record.rolledBack = true;
-      throw error;
-    }
-  },
-};
+export { database };
 
 // --- redis -------------------------------------------------------------------
 
@@ -274,6 +162,71 @@ function buildAuditLogServices(real: RealAuditLogServices) {
 
 type RealAuditLogServices = typeof import('../../src/api/audit-logs/audit-logs.services')['default'];
 
+// --- log lifecycle -----------------------------------------------------------
+
+/**
+ * The inference path's writes to logs.services, captured instead of performed.
+ *
+ * Passthrough by default, unlike `audit`. Most suites - logs.test.ts above all -
+ * want the real functions, and only the chat-completions suite wants to watch
+ * them without running them. Standing them in unconditionally is what forced
+ * this package onto --isolate: mock.module is process-wide, so one suite's
+ * three-function stand-in became every suite's entire logs module.
+ */
+export const logCapture = {
+  started: [] as { organizationId: string; entry: unknown }[],
+  completed: [] as { organizationId: string; id: string; entry: Record<string, unknown> }[],
+  failed: [] as { organizationId: string; id: string; entry: Record<string, unknown> }[],
+
+  /** True runs the real implementation; false records the call and returns. */
+  passthrough: true,
+
+  reset() {
+    logCapture.started = [];
+    logCapture.completed = [];
+    logCapture.failed = [];
+    logCapture.passthrough = true;
+  },
+};
+
+type RealLogServices = typeof import('../../src/api/logs/logs.services')['default'];
+
+/** Same copy-then-wrap shape as buildAuditLogServices, for the same reason. */
+function buildLogServices(real: RealLogServices) {
+  return {
+    ...real,
+
+    async startLog(organizationId: string, entry: never) {
+      if (logCapture.passthrough) {
+        return real.startLog(organizationId, entry);
+      }
+
+      logCapture.started.push({ organizationId, entry });
+
+      // Read here rather than in the object literal above: LOG_ID is declared
+      // further down this file, so an initializer would hit the temporal dead
+      // zone. A function body is evaluated at call time and does not.
+      return LOG_ID;
+    },
+
+    async completeLog(organizationId: string, id: string, entry: never) {
+      if (logCapture.passthrough) {
+        return real.completeLog(organizationId, id, entry);
+      }
+
+      logCapture.completed.push({ organizationId, id, entry });
+    },
+
+    async failLog(organizationId: string, id: string, entry: never) {
+      if (logCapture.passthrough) {
+        return real.failLog(organizationId, id, entry);
+      }
+
+      logCapture.failed.push({ organizationId, id, entry });
+    },
+  };
+}
+
 // --- object storage ----------------------------------------------------------
 
 export const objects = {
@@ -376,6 +329,8 @@ export async function installModuleMocks() {
   const actualHono = await import('@repo/hono');
   const realAuditLogServices = { ...(await import('../../src/api/audit-logs/audit-logs.services')).default };
   const auditLogServices = buildAuditLogServices(realAuditLogServices);
+  const realLogServices = { ...(await import('../../src/api/logs/logs.services')).default };
+  const logServices = buildLogServices(realLogServices);
 
   mock.module('@repo/drizzle', () => ({
     // Everything real by default - the condition builders included, since
@@ -426,6 +381,7 @@ export async function installModuleMocks() {
   }));
 
   mock.module('../../src/api/audit-logs/audit-logs.services', () => ({ default: auditLogServices }));
+  mock.module('../../src/api/logs/logs.services', () => ({ default: logServices }));
 }
 
 function notStubbed(name: string) {
@@ -439,6 +395,13 @@ export function resetDoubles() {
   cache.reset();
   audit.reset();
   objects.reset();
+  logCapture.reset();
+
+  // The caller is a shared mutable object and suites reassign its scopes to
+  // exercise refusals. Without restoring it, a grant made by one file is still
+  // in force in the next one - which under --isolate never showed, and without
+  // it made an api-keys assertion fail because a prompts suite had run first.
+  callerFixture.permissions = { scopes: [...BASE_CALLER_SCOPES] };
 }
 
 // --- fixtures ----------------------------------------------------------------
@@ -455,9 +418,8 @@ export function resetDoubles() {
  */
 type RowOverrides<TRow> = Partial<Record<keyof TRow, unknown>>;
 
-export const ORGANIZATION_ID = '01912d3f-9b4a-7c3d-8e2f-000000000001';
-export const USER_ID = '01912d3f-9b4a-7c3d-8e2f-000000000002';
-export const KEY_ID = '01912d3f-9b4a-7c3d-8e2f-000000000003';
+export { KEY_ID, ORGANIZATION_ID, USER_ID };
+
 export const WEBHOOK_ID = '01912d3f-9b4a-7c3d-8e2f-000000000005';
 export const MODEL_ID = '01912d3f-9b4a-7c3d-8e2f-000000000006';
 export const LOG_ID = '01912d3f-9b4a-7c3d-8e2f-000000000007';
@@ -511,12 +473,24 @@ export function webhookRow(overrides: RowOverrides<typeof webhooks.$inferSelect>
 export function modelRow(overrides: RowOverrides<typeof models.$inferSelect> = {}) {
   return {
     id: MODEL_ID,
+    source: 'builtin',
     name: 'gpt-4-turbo',
     provider: 'openai',
+    display_name: 'GPT-4 Turbo',
+    status: 'available',
     cost_input: '0.000010000000',
     cost_output: '0.000030000000',
+    cost_cache_read: null,
+    context_limit: 128000,
+    attachment: false,
+    reasoning: false,
+    tool_call: true,
+    structured_output: false,
     config: {},
     tags: {},
+    organization_id: null,
+    delisted_at: null,
+    synced_at: new Date('2026-01-01T00:00:00.000Z'),
     created_at: new Date('2026-01-01T00:00:00.000Z'),
     updated_at: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -560,3 +534,6 @@ export const callerFixture: Caller = {
   permissions: { scopes: ['api-keys:read', 'api-keys:write'] },
   request: {},
 };
+
+/** The scopes resetDoubles() puts back, captured before any suite widens them. */
+const BASE_CALLER_SCOPES: readonly string[] = Object.freeze([...callerFixture.permissions.scopes]);

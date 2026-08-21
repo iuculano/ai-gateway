@@ -10,7 +10,7 @@ services:
 
 ```bash
 cd packages/object-storage
-bun run test
+bun run test:unit
 ```
 
 ## Integration tests

@@ -4,7 +4,27 @@ import { dashboard } from '$lib/state/dashboard.svelte';
 
 let searchEl: HTMLInputElement | null = $state(null);
 
-const crumbLabel = $derived(page.url.pathname.startsWith('/audit') ? 'Audit log' : 'API Keys');
+/**
+ * The breadcrumb and the search box's placeholder, per section.
+ *
+ * A table rather than the ternary this used to be: that resolved every path
+ * that was not /audit to 'API Keys', so /logs and /analytics had been sitting
+ * under the wrong crumb, and a fourth section would have made a third branch.
+ * Keys first, since it is also the fallback for anything unlisted.
+ */
+const SECTIONS = [
+  { prefix: '/keys', label: 'API Keys', placeholder: 'Search keys…' },
+  { prefix: '/logs', label: 'Logs', placeholder: 'Search logs…' },
+  { prefix: '/models', label: 'Models', placeholder: 'Search providers and models…' },
+  { prefix: '/overview', label: 'Overview', placeholder: 'Search…' },
+  { prefix: '/playground', label: 'Playground', placeholder: 'Search…' },
+  { prefix: '/analytics', label: 'Analytics', placeholder: 'Search…' },
+  { prefix: '/prompts', label: 'Prompts', placeholder: 'Search prompts…' },
+  { prefix: '/webhooks', label: 'Webhooks', placeholder: 'Search webhooks…' },
+  { prefix: '/audit', label: 'Audit log', placeholder: 'Search events…' },
+];
+
+const section = $derived(SECTIONS.find((s) => page.url.pathname.startsWith(s.prefix)) ?? SECTIONS[0]);
 
 function onKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -22,7 +42,7 @@ function onKeydown(e: KeyboardEvent) {
 	<div class="flex items-center gap-[7px] text-[13px] text-zinc-500">
 		<span>Developers</span>
 		<span class="text-zinc-700">/</span>
-		<span class="font-medium text-zinc-200">{crumbLabel}</span>
+		<span class="font-medium text-zinc-200">{section.label}</span>
 	</div>
 	<div class="ml-auto flex items-center gap-3">
 		<div
@@ -32,7 +52,7 @@ function onKeydown(e: KeyboardEvent) {
 			<input
 				bind:this={searchEl}
 				bind:value={dashboard.search}
-				placeholder="Search keys…"
+				placeholder={section.placeholder}
 				class="w-full bg-transparent text-[13px] tracking-[-0.01em] text-zinc-200 outline-none placeholder:text-zinc-600"
 			/>
 			<span class="rounded border border-zinc-800 px-[5px] py-px text-[10.5px] text-zinc-600">⌘K</span>

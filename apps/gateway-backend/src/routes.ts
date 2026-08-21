@@ -6,6 +6,7 @@ import chatCompletionHandlers from './api/chat-completions/chat-completions.hand
 import guardrailHandlers from './api/guardrails/guardrails.handlers';
 import logHandlers from './api/logs/logs.handlers';
 import modelHandlers from './api/models/models.handlers';
+import promptHandlers from './api/prompts/prompts.handlers';
 import webhookHandlers from './api/webhooks/webhooks.handlers';
 
 /**
@@ -20,6 +21,7 @@ export const apiRoutes = new OpenAPIHono()
   .route('/', guardrailHandlers)
   .route('/', logHandlers)
   .route('/', modelHandlers)
+  .route('/', promptHandlers)
   .route('/', webhookHandlers);
 
 export type ApiType = typeof apiRoutes;

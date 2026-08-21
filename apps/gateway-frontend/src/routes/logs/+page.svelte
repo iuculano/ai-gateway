@@ -1,8 +1,8 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { toast } from 'svelte-sonner';
 import { listLogs } from '$lib/api/logs';
 import type { Log, LogListMeta } from '$lib/api/types';
+import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
@@ -11,8 +11,8 @@ import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import type { PayloadView } from '$lib/components/logs/log-row.svelte';
 import LogRow from '$lib/components/logs/log-row.svelte';
-import { Switch } from '$lib/components/ui/switch';
 import { fmt, fmtCostTotal, fmtLatency } from '$lib/data/format';
+import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
 type StatusFilter = 'all' | 'success' | 'errors';
@@ -44,15 +44,6 @@ const VIEW_TABS = [
   { id: 'json' as const, label: 'JSON' },
 ];
 
-/**
- * How often auto-refresh re-reads the newest page.
- *
- * The endpoint is a cursor-paginated database read, so this is cheap - but it
- * is still one request per tab per tick, which is why it is opt-in rather than
- * always on.
- */
-const REFRESH_INTERVAL_MS = 10_000;
-
 let tab: StatusFilter = $state('all');
 let expandedLog: string | null = $state(null);
 
@@ -60,8 +51,7 @@ let expandedLog: string | null = $state(null);
 // moves between rows. Defaults to the conversation, which is what the panel is
 // being opened to see most of the time; JSON is one click away when it isn't.
 let payloadView: PayloadView = $state('simple');
-let autoRefresh = $state(false);
-let refreshing = $state(false);
+const auto = new AutoRefresh();
 
 let logs: Log[] = $state([]);
 let meta: LogListMeta | null = $state(null);
@@ -95,11 +85,14 @@ let cursors: string[] = $state([]);
  * every few seconds.
  */
 async function load({ index = pageIndex, silent = false }: { index?: number; silent?: boolean } = {}) {
-  if (loading || refreshing) return;
+  // Deliberately does NOT test auto.refreshing. AutoRefresh sets that flag
+  // before it calls this, so testing it here made every tick return without
+  // fetching - the timer fired and nothing happened. Overlapping ticks are
+  // already prevented inside AutoRefresh; this only has to guard against
+  // colliding with a load the reader started.
+  if (loading) return;
 
-  if (silent) {
-    refreshing = true;
-  } else {
+  if (!silent) {
     loading = true;
     error = null;
   }
@@ -120,18 +113,17 @@ async function load({ index = pageIndex, silent = false }: { index?: number; sil
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load logs.';
 
-    // A background refresh that fails must not throw away rows the user is
-    // reading, and must not retry into the same failure every few seconds. It
-    // keeps the stale data, says so once, and switches itself off.
+    // A background refresh that fails must not throw away the rows the reader
+    // is looking at, and must not retry into the same failure every few
+    // seconds. Rethrown so AutoRefresh keeps the stale data, says so once, and
+    // switches itself off.
     if (silent && logs.length > 0) {
-      autoRefresh = false;
-      toast.error(`Auto-refresh stopped: ${message}`);
-    } else {
-      error = message;
+      throw err instanceof Error ? err : new Error(message);
     }
+
+    error = message;
   } finally {
     loading = false;
-    refreshing = false;
   }
 }
 
@@ -169,12 +161,7 @@ onMount(() => {
 // rows however much traffic lands meanwhile. Ticking there would spend a request
 // per interval to redraw identical data. Reading pageIndex here also
 // re-subscribes the effect, so the timer restarts on the page that needs it.
-$effect(() => {
-  if (!autoRefresh || pageIndex !== 0) return;
-
-  const timer = setInterval(() => load({ silent: true }), REFRESH_INTERVAL_MS);
-  return () => clearInterval(timer);
-});
+$effect(() => auto.schedule(pageIndex === 0, () => load({ silent: true })));
 
 // Stats are computed over the CURRENT PAGE, not the whole table, and the labels
 // say so. There is no aggregate endpoint yet, and captioning a sample of 20 rows
@@ -266,29 +253,12 @@ const filtered = $derived.by(() => {
 			<FilterTabs tabs={VIEW_TABS} bind:value={payloadView} />
 		</span>
 
-		<label class="flex items-center gap-2 text-[12.5px] text-zinc-500">
-			<Switch
-				checked={autoRefresh}
-				onCheckedChange={(on) => (autoRefresh = on)}
-				class="h-5 w-9 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
-			/>
-			<span class="flex items-center gap-[7px]">
-				Auto-refresh
-				{#if autoRefresh && pageIndex === 0}
-					<!-- Solid while idle, pulsing during a fetch, so the switch is visibly
-					     doing something on a table that may not change between ticks. -->
-					<span
-						class="size-[5px] rounded-full bg-emerald-500"
-						class:animate-pulse={refreshing}
-						title="Every {REFRESH_INTERVAL_MS / 1000}s"
-					></span>
-				{:else if autoRefresh}
-					<!-- Left on, but nothing to tail: new logs only ever arrive on page 1.
-					     Saying so beats a live indicator that never moves. -->
-					<span class="text-zinc-600">· paused off page 1</span>
-				{/if}
-			</span>
-		</label>
+		<AutoRefreshToggle {auto} active={pageIndex === 0} pausedLabel="paused off page 1" />
+
+		<ToolbarButton disabled={loading} onclick={() => load()}>
+			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			Refresh
+		</ToolbarButton>
 	{/snippet}
 
 	{#each filtered as log (log.id)}

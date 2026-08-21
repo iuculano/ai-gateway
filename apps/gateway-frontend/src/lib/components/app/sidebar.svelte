@@ -2,6 +2,8 @@
 import { page } from '$app/state';
 import { initialsOf } from '$lib/data/format';
 import { dashboard } from '$lib/state/dashboard.svelte';
+import { prompts } from '$lib/state/prompts.svelte';
+import { webhooks } from '$lib/state/webhooks.svelte';
 
 let { user }: { user?: { name?: string; email?: string; username?: string } } = $props();
 
@@ -14,6 +16,15 @@ const itemClass = (active: boolean) =>
     ? 'flex w-full items-center gap-2.5 rounded-[7px] bg-surface-5 px-2.5 py-[7px] font-medium text-zinc-50 shadow-[inset_0_0_0_1px_var(--color-line-strong)]'
     : 'flex w-full items-center gap-2.5 rounded-[7px] px-2.5 py-[7px] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200';
 </script>
+
+{#snippet section(label: string)}
+	<!-- The gap above a heading is what separates one group from the one before
+	     it - there is no divider doing that job - so this leads with more space
+	     than it trails. -->
+	<div class="px-2.5 pt-4 pb-[5px] text-[10.5px] font-medium tracking-[.06em] text-zinc-600 uppercase">
+		{label}
+	</div>
+{/snippet}
 
 <aside class="flex w-[236px] flex-none flex-col border-r border-line bg-surface-1">
 	<div class="flex h-[57px] flex-none items-center gap-2.5 border-b border-line px-[18px]">
@@ -29,14 +40,47 @@ const itemClass = (active: boolean) =>
 	</div>
 
 	<nav class="flex flex-1 flex-col gap-px overflow-auto p-3">
-		<div class="px-2.5 pt-2 pb-[5px] text-[10.5px] font-medium tracking-[.06em] text-zinc-600 uppercase">
-			Platform
-		</div>
-
-		<button type="button" class={itemClass(false)}>
+		<a href="/overview" class={itemClass(isActive('/overview'))}>
 			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="9" y="9" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /></svg>
 			<span>Overview</span>
-		</button>
+		</a>
+
+		{@render section('Build')}
+
+		<a href="/playground" class={itemClass(isActive('/playground'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M6.2 5.2L9.4 8l-3.2 2.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /></svg>
+			<span>Playground</span>
+		</a>
+		<a href="/prompts" class={itemClass(isActive('/prompts'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="1.8" width="11.6" height="12.4" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.9 5.4h6.2M4.9 8h6.2M4.9 10.6h3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<span>Prompts</span>
+			{#if prompts.list.rows.length > 0}
+				<span class="ml-auto rounded-[5px] bg-emerald-500/12 px-1.5 py-px text-[10.5px] font-medium text-emerald-500">
+					{prompts.list.rows.length}
+				</span>
+			{/if}
+		</a>
+		<a href="/models" class={itemClass(isActive('/models'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.8l6 3-6 3-6-3 6-3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /><path d="M2 8l6 3 6-3M2 11.2l6 3 6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			<span>Models</span>
+		</a>
+
+		{@render section('Monitor')}
+
+		<a href="/logs" class={itemClass(isActive('/logs'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.8 8h2.6l1.5-3.6 2.3 7.2 1.6-4.3 1.1 2.1h3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			<span>Logs</span>
+		</a>
+		<a href="/analytics" class={itemClass(isActive('/analytics'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 14V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><rect x="4" y="8" width="2.6" height="4.5" rx=".8" fill="currentColor" /><rect x="7.7" y="5" width="2.6" height="7.5" rx=".8" fill="currentColor" /><rect x="11.4" y="2.5" width="2.6" height="10" rx=".8" fill="currentColor" /></svg>
+			<span>Analytics</span>
+		</a>
+		<a href="/audit" class={itemClass(isActive('/audit'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.3 6h7.4M4.3 8.4h7.4M4.3 10.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<span>Audit Log</span>
+		</a>
+
+		{@render section('Manage')}
 
 		<a href="/keys" class={itemClass(isActive('/keys'))}>
 			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="5" cy="8" r="3" stroke="#10b981" stroke-width="1.4" /><path d="M7.8 8H14.5M11.5 8v2.4M13.4 8v1.8" stroke="#10b981" stroke-width="1.4" stroke-linecap="round" /></svg>
@@ -47,31 +91,27 @@ const itemClass = (active: boolean) =>
 				</span>
 			{/if}
 		</a>
-
-		<a href="/logs" class={itemClass(isActive('/logs'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.8 8h2.6l1.5-3.6 2.3 7.2 1.6-4.3 1.1 2.1h3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			<span>Logs</span>
-		</a>
-
-		<a href="/analytics" class={itemClass(isActive('/analytics'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 14V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><rect x="4" y="8" width="2.6" height="4.5" rx=".8" fill="currentColor" /><rect x="7.7" y="5" width="2.6" height="7.5" rx=".8" fill="currentColor" /><rect x="11.4" y="2.5" width="2.6" height="10" rx=".8" fill="currentColor" /></svg>
-			<span>Analytics</span>
-		</a>
-
 		<button type="button" class={itemClass(false)}>
 			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.4" /><path d="M8 8L11 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
 			<span>Rate Limits</span>
 		</button>
-
-		<a href="/audit" class={itemClass(isActive('/audit'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.3 6h7.4M4.3 8.4h7.4M4.3 10.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-			<span>Audit Log</span>
+		<a href="/webhooks" class={itemClass(isActive('/webhooks'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="3.7" r="2.2" stroke="currentColor" stroke-width="1.4" /><circle cx="3.6" cy="11.8" r="2.2" stroke="currentColor" stroke-width="1.4" /><circle cx="12.4" cy="11.8" r="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M6.9 5.6L4.7 9.9M9.1 5.6l2.2 4.3M5.8 11.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<span>Webhooks</span>
+			<!-- Pending rather than a total, and only when there are any: a queue
+			     that is draining normally sits at zero, so a figure here means work
+			     is waiting. Zero while the page has never been opened, same as the
+			     keys count above - neither store loads until its page does. -->
+			{#if webhooks.outbox.rows.length > 0}
+				<span class="ml-auto rounded-[5px] bg-amber-500/12 px-1.5 py-px text-[10.5px] font-medium text-amber-500">
+					{webhooks.outbox.rows.length}
+				</span>
+			{/if}
 		</a>
-
-		<button type="button" class={itemClass(false)}>
+		<a href="/settings" class={itemClass(isActive('/settings'))}>
 			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.4" stroke="currentColor" stroke-width="1.4" /><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
 			<span>Settings</span>
-		</button>
+		</a>
 	</nav>
 
 	<div class="border-t border-line p-3">

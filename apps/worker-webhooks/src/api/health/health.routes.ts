@@ -16,21 +16,6 @@ const livez = createRoute({
   },
 });
 
-const healthz = createRoute({
-  method: 'get' as const,
-  path: '/healthz',
-  responses: {
-    200: {
-      description: 'Service health status',
-      content: {
-        'application/json': {
-          schema: Schemas.healthz.response,
-        },
-      },
-    },
-  },
-});
-
 const readyz = createRoute({
   method: 'get' as const,
   path: '/readyz',
@@ -56,6 +41,5 @@ const readyz = createRoute({
 
 export default {
   livez,
-  healthz,
   readyz,
 };

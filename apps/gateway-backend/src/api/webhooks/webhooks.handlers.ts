@@ -11,10 +11,6 @@ import Services, {
 
 /**
  * The HTTP translations, one per service failure union.
- *
- * A webhook that belongs to another organization and one that does not exist
- * answer identically, which is the point - the services never distinguish them,
- * so there is nothing here that could leak the difference.
  */
 function toGetWebhookHttpException(failure: GetWebhookFailure): HTTPException {
   const { code } = failure;
@@ -90,8 +86,6 @@ const getWebhook = defineOpenAPIRoute({
     const params = c.req.valid('param');
     const result = await Services.getWebhook(params.id);
 
-    // Nothing catches the service call: a rejected promise is a malfunction,
-    // and the global error handler is what turns those into a sanitized 500.
     return result.match(
       (webhook) => c.json(webhook, 200),
       (failure) => {
@@ -126,7 +120,6 @@ const createWebhook = defineOpenAPIRoute({
   handler: async (c) => {
     const body = c.req.valid('json');
 
-    // Also a plain promise: there is nothing about a create to refuse.
     const result = await Services.createWebhook(body);
 
     return c.json(result, 201);
@@ -174,9 +167,8 @@ const deleteWebhook = defineOpenAPIRoute({
   },
 });
 
-// Order matters: `openapiRoutes` registers in array order, and Hono matches in
-// registration order - so the two static paths have to come before
-// `/webhooks/:id` or `:id` swallows `outbox` and `deliveries`.
+// Order matters - Hono matches in registration order. The two static paths have
+// to come before `/webhooks/:id` or `:id` swallows `outbox` and `deliveries`.
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
   listWebhookOutbox,
   listWebhookDeliveries,

@@ -1,0 +1,52 @@
+name:        Setup workspace
+description: >-
+  Installs Bun, restores the dependency and Turborepo caches, and installs
+  workspace dependencies.
+
+inputs:
+  turbo-cache:
+    description: >-
+      Whether to persist Turborepo's cache.
+
+      Set false for jobs that do not run anything through turbo, which would
+      otherwise warn about caching a directory that was never created.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+
+  steps:
+    # Read from `packageManager` in the root package.json, so the workspace
+    # and CI cannot disagree about which Bun this is. Still duplicated in the
+    # Dockerfiles' BUN_VERSION, which nothing can read from here.
+    - name: Install Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: package.json
+
+    # Keyed on the lockfile, so it only rebuilds when a dependency actually
+    # changes. The restore-key still gets a warm cache on the miss, which is the
+    # common case - one added package should not re-download the whole tree.
+    - name: Restore dependency cache
+      uses: actions/cache@v4
+      with:
+        path:          ~/.bun/install/cache
+        key:          bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-
+
+    - name:  Install dependencies
+      shell: bash
+      run:   bun install --frozen-lockfile
+
+    # Every job gets a clean runner, so without this Turborepo starts from an
+    # empty cache each time and its dependency graph buys nothing. Scoped per
+    # job because jobs run different tasks; the entries are content addressed,
+    # so a cross-job restore would be correct, just larger than it needs to be.
+    - name: Restore Turborepo cache
+      if:   inputs.turbo-cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path:         .turbo/cache
+        key:          turbo-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: turbo-${{ runner.os }}-${{ github.job }}-

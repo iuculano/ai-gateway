@@ -1,14 +1,8 @@
-import { redirect } from '@sveltejs/kit';
-import { readSession } from '$lib/server/session';
 import type { LayoutServerLoad } from './$types';
 
-// Every page requires a session; /auth/* are +server endpoints, so this
-// load never runs for them and can't loop.
-export const load: LayoutServerLoad = async ({ cookies }) => {
-  const session = await readSession(cookies);
-  if (!session) {
-    redirect(302, '/auth/login');
-  }
-
-  return { user: session.user };
+// The session is resolved and enforced in hooks.server.ts, which redirects
+// unauthenticated page requests before this ever runs. The check below is a
+// type narrowing rather than a second gate.
+export const load: LayoutServerLoad = async ({ locals }) => {
+  return { user: locals.session?.user };
 };

@@ -2,11 +2,14 @@
 
 # Build from the repository root:
 # docker build -f apps/gateway-frontend/Dockerfile -t ai-gateway-frontend .
-ARG BUN_VERSION=1.3.14
-ARG DISTROLESS_IMAGE=gcr.io/distroless/base-debian13:nonroot
+ARG BUN_VERSION=1.4.0
+# Chainguard's free tier publishes :latest only and rebuilds it daily, so this
+# tag moves under us - two builds a week apart can sit on different glibc. Mirror
+# a digest into GHCR and point this at that if builds need to be reproducible.
+ARG RUNTIME_IMAGE=cgr.dev/chainguard/glibc-dynamic:latest
 
 FROM oven/bun:${BUN_VERSION}-slim AS pruner
-ARG TURBO_VERSION=2.10.10
+ARG TURBO_VERSION=2.10.11
 ENV TURBO_TELEMETRY_DISABLED=1
 WORKDIR /repo
 
@@ -25,10 +28,11 @@ COPY --from=pruner /repo/out/full/ .
 RUN bun run --cwd apps/gateway-frontend build
 RUN bun build apps/gateway-frontend/build/index.js \
     --compile \
-    --minify \
+    --minify-whitespace \
+    --minify-syntax \
     --outfile /out/gateway-frontend
 
-FROM ${DISTROLESS_IMAGE} AS runtime
+FROM ${RUNTIME_IMAGE} AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000

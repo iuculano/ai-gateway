@@ -54,9 +54,20 @@ const auditEventValues = [
   'guardrails.created',
   'guardrails.updated',
   'guardrails.deleted',
+  'prompts.created',
+  'prompts.updated',
+  'prompts.deleted',
+
+  // Versions are audited against the prompt rather than as a target type of
+  // their own: a version has no identity outside its parent, and target_id is
+  // a uuid column, so pointing it at a (prompt, ordinal) pair is not available.
+  // The ordinal travels in `metadata` instead.
+  'prompts.versions.created',
+  'prompts.versions.updated',
+  'prompts.versions.deleted',
 ] as const;
 
-const auditTargetTypeValues = ['api_key', 'guardrail', 'organization', 'user'] as const;
+const auditTargetTypeValues = ['api_key', 'guardrail', 'prompt', 'organization', 'user'] as const;
 
 type AuditTargetType = (typeof auditTargetTypeValues)[number];
 type AuditEvent = (typeof auditEventValues)[number];
@@ -91,6 +102,12 @@ const createAuditLog = createSchema({
     event('guardrails.created', 'guardrail'),
     event('guardrails.updated', 'guardrail'),
     event('guardrails.deleted', 'guardrail'),
+    event('prompts.created', 'prompt'),
+    event('prompts.updated', 'prompt'),
+    event('prompts.deleted', 'prompt'),
+    event('prompts.versions.created', 'prompt'),
+    event('prompts.versions.updated', 'prompt'),
+    event('prompts.versions.deleted', 'prompt'),
   ]),
 
   response: auditLogShape,

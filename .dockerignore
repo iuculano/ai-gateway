@@ -12,6 +12,10 @@
 **/coverage
 **/coverage-*
 
+**/tests
+
+**/*.md
+
 **/.env
 **/.env.*
 !**/.env.example

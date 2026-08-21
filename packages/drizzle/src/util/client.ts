@@ -55,6 +55,7 @@ export {
   max,
   min,
   not,
+  notInArray,
   or,
   sql,
   sum,

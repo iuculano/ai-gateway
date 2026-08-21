@@ -11,6 +11,6 @@ fixtures, so no identity provider, Redis instance, or HTTP server is required.
 
 ```bash
 cd packages/hono
-bun run test
-bun run test:coverage
+bun run test:unit
+bun run test:unit:coverage
 ```

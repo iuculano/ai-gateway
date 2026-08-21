@@ -54,8 +54,6 @@ const getModel = defineOpenAPIRoute({
     const params = c.req.valid('param');
     const result = await Services.getModel(params.id);
 
-    // Nothing catches the service call: a rejected promise is a malfunction,
-    // and the global error handler is what turns those into a sanitized 500.
     return result.match(
       (model) => c.json(model, 200),
       (failure) => {
@@ -76,6 +74,20 @@ const listModels = defineOpenAPIRoute({
 
     // Plain promise: listing has no outcome the caller could correct.
     const result = await Services.listModels(query);
+
+    return c.json(result, 200);
+  },
+});
+
+/**
+ * GET /providers
+ * Retrieve the whole catalogue, grouped by provider.
+ */
+const listProviders = defineOpenAPIRoute({
+  route: Routes.listProviders,
+  handler: async (c) => {
+    // Plain promise, same as listModels: nothing here is refusable.
+    const result = await Services.listProviders();
 
     return c.json(result, 200);
   },
@@ -139,6 +151,7 @@ const deleteModel = defineOpenAPIRoute({
 });
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
+  listProviders,
   getModel,
   listModels,
   createModel,

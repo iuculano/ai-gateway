@@ -15,12 +15,12 @@
     "db:push": "bunx --bun drizzle-kit push --config=drizzle.config.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^1.0.0-rc.4",
+    "drizzle-orm": "^1.0.0-rc.5-ab785fc",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.9",
-    "drizzle-kit": "^1.0.0-rc.4"
+    "@types/bun": "^1.4.0",
+    "drizzle-kit": "^1.0.0-rc.5-ab785fc"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
