@@ -2,7 +2,10 @@ import { createClient } from 'redis';
 
 function createRedisClient() {
   return createClient({
-    // No database selection: everything lives in db 0, redis' default.
+    // No explicit `database` option - whatever REDIS_URL names wins, and it
+    // defaults to db 0 when the url carries no path. The integration suites
+    // rely on that: this package's README points them at /14 and /15 so they
+    // can run beside each other without sharing keys.
     url: process.env.REDIS_URL || 'redis://localhost:6379',
     password: process.env.REDIS_PASSWORD,
     username: process.env.REDIS_USERNAME,

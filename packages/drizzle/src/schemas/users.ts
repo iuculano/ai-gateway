@@ -9,8 +9,11 @@ export const userStatus = pgEnum('user_status', ['active', 'deleted']);
  * This table will be populated just-in-time when a user logs in - it does not
  * sync. One row per human.
  *
- * This is intended to give a stable database-local identity to a user, it is
- *
+ * This is intended to give a stable database-local identity to a user, so that
+ * rows elsewhere can point at one - api_keys.creator_id, api_keys.revoked_by and
+ * guardrails.creator_id all reference it. A foreign key cannot target a claim on
+ * someone else's token, and an IdP subject can change or disappear; this row
+ * cannot.
  */
 export const users = pgTable('users', {
   id: uuid().primaryKey().default(sql`uuidv7()`),

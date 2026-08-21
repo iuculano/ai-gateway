@@ -1,12 +1,17 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
+import { apiKeys, auditLogs, organizations, userIdentities, users } from '@repo/drizzle/schemas';
 import { zodExceptionHook } from '@repo/hono';
+import { getTableName } from 'drizzle-orm';
 import Routes from './health.routes';
 import Services from './health.services';
 
-// Tables that are required to exist in the database for the service to be
-// considered healthy. Derived from the schema so the names can never drift
-// from what drizzle actually creates.
-const requiredTables = ['api_keys', 'audit_logs', 'organizations', 'user_identities', 'users'];
+// Tables that must exist for the service to be considered healthy.
+//
+// Read off the schema objects rather than spelled as strings: the comment here
+// used to claim they were derived while the list was hard-coded, so renaming a
+// table in drizzle would have left the health check green while asserting the
+// presence of a table that no longer existed.
+const requiredTables = [apiKeys, auditLogs, organizations, userIdentities, users].map(getTableName);
 
 /**
  * GET /livez

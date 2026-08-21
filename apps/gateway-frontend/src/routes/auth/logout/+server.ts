@@ -19,10 +19,15 @@ export const GET: RequestHandler = async ({ cookies }) => {
   const session = await destroySession(cookies);
 
   if (session?.refreshToken) {
-    // Best effort, and deliberately not awaited into a failure path: an
-    // unreachable IDP must not leave the user signed in. The refresh token
-    // outlives the access token, so leaving it valid is the part that actually
-    // matters here.
+    // Awaited on purpose, even though revokeRefreshToken swallows its own
+    // failures. Best-effort describes how it handles a FAILURE, not whether it
+    // runs: firing it off unawaited would let the response return first and
+    // leave the call racing process teardown, and a revocation that never
+    // reaches the IDP leaves a long-lived credential valid.
+    //
+    // One round trip on an action a user takes rarely is worth that guarantee.
+    // The local session is already gone either way - it was cleared above - so
+    // this cannot leave anyone signed in.
     await revokeRefreshToken(session.refreshToken);
   }
 
