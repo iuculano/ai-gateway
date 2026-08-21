@@ -29,7 +29,7 @@ runs:
     # changes. The restore-key still gets a warm cache on the miss, which is the
     # common case - one added package should not re-download the whole tree.
     - name: Restore dependency cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path:          ~/.bun/install/cache
         key:          bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -45,7 +45,7 @@ runs:
     # so a cross-job restore would be correct, just larger than it needs to be.
     - name: Restore Turborepo cache
       if:   inputs.turbo-cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path:         .turbo/cache
         key:          turbo-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
