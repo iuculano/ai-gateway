@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./routes": "./src/routes.ts",
+    "./schemas/analytics": "./src/api/analytics/analytics.schemas.ts",
     "./schemas/chat-completions": "./src/api/chat-completions/chat-completions.schemas.ts",
     "./prompts/builtins": "./src/api/prompts/prompts.builtins.ts"
   },
@@ -15,14 +16,14 @@
     "start": "bun run src/index.ts",
     "check-types": "bunx tsc --noEmit",
     "test:unit": "bun test --isolate tests/unit",
-    "test:unit:coverage": "bun test --coverage tests/unit",
+    "test:unit:coverage": "bun test --coverage --isolate tests/unit",
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration",
     "test:db:setup": "bun run tests/integration/prepare-database.ts",
     "stress:logs": "bun run tests/stress/logs.stress.ts",
     "stress:gateway": "bun run tests/stress/gateway.stress.ts"
   },
   "dependencies": {
-    "@ai-sdk/azure": "^4.0.46",
+    "@ai-sdk/azure": "^4.0.47",
     "@ai-sdk/openai": "^4.0.45",
     "@hono/swagger-ui": "^0.6.1",
     "@hono/zod-openapi": "^1.6.1",
@@ -32,7 +33,7 @@
     "@repo/hono": "workspace:*",
     "@repo/object-storage": "workspace:*",
     "@repo/redis": "workspace:*",
-    "ai": "^7.0.71",
+    "ai": "^7.0.76",
     "drizzle-orm": "^1.0.0-rc.5-ab785fc",
     "hono": "^4.13.3",
     "lru-cache": "^11.5.2",

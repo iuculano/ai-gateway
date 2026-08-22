@@ -37,8 +37,8 @@ async function seedGuardrail(tenant: Tenant): Promise<string> {
 
 async function seedLog(tenant: Tenant, model: string): Promise<string> {
   const [row] = await admin`
-    insert into logs (organization_id, model, provider, status, input_tokens, output_tokens)
-    values (${tenant.organizationId}, ${model}, 'test', 'complete', 10, 5)
+    insert into logs (organization_id, model, provider, status, input_tokens, output_tokens, actor_type, actor_id)
+    values (${tenant.organizationId}, ${model}, 'test', 'complete', 10, 5, 'user', ${tenant.userId})
     returning id
   `;
 

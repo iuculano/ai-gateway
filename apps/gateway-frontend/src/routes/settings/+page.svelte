@@ -61,7 +61,6 @@ const org = $state({
 });
 
 const defaults = $state({
-  logRequests: true,
   storeRequestBodies: true,
   storeResponseBodies: true,
   timeoutMs: 60_000,
@@ -188,15 +187,6 @@ function save() {
 			title="Logging"
 			description="What Relay records for a request that says nothing about it. Any request can still override these per call with the header shown beside each row."
 		>
-			<SettingRow
-				label="Record requests"
-				description="Off writes no log row at all - no cost, no latency, no trace. Analytics and spend go blank for anything routed this way."
-				header="ai-log-skip"
-				pending="Not wired"
-			>
-				<Switch bind:checked={defaults.logRequests} />
-			</SettingRow>
-
 			<SettingRow
 				label="Store request bodies"
 				description="Prompts are written to object storage and are the most sensitive data Relay holds. Off keeps the log row and its costs, and drops the payload."

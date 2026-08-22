@@ -3,7 +3,10 @@ import { zodExceptionHook } from '@repo/hono';
 import Routes from './health.routes';
 import Services from './health.services';
 
-const requiredTables = ['models'];
+// Both, because this worker is only useful when it can read one and write
+// the other. `analytics_hourly` missing is the interesting failure: it means
+// db:push has not run and every tick would throw.
+const requiredTables = ['logs', 'analytics_hourly'];
 
 /**
  * GET /livez

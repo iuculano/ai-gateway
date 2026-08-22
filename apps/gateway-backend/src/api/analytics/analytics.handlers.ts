@@ -7,13 +7,21 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook })
   /**
    * POST /analytics
    * Controller to handle analytics queries.
-   *
-   * @returns
-   * - 200 OK with the analytics response on success.
    */
   .openapi(Routes.postAnalytics, async (c) => {
     const body = c.req.valid('json');
     const result = await Services.queryAnalytics(body);
+
+    return c.json(result, 200);
+  })
+
+  /**
+   * POST /analytics/series
+   * Time series and breakdowns, served from the hourly rollup.
+   */
+  .openapi(Routes.postAnalyticsSeries, async (c) => {
+    const body = c.req.valid('json');
+    const result = await Services.queryAnalyticsSeries(body);
 
     return c.json(result, 200);
   });

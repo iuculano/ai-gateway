@@ -1,3 +1,4 @@
+export * from './analytics';
 export * from './api-keys';
 export * from './audit-logs';
 export * from './guardrails';

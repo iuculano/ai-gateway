@@ -55,7 +55,6 @@ const headers = z.object({
   // matches against, so a log without them reaches only unfiltered webhooks.
   'ai-log-tags': z.string().optional(),
 
-  'ai-log-skip': z.stringbool().optional(),
   'ai-log-omit-request': z.stringbool().optional(),
   'ai-log-omit-response': z.stringbool().optional(),
 

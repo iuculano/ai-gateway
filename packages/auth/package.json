@@ -17,7 +17,7 @@
     "@repo/hono": "workspace:*",
     "@repo/redis": "workspace:*",
     "hono": "^4.13.3",
-    "jose": "^6.2.9",
+    "jose": "^6.2.10",
     "lru-cache": "^11.5.2"
   },
   "devDependencies": {

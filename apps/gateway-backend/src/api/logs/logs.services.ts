@@ -565,14 +565,21 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
  * The tenant the log belongs to.
  *
  * @param entry
- * What is known before the call: the model and the provider serving it.
+ * What is known before the call: the model, the provider serving it, and the
+ * actor spending on it.
  *
  * @returns
  * The id of the new log.
  */
 async function startLog(
   organizationId: string,
-  entry: { model: string; provider: string; tags?: Record<string, string> },
+  entry: {
+    model: string;
+    provider: string;
+    tags?: Record<string, string>;
+    actor_type: 'user' | 'api_key';
+    actor_id: string;
+  },
 ): Promise<string> {
   const [row] = await db
     .insert(logs)
@@ -580,6 +587,11 @@ async function startLog(
       organization_id: organizationId,
       model: entry.model,
       provider: entry.provider,
+      // The caller is authenticated before this runs, so there is always an
+      // actor. Attribution that can be skipped is attribution a budget cannot
+      // rely on, which is why both columns are NOT NULL.
+      actor_type: entry.actor_type,
+      actor_id: entry.actor_id,
       // Written at open rather than at close, because this is what webhook
       // fan-out matches on and the column is nullable - a log that never got
       // tags is distinguishable from one tagged with nothing.

@@ -15,7 +15,7 @@ import { SQL } from 'bun';
 import { type LoadResult, type RequestSample, reportLoad, runConstantRate } from './load-harness';
 import { resolveOrganization } from './seed';
 
-type LoggingMode = 'skip' | 'row' | 'full';
+type LoggingMode = 'row' | 'full';
 type Protocol = 'nonstream' | 'stream';
 type Workload = 'chat' | 'logs' | 'stats' | 'payloads';
 
@@ -63,7 +63,7 @@ Load shape:
   --duration-seconds <n>       measured duration per scenario         (default: 10)
   --warmup-seconds <n>         discarded duration per scenario        (default: 2)
   --concurrency <n>            maximum in-flight requests             (default: 200)
-  --logging-modes <csv>        skip,row,full                           (default: skip,row,full)
+  --logging-modes <csv>        row,full                                (default: row,full)
   --protocols <csv>            nonstream,stream                        (default: nonstream)
   --mix <weights>              chat/logs/stats/payloads traffic       (default: chat:100)
   --logs-query <query>         query string used by the logs workload (default: limit=25)
@@ -111,7 +111,7 @@ const { values } = parseArgs({
     'duration-seconds': { type: 'string', default: '10' },
     'warmup-seconds': { type: 'string', default: '2' },
     concurrency: { type: 'string', default: '200' },
-    'logging-modes': { type: 'string', default: 'skip,row,full' },
+    'logging-modes': { type: 'string', default: 'row,full' },
     protocols: { type: 'string', default: 'nonstream' },
     mix: { type: 'string', default: 'chat:100' },
     'logs-query': { type: 'string', default: 'limit=25' },
@@ -230,7 +230,7 @@ const rates = csvNumbers('rates', values.rates);
 const durationSeconds = numberOption('duration-seconds', values['duration-seconds'], { minimum: Number.EPSILON });
 const warmupSeconds = numberOption('warmup-seconds', values['warmup-seconds']);
 const maxConcurrency = numberOption('concurrency', values.concurrency, { integer: true, minimum: 1 });
-const loggingModes = csvEnum<LoggingMode>('logging-modes', values['logging-modes'], ['skip', 'row', 'full']);
+const loggingModes = csvEnum<LoggingMode>('logging-modes', values['logging-modes'], ['row', 'full']);
 const protocols = csvEnum<Protocol>('protocols', values.protocols, ['nonstream', 'stream']);
 const mix = parseMix(values.mix);
 const batchSize = numberOption('batch-size', values['batch-size'], { integer: true, minimum: 1 });
@@ -516,9 +516,7 @@ async function performRequest(context: RequestContext): Promise<RequestSample> {
       if (context.quotaPolicy) {
         headers.set('ai-rate-limit-policy', context.quotaPolicy);
       }
-      if (context.loggingMode === 'skip') {
-        headers.set('ai-log-skip', 'true');
-      } else if (context.loggingMode === 'row') {
+      if (context.loggingMode === 'row') {
         headers.set('ai-log-omit-request', 'true');
         headers.set('ai-log-omit-response', 'true');
       }
@@ -535,11 +533,10 @@ async function performRequest(context: RequestContext): Promise<RequestSample> {
         signal: AbortSignal.timeout(timeoutMs),
       });
 
+      // Every mode writes the row that carries the accounting, so every OK
+      // response has a log to point at.
       const logId = recordLogId(response);
-      if (response.ok && context.loggingMode === 'skip' && logId) {
-        invariantFailures.push('skip response unexpectedly carried ai-log-id');
-      }
-      if (response.ok && context.loggingMode !== 'skip' && !logId) {
+      if (response.ok && !logId) {
         invariantFailures.push(`${context.loggingMode} response omitted ai-log-id`);
       }
 
@@ -741,7 +738,7 @@ try {
   const preflight = await performRequest({
     apiKey,
     upstreamUrl,
-    loggingMode: 'skip',
+    loggingMode: 'row',
     protocol: 'nonstream',
     workload: 'chat',
     sequence: -1,
@@ -842,7 +839,7 @@ try {
       performRequest({
         apiKey,
         upstreamUrl,
-        loggingMode: 'skip',
+        loggingMode: 'row',
         protocol: 'nonstream',
         workload: 'chat',
         sequence,

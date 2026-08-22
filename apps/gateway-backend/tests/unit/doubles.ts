@@ -181,11 +181,27 @@ export const logCapture = {
   /** True runs the real implementation; false records the call and returns. */
   passthrough: true,
 
+  /**
+   * Set one to make that entry point reject, which is what an unreachable log
+   * store looks like from the inference path.
+   *
+   * Every caller there swallows the failure on purpose - a completion that has
+   * been generated and paid for should not be withheld because its record
+   * could not be written - so these are the only way to reach those branches.
+   * Ignored while `passthrough` is on.
+   */
+  startFailure: null as Error | null,
+  completeFailure: null as Error | null,
+  failFailure: null as Error | null,
+
   reset() {
     logCapture.started = [];
     logCapture.completed = [];
     logCapture.failed = [];
     logCapture.passthrough = true;
+    logCapture.startFailure = null;
+    logCapture.completeFailure = null;
+    logCapture.failFailure = null;
   },
 };
 
@@ -203,6 +219,10 @@ function buildLogServices(real: RealLogServices) {
 
       logCapture.started.push({ organizationId, entry });
 
+      if (logCapture.startFailure) {
+        throw logCapture.startFailure;
+      }
+
       // Read here rather than in the object literal above: LOG_ID is declared
       // further down this file, so an initializer would hit the temporal dead
       // zone. A function body is evaluated at call time and does not.
@@ -215,6 +235,10 @@ function buildLogServices(real: RealLogServices) {
       }
 
       logCapture.completed.push({ organizationId, id, entry });
+
+      if (logCapture.completeFailure) {
+        throw logCapture.completeFailure;
+      }
     },
 
     async failLog(organizationId: string, id: string, entry: never) {
@@ -223,6 +247,10 @@ function buildLogServices(real: RealLogServices) {
       }
 
       logCapture.failed.push({ organizationId, id, entry });
+
+      if (logCapture.failFailure) {
+        throw logCapture.failFailure;
+      }
     },
   };
 }
@@ -510,6 +538,10 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
     model: 'gpt-4-turbo',
     provider: 'openai',
     status: 'complete',
+    // Matches callerFixture, so a completion driven by that caller and a row
+    // read back through this fixture describe the same actor.
+    actor_type: 'user',
+    actor_id: USER_ID,
     input_tokens: 100,
     output_tokens: 50,
     input_cost: '0.001000000000',

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createAzure } from '@ai-sdk/azure';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createCacheKey, type Logger, parseTags } from '@repo/core';
-import { getCaller, getLogger } from '@repo/hono';
+import { getActorId, getCaller, getLogger } from '@repo/hono';
 import {
   APICallError,
   type FinishReason,
@@ -546,26 +546,29 @@ interface OpenLog {
 }
 
 /**
- * Opens a log for a call that is about to be made, unless the caller opted out.
+ * Opens a log for a call that is about to be made.
+ *
+ * Note that no request header skips this. The row is what carries the actor,
+ * the tokens and the cost, so letting a header suppress it would let a caller
+ * opt out of being accounted for - and a spend limit a request header can
+ * switch off is not a limit. The ai-log-omit-* headers suppress the stored
+ * PAYLOADS, which is the privacy interest they actually serve; see closeLog
+ * and abandonLog.
  *
  * A failure to open the log is swallowed. Logging is observability, not the
  * product - refusing to serve a completion because the log store is unreachable
  * would turn a degraded dependency into an outage.
  *
  * @param headers
- * The gateway headers, carrying the ai-log-skip control.
+ * The gateway headers, carrying the ai-log-tags control.
  *
  * @param model
  * The resolved model, whose provider and id are recorded on the row.
  *
  * @returns
- * The log id, or null if logging was skipped or could not be opened.
+ * The open log, or null if it could not be opened.
  */
 async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Promise<OpenLog | null> {
-  if (headers['ai-log-skip']) {
-    return null;
-  }
-
   // Read here, at the top of the request, while the ambient context is
   // certainly live. The streaming path closes its log from a continuation that
   // runs after the response stream has drained, and asking for the context
@@ -581,6 +584,12 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
       model: model.modelId,
       provider: model.provider,
       tags: tags,
+      // The credential that spent, not the human behind it. An api_key actor
+      // reaches its owner through api_keys.creator_id when a report needs the
+      // person; the reverse - recovering which of a user's keys was used -
+      // is not possible after the fact.
+      actor_type: caller.actor.type,
+      actor_id: getActorId(caller),
     });
 
     return { id, organizationId, logger, tags };
@@ -632,6 +641,7 @@ async function closeLog(
     await LogsService.completeLog(log.organizationId, log.id, {
       request: request,
       response: response,
+      // The row and its accounting survive either omit header; see openLog.
       omitRequest: headers['ai-log-omit-request'],
       omitResponse: headers['ai-log-omit-response'],
       input_tokens: response.usage.prompt_tokens,
@@ -690,11 +700,11 @@ async function abandonLog(
  * The gateway headers, carrying the ai-webhook-id control.
  *
  * @param log
- * The log opened for this request, or null when logging was skipped.
+ * The log opened for this request, or null when it could not be opened.
  *
  * @throws {HTTPException}
- * 400 when a webhook is requested with logging skipped, 404 when the webhook is
- * not one of the caller's.
+ * 503 when the log this delivery would point at could not be opened, 404 when
+ * the webhook is not one of the caller's.
  */
 async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null): Promise<void> {
   const webhookId = headers['ai-webhook-id'];
@@ -703,12 +713,15 @@ async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null)
   }
 
   // The outbox points at a log, and the worker joins through it to build the
-  // delivery. Skipping the log leaves nothing to deliver, so the two headers
-  // are contradictory rather than merely unusual - said plainly instead of
-  // silently dropping one of them.
+  // delivery, so there is nothing to enqueue without one.
+  //
+  // No header suppresses the row, so the only way to get here is openLog
+  // failing - the log store being unreachable. That is not the caller's
+  // mistake and a 4xx would say it was. Told rather than dropped silently:
+  // the caller asked for a delivery that cannot be made.
   if (!log) {
-    throw new HTTPException(400, {
-      message: 'ai-webhook-id cannot be used with ai-log-skip: a delivery needs a log to point at',
+    throw new HTTPException(503, {
+      message: 'Cannot queue a webhook delivery: the log it would point at could not be opened',
     });
   }
 
@@ -732,7 +745,7 @@ async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null)
  *
  * @param onLog
  * Called with the log id once one is open, so the handler can echo it as a
- * response header. Not called when logging is skipped.
+ * response header. Not called when the log could not be opened.
  *
  * @returns
  * A completion in OpenAI's chat.completion shape.

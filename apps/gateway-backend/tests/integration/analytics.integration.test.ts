@@ -42,7 +42,9 @@ async function seedLog(entry: {
       input_cost,
       output_cost,
       response_time_ms,
-      tags
+      tags,
+      actor_type,
+      actor_id
     ) values (
       ${acme.organizationId},
       ${entry.model},
@@ -53,7 +55,11 @@ async function seedLog(entry: {
       ${entry.inputCost},
       ${entry.outputCost},
       ${entry.responseTimeMs},
-      (${tags}::text)::jsonb
+      (${tags}::text)::jsonb,
+      -- NOT NULL: every row names who spent. The tenant's own user stands in
+      -- for the authenticated caller the gateway would have recorded.
+      'user',
+      ${acme.userId}
     )
   `;
 }

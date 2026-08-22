@@ -24,7 +24,7 @@ const handler: RequestHandler = async ({ params, request, cookies, url, locals }
     return json({ error: { code: 401, message: 'Not authenticated.' } }, { status: 401 });
   }
 
-  const backend = env.BACKEND_URL ?? 'http://localhost:3000';
+  const backend = env.BACKEND_URL ?? 'http://localhost:8080';
   const target = `${backend}/v1/${params.path}${url.search}`;
 
   // Read once, reused across both attempts. A stream could only be consumed

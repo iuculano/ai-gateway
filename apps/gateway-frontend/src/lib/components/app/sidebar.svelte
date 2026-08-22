@@ -35,7 +35,7 @@ const itemClass = (active: boolean) =>
 		</div>
 		<div class="flex flex-col leading-[1.1]">
 			<span class="text-[13.5px] font-semibold">Relay</span>
-			<span class="text-[10.5px] text-[#5b5b63]">API Platform</span>
+			<span class="text-[10.5px] text-[#5b5b63]">AI Gateway</span>
 		</div>
 	</div>
 

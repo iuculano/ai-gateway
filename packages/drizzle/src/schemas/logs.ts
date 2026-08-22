@@ -3,18 +3,10 @@ import { index, integer, jsonb, numeric, pgTable, text, timestamp, uuid } from '
 import { organizations } from './organizations';
 
 /**
- * One row per inference request.
+ * Inference log table for all requests that pass through the gateway.
  *
- * The payloads themselves are NOT here. They live in object storage, zstd
- * compressed, as two separate objects - the request and the response - and the
- * columns below hold their keys. Two objects rather than one because the two
- * are read independently: a dashboard listing prompts never needs the
- * completions, and `ai-log-omit-request` / `ai-log-omit-response` let a caller
- * suppress either side on its own.
- *
- * These rows carry prompts and completions, which is the most sensitive data
- * the system holds. Every query against this table must therefore carry an
- * explicit organization predicate.
+ * Note that the actual data is stored in object storage, and this table only
+ * contains the metadata and references to those objects.
  */
 export const logs = pgTable(
   'logs',
@@ -35,6 +27,9 @@ export const logs = pgTable(
     status: text({ enum: ['incomplete', 'complete', 'failed'] })
       .notNull()
       .default('incomplete'),
+
+    actor_type: text({ enum: ['user', 'api_key'] }).notNull(),
+    actor_id: uuid().notNull(),
 
     input_tokens: integer(),
     output_tokens: integer(),
@@ -63,16 +58,18 @@ export const logs = pgTable(
   },
   (t) => [
     // Every read is scoped to one organization and ordered by id - the cursor
-    // pagination in listLogs walks this in both directions.
+    // pagination in listLogs walks this.
     index('logs_org_idx').on(t.organization_id, t.id),
 
-    // listLogs filters on these far more often than anything else, and a
-    // dashboard's default view is "this org, this model, newest first".
+    // listLogs filters on these far more often than anything else.
     index('logs_org_model_idx').on(t.organization_id, t.model, t.id),
     index('logs_org_status_idx').on(t.organization_id, t.status, t.id),
 
     // GIN, because `tags @> '{"env":"prod"}'::jsonb` cannot use a btree.
     index('logs_tags_idx').using('gin', t.tags),
+
+    // The analytics live tail.
+    index('logs_org_created_idx').on(t.organization_id, t.created_at),
   ],
 );
 

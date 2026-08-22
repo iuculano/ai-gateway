@@ -39,6 +39,8 @@ test('request and response payloads round-trip through MinIO and are deleted wit
   const id = await LogServices.startLog(acme.organizationId, {
     model: 'integration-model',
     provider: 'test-provider',
+    actor_type: 'user',
+    actor_id: acme.userId,
   });
   await LogServices.completeLog(acme.organizationId, id, {
     request,
@@ -81,6 +83,8 @@ test('payload omission leaves the skipped side undiscoverable and unstored', asy
   const id = await LogServices.startLog(acme.organizationId, {
     model: 'integration-model',
     provider: 'test-provider',
+    actor_type: 'user',
+    actor_id: acme.userId,
   });
   await LogServices.completeLog(acme.organizationId, id, {
     request: { secret: 'do not retain' },
@@ -103,6 +107,8 @@ test('a failed inference retains its request but never advertises a response', a
   const id = await LogServices.startLog(acme.organizationId, {
     model: 'integration-model',
     provider: 'test-provider',
+    actor_type: 'user',
+    actor_id: acme.userId,
   });
 
   await LogServices.failLog(acme.organizationId, id, { request });
@@ -118,8 +124,9 @@ test('a failed inference retains its request but never advertises a response', a
 });
 
 test('a batch returns healthy payloads when another referenced object is missing', async () => {
-  const first = await LogServices.startLog(acme.organizationId, { model: 'one', provider: 'test-provider' });
-  const second = await LogServices.startLog(acme.organizationId, { model: 'two', provider: 'test-provider' });
+  const actor = { actor_type: 'user', actor_id: acme.userId } as const;
+  const first = await LogServices.startLog(acme.organizationId, { model: 'one', provider: 'test-provider', ...actor });
+  const second = await LogServices.startLog(acme.organizationId, { model: 'two', provider: 'test-provider', ...actor });
   await LogServices.completeLog(acme.organizationId, first, { request: { value: 'one' } });
   await LogServices.completeLog(acme.organizationId, second, { request: { value: 'two' } });
 

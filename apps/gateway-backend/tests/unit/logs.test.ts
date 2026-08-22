@@ -229,9 +229,9 @@ test('startLog rejects rather than returning a failure', async () => {
   // Ingestion, not a handler - there is no HTTP caller to hand a refusal to.
   database.script(rows());
 
-  await expect(Services.startLog('org', { model: 'gpt-4-turbo', provider: 'openai' })).rejects.toThrow(
-    'Failed to open log',
-  );
+  await expect(
+    Services.startLog('org', { model: 'gpt-4-turbo', provider: 'openai', actor_type: 'api_key', actor_id: 'key-1' }),
+  ).rejects.toThrow('Failed to open log');
 });
 
 test('completeLog stores both payloads before publishing their references', async () => {

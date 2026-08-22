@@ -201,9 +201,9 @@ function copy(text: string, label: string) {
 		<!-- An anchor, not a ToolbarButton, because this navigates. The playground
 		     reads ?from= and rehydrates the stored request.
 
-		     Only offered when the payload actually exists: `ai-log-skip` and
-		     `ai-log-omit-request` both leave a row whose request was never
-		     written, and there is nothing to replay from those. -->
+		     Only offered when the payload actually exists: `ai-log-omit-request`
+		     leaves a row whose request was never written, and there is nothing
+		     to replay from that. -->
 		<div class="flex items-center gap-2.5">
 			{#if log.has_request}
 				<a

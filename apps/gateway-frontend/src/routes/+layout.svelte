@@ -10,7 +10,7 @@ let { children, data } = $props();
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<title>Relay · API Platform</title>
+	<title>Relay · AI Gateway</title>
 </svelte:head>
 
 <div class="flex h-screen w-full overflow-hidden">
