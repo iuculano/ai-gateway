@@ -5,7 +5,10 @@
     "dev": "bun run --hot src/index.ts",
     "build": "bun build src/index.ts --compile --minify-whitespace --minify-syntax --outfile dist/worker-webhooks",
     "start": "bun run src/index.ts",
-    "check-types": "bunx tsc --noEmit"
+    "check-types": "bunx tsc --noEmit",
+    "test:unit": "bun test --isolate tests/unit",
+    "test:unit:coverage": "bun test --coverage --isolate tests/unit",
+    "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {
     "@hono/swagger-ui": "^0.5.3",
@@ -16,6 +19,7 @@
     "hono": "^4.13.3"
   },
   "devDependencies": {
+    "@repo/test-helpers": "workspace:*",
     "@types/bun": "^1.4.0",
     "typescript": "^6.0.3"
   }

@@ -25,7 +25,7 @@
       "outputs": ["coverage/**"]
     },
     "test:integration": {
-      "dependsOn": ["test:db:setup"],
+      "dependsOn": ["gateway-backend#test:db:setup"],
       "cache": false,
       "env": [
         "POSTGRES_TEST_ADMIN_CONNECTION_STRING",
