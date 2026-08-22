@@ -92,33 +92,10 @@ jobs:
     runs-on:         ubuntu-latest
     timeout-minutes: 15
 
-    env:
-      POSTGRES_TEST_ADMIN_CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/ai_gateway_test
-      REDIS_TEST_URL:                        redis://localhost:6379/15
-      REDIS_PACKAGE_TEST_URL:                redis://localhost:6379/14
-      REDIS_FRONTEND_TEST_URL:               redis://localhost:6379/13
-      S3_TEST_ENDPOINT:                      http://localhost:9000
-      S3_TEST_ACCESS_KEY_ID:                 minioadmin
-      S3_TEST_SECRET_ACCESS_KEY:             minioadmin
-      S3_TEST_BUCKET:                        ai-gateway-logs-test
-      S3_TEST_REGION:                        us-east-1
-
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
 
-      # The same compose file developers run, rather than a second copy of the
-      # service definitions as GitHub `services:`. That keeps one place to bump
-      # Postgres, and means CI cannot quietly drift onto different versions than
-      # the machine the tests were written on. minio-init is a one-shot bucket
-      # create, so it runs separately from the long-lived services.
-      - name: Start Postgres, Valkey and MinIO
-        run: |
-          docker compose up --detach --wait postgres valkey minio
-          docker compose run --rm -T minio-init
-
-      # `test:db:setup` is not run by hand here - turbo runs it as a dependency
-      # of `test:integration`, so the ordering lives in one place.
       - name: Run integration tests
         run:  bun run test:integration
 

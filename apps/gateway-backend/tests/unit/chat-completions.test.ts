@@ -18,6 +18,7 @@ import {
   USER_ID,
   WEBHOOK_ID,
 } from './doubles';
+import { expectErr, expectOk } from './result';
 
 await installModuleMocks();
 
@@ -132,7 +133,31 @@ mock.module('ai', () => ({
 }));
 
 const { runWithCaller } = await import('@repo/hono');
-const { default: Services } = await import('../../src/api/chat-completions/chat-completions.services');
+const { default: ResultServices } = await import('../../src/api/chat-completions/chat-completions.services');
+
+/**
+ * Successful mapping examples are clearer with the value unwrapped. Expected
+ * failures use ResultServices directly below and assert the Err as a value.
+ */
+const Services = {
+  ...ResultServices,
+
+  async createChatCompletion(...args: Parameters<typeof ResultServices.createChatCompletion>) {
+    return expectOk(await ResultServices.createChatCompletion(...args));
+  },
+
+  async *streamChatCompletion(
+    ...args: Parameters<typeof ResultServices.streamChatCompletion>
+  ): AsyncGenerator<ChatCompletionChunk> {
+    for await (const result of ResultServices.streamChatCompletion(...args)) {
+      yield expectOk(result);
+    }
+  },
+};
+
+async function completionFailure(...args: Parameters<typeof ResultServices.createChatCompletion>) {
+  return expectErr(await ResultServices.createChatCompletion(...args));
+}
 
 const redisModule = await import('@repo/redis');
 const rateLimitState = {
@@ -348,9 +373,9 @@ test('the omit headers keep the row and its accounting, and store neither payloa
 test('ai-log-omit-request suppresses the request payload on the failure path too', async () => {
   aiState.generateError = Object.assign(new Error('provider timed out'), { name: 'TimeoutError' });
 
-  await expect(
-    withCaller(() => Services.createChatCompletion(headers({ 'ai-log-omit-request': true }), body())),
-  ).rejects.toMatchObject({ status: 504 });
+  const failure = await withCaller(() => completionFailure(headers({ 'ai-log-omit-request': true }), body()));
+
+  expect(failure).toMatchObject({ code: 'PROVIDER_TIMEOUT' });
 
   // A failed call still leaves an attributed row - that is the one somebody
   // reading an error rate needs - with nothing stored from it.
@@ -358,12 +383,12 @@ test('ai-log-omit-request suppresses the request payload on the failure path too
   expect(logCapture.failed[0]).toMatchObject({ id: LOG_ID, entry: { omitRequest: true } });
 });
 
-test('a provider timeout becomes a 504 and marks the open log failed', async () => {
+test('a provider timeout returns a typed failure and marks the open log failed', async () => {
   aiState.generateError = Object.assign(new Error('provider timed out'), { name: 'TimeoutError' });
 
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-    status: 504,
-  });
+  const failure = await withCaller(() => completionFailure(headers(), body()));
+
+  expect(failure).toMatchObject({ code: 'PROVIDER_TIMEOUT' });
 
   expect(logCapture.completed).toHaveLength(0);
   expect(logCapture.failed[0]).toMatchObject({
@@ -374,9 +399,11 @@ test('a provider timeout becomes a 504 and marks the open log failed', async () 
 });
 
 test('an unsupported response format is rejected before provider or logging work starts', async () => {
-  await expect(
-    withCaller(() => Services.createChatCompletion(headers(), body({ response_format: { type: 'json_object' } }))),
-  ).rejects.toMatchObject({ status: 400 });
+  const failure = await withCaller(() =>
+    completionFailure(headers(), body({ response_format: { type: 'json_object' } })),
+  );
+
+  expect(failure).toMatchObject({ code: 'UNSUPPORTED_RESPONSE_FORMAT' });
 
   expect(aiState.generateCalls).toHaveLength(0);
   expect(logCapture.started).toHaveLength(0);
@@ -493,10 +520,10 @@ test('an unknown prefix is part of the model id rather than a provider', async (
   });
 });
 
-test('a model identifier with a provider and no model is a 400', async () => {
-  await expect(
-    withCaller(() => Services.createChatCompletion(headers(), body({ model: 'openai/' }))),
-  ).rejects.toMatchObject({ status: 400 });
+test('a model identifier with a provider and no model is a typed refusal', async () => {
+  const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/' })));
+
+  expect(failure).toMatchObject({ code: 'MALFORMED_MODEL_IDENTIFIER' });
 
   expect(logCapture.started).toHaveLength(0);
 });
@@ -629,20 +656,20 @@ test('a tool-calls-only assistant turn carries no empty text part', async () => 
   });
 });
 
-test('a tool result no assistant turn asked for is a 400', async () => {
-  await expect(
-    withCaller(() =>
-      Services.createChatCompletion(
-        headers(),
-        body({
-          messages: [
-            { role: 'user', content: 'Hello' },
-            { role: 'tool', tool_call_id: 'call_orphan', content: 'result' },
-          ],
-        }),
-      ),
+test('a tool result no assistant turn asked for is a typed refusal', async () => {
+  const failure = await withCaller(() =>
+    completionFailure(
+      headers(),
+      body({
+        messages: [
+          { role: 'user', content: 'Hello' },
+          { role: 'tool', tool_call_id: 'call_orphan', content: 'result' },
+        ],
+      }),
     ),
-  ).rejects.toMatchObject({ status: 400 });
+  );
+
+  expect(failure).toMatchObject({ code: 'UNKNOWN_TOOL_CALL' });
 
   expect(aiState.generateCalls).toHaveLength(0);
 });
@@ -650,9 +677,9 @@ test('a tool result no assistant turn asked for is a 400', async () => {
 // --- request parameters ------------------------------------------------------
 
 test('top_logprobs without logprobs is refused rather than quietly dropped', async () => {
-  await expect(
-    withCaller(() => Services.createChatCompletion(headers(), body({ top_logprobs: 3 }))),
-  ).rejects.toMatchObject({ status: 400 });
+  const failure = await withCaller(() => completionFailure(headers(), body({ top_logprobs: 3 })));
+
+  expect(failure).toMatchObject({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
 
   expect(aiState.generateCalls).toHaveLength(0);
   expect(logCapture.started).toHaveLength(0);
@@ -874,7 +901,7 @@ test('usage the provider left incomplete becomes zeroes and a computed total', a
 
 // --- provider failures -------------------------------------------------------
 
-test('a provider 4xx keeps its own status, and a 5xx becomes a 502', async () => {
+test('provider 4xx and 5xx failures retain enough detail for the handler to map them', async () => {
   const apiError = (statusCode: number) =>
     new APICallError({
       message: 'upstream said no',
@@ -884,13 +911,14 @@ test('a provider 4xx keeps its own status, and a 5xx becomes a 502', async () =>
     });
 
   aiState.generateError = apiError(401);
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_REJECTED_REQUEST',
     status: 401,
   });
 
   aiState.generateError = apiError(503);
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-    status: 502,
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_FAILED',
   });
 });
 
@@ -917,7 +945,8 @@ test('a rate limit exhausted through the retry wrapper still reaches the caller 
     ],
   });
 
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_REJECTED_REQUEST',
     status: 429,
   });
 });
@@ -929,8 +958,8 @@ test('a retry sequence ended by an abort is the caller timing out, not a provide
     errors: [new Error('aborted')],
   });
 
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-    status: 504,
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_TIMEOUT',
   });
 });
 
@@ -944,21 +973,21 @@ test('a request the provider considers malformed is a 400, not an upstream failu
     logCapture.passthrough = false;
     aiState.generateError = error;
 
-    await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-      status: 400,
+    expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+      code: 'PROVIDER_INVALID_REQUEST',
     });
   }
 });
 
 test('an abort surfaces as a 504 and anything unrecognised as a 502', async () => {
   aiState.generateError = Object.assign(new Error('aborted'), { name: 'AbortError' });
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-    status: 504,
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_TIMEOUT',
   });
 
   aiState.generateError = new Error('socket hang up');
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-    status: 502,
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_FAILED',
   });
 });
 
@@ -995,8 +1024,8 @@ test('a failure to mark the log failed does not replace the error the caller nee
   aiState.generateError = new Error('socket hang up');
   logCapture.failFailure = new Error('logs unreachable');
 
-  await expect(withCaller(() => Services.createChatCompletion(headers(), body()))).rejects.toMatchObject({
-    status: 502,
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_FAILED',
   });
 
   expect(logCapture.failed).toHaveLength(1);
@@ -1028,12 +1057,12 @@ test('ai-webhook-id queues a delivery before the provider is called', async () =
   expect(logCapture.completed).toHaveLength(1);
 });
 
-test('a webhook that is not the caller-s is a 404, and costs nothing upstream', async () => {
+test('a webhook that is not the caller-s is a typed refusal, and costs nothing upstream', async () => {
   database.script(rows());
 
-  await expect(
-    withCaller(() => Services.createChatCompletion(headers({ 'ai-webhook-id': WEBHOOK_ID }), body())),
-  ).rejects.toMatchObject({ status: 404 });
+  const failure = await withCaller(() => completionFailure(headers({ 'ai-webhook-id': WEBHOOK_ID }), body()));
+
+  expect(failure).toMatchObject({ code: 'WEBHOOK_NOT_FOUND', id: WEBHOOK_ID });
 
   // Refused before the completion is generated - finding out afterwards would
   // leave the caller with an answer and an error at once.
@@ -1043,9 +1072,9 @@ test('a webhook that is not the caller-s is a 404, and costs nothing upstream', 
 test('a webhook cannot be queued against a log that could not be opened', async () => {
   logCapture.startFailure = new Error('logs unreachable');
 
-  await expect(
-    withCaller(() => Services.createChatCompletion(headers({ 'ai-webhook-id': WEBHOOK_ID }), body())),
-  ).rejects.toMatchObject({ status: 503 });
+  const failure = await withCaller(() => completionFailure(headers({ 'ai-webhook-id': WEBHOOK_ID }), body()));
+
+  expect(failure).toMatchObject({ code: 'WEBHOOK_LOG_UNAVAILABLE' });
 
   expect(aiState.generateCalls).toHaveLength(0);
 });
@@ -1166,22 +1195,28 @@ test('an error frame mid-stream aborts the iteration and marks the log failed', 
   ];
 
   const chunks: ChatCompletionChunk[] = [];
-  await expect(
-    withCaller(async () => {
-      for await (const chunk of Services.streamChatCompletion(headers(), body({ stream: true }))) {
-        chunks.push(chunk);
-      }
-    }),
-  ).rejects.toMatchObject({ status: 400 });
+  let failure: unknown;
+  await withCaller(async () => {
+    for await (const result of ResultServices.streamChatCompletion(headers(), body({ stream: true }))) {
+      result.match(
+        (chunk) => chunks.push(chunk),
+        (error) => {
+          failure = error;
+        },
+      );
+    }
+  });
 
-  // Thrown rather than closed quietly, which would look to the caller like a
-  // completion that simply stopped early.
+  expect(failure).toMatchObject({ code: 'PROVIDER_REJECTED_REQUEST', status: 400 });
+
+  // Returned as Err rather than ending quietly, which would look to the caller
+  // like a completion that simply stopped early.
   expect(chunks).toHaveLength(2);
   expect(logCapture.failed[0]).toMatchObject({ id: LOG_ID });
   expect(logCapture.completed).toHaveLength(0);
 });
 
-test('a failure reported only through onError is raised once the stream drains', async () => {
+test('a failure reported only through onError is returned once the stream drains', async () => {
   aiState.streamOnError = new APICallError({
     message: 'invalid api key',
     url: 'https://api.openai.test',
@@ -1190,29 +1225,35 @@ test('a failure reported only through onError is raised once the stream drains',
   });
   aiState.streamParts = [{ type: 'finish', finishReason: 'error', totalUsage: {} }];
 
-  await expect(
-    withCaller(async () => {
-      for await (const _chunk of Services.streamChatCompletion(headers(), body({ stream: true }))) {
-        // Drained for its effect; the throw happens after the last part.
+  let failure: unknown;
+  await withCaller(async () => {
+    for await (const result of ResultServices.streamChatCompletion(headers(), body({ stream: true }))) {
+      if (result.isErr()) {
+        failure = result.error;
       }
-    }),
-  ).rejects.toMatchObject({ status: 401 });
+    }
+  });
+
+  expect(failure).toMatchObject({ code: 'PROVIDER_REJECTED_REQUEST', status: 401 });
 
   expect(logCapture.failed[0]).toMatchObject({ id: LOG_ID });
   expect(logCapture.completed).toHaveLength(0);
 });
 
 test('the streaming path refuses an unsupported parameter before opening a log', async () => {
-  await expect(
-    withCaller(async () => {
-      for await (const _chunk of Services.streamChatCompletion(
-        headers(),
-        body({ stream: true, response_format: { type: 'json_object' } }),
-      )) {
-        // Never reached.
+  let failure: unknown;
+  await withCaller(async () => {
+    for await (const result of ResultServices.streamChatCompletion(
+      headers(),
+      body({ stream: true, response_format: { type: 'json_object' } }),
+    )) {
+      if (result.isErr()) {
+        failure = result.error;
       }
-    }),
-  ).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
+  expect(failure).toMatchObject({ code: 'UNSUPPORTED_RESPONSE_FORMAT' });
 
   expect(aiState.streamCalls).toHaveLength(0);
   expect(logCapture.started).toHaveLength(0);

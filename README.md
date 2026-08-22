@@ -47,8 +47,9 @@ Unit tests don't need anything special to run.
 bun run test:unit
 ```
 
-For integration tests, make sure the containers in the compose file are up.
+From either the host or the repository dev container, a clean checkout only needs its packages installed.
 
 ```bash
+bun install
 bun run test:integration
 ```

@@ -24,9 +24,9 @@ function required(name: string): string {
   if (!value) {
     throw new Error(
       `${name} is unset, so the integration tier cannot initialize its external services.\n\n` +
-        '  docker compose up -d postgres valkey minio minio-init\n' +
-        '  bun run test:db:setup\n\n' +
-        'The local test values are in apps/gateway-backend/.env.example. This fails rather than ' +
+        'Run `bun run test:integration` from the repository root to start the local services, ' +
+        'supply safe test defaults, and prepare the database.\n\n' +
+        'This fails rather than ' +
         'skipping on purpose: a suite that turns green when its infrastructure is missing ' +
         'is worse than one that fails.',
     );

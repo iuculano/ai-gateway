@@ -11,7 +11,7 @@
     "test": "bun run test:unit && bun run test:integration",
     "test:unit": "turbo run test:unit",
     "test:unit:coverage": "turbo run test:unit:coverage",
-    "test:integration": "turbo run test:integration --concurrency=1",
+    "test:integration": "bun run scripts/test-integration.ts",
     "test:db:setup": "turbo run test:db:setup",
     "db:generate": "turbo run db:generate",
     "db:migrate": "turbo run db:migrate",
