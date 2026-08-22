@@ -32,7 +32,12 @@ jobs:
     strategy:
       fail-fast: false # One app failing shouldn't fail everything.
       matrix:
-        app: [gateway-backend, gateway-frontend, worker-webhooks]
+        app:
+          - gateway-backend
+          - gateway-frontend
+          - worker-analytics-rollup
+          - worker-model-catalog
+          - worker-webhooks
 
     steps:
       - uses: actions/checkout@v5
