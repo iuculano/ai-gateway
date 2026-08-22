@@ -60,7 +60,7 @@ const createChatCompletion = createRoute({
       },
     },
     404: {
-      description: 'The request named a prompt, or a version of one, that does not exist',
+      description: 'The request named a prompt, prompt version, or webhook that does not exist',
       content: {
         'application/json': {
           schema: httpError,
@@ -85,6 +85,14 @@ const createChatCompletion = createRoute({
     },
     502: {
       description: 'The upstream provider failed',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    503: {
+      description: 'A requested webhook delivery could not be queued because its inference log was unavailable',
       content: {
         'application/json': {
           schema: httpError,

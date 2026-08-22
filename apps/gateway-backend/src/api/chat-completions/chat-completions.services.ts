@@ -21,8 +21,8 @@ import {
   type ToolSet,
   tool,
 } from 'ai';
-import { HTTPException } from 'hono/http-exception';
 import { LRUCache } from 'lru-cache';
+import { err, ok, type Result } from 'neverthrow';
 import LogsService from '../logs/logs.services';
 import WebhookServices from '../webhooks/webhooks.services';
 import type {
@@ -68,6 +68,27 @@ interface ResolvedModel {
 }
 
 /**
+ * Outcomes a chat-completions caller can act on.
+ *
+ * HTTP is deliberately absent. The service describes what happened; the
+ * handler decides which status, message and headers represent that outcome on
+ * the wire. Unexpected failures in logging, storage, or response validation
+ * still reject (or are deliberately degraded where noted below), matching the
+ * rest of the endpoint services.
+ */
+export type ChatCompletionFailure =
+  | { code: 'MALFORMED_MODEL_IDENTIFIER'; model: string }
+  | { code: 'UNKNOWN_TOOL_CALL'; tool_call_id: string }
+  | { code: 'UNSUPPORTED_RESPONSE_FORMAT'; response_format: string }
+  | { code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' }
+  | { code: 'WEBHOOK_LOG_UNAVAILABLE' }
+  | { code: 'WEBHOOK_NOT_FOUND'; id: string }
+  | { code: 'PROVIDER_INVALID_REQUEST'; message: string; cause: unknown }
+  | { code: 'PROVIDER_REJECTED_REQUEST'; status: number; message: string; cause: unknown }
+  | { code: 'PROVIDER_FAILED'; message: string; cause: unknown }
+  | { code: 'PROVIDER_TIMEOUT'; cause: unknown };
+
+/**
  * Resolves a request's `model` to something callable.
  *
  * STUB. This is meant to read a `models` table - that is where per-model
@@ -93,7 +114,7 @@ interface ResolvedModel {
  * @returns
  * The resolved provider, its model id, and a callable instance.
  */
-function resolveModel(model: string, apiKey: string, baseUrl?: string): ResolvedModel {
+function resolveModel(model: string, apiKey: string, baseUrl?: string): Result<ResolvedModel, ChatCompletionFailure> {
   // Split on the FIRST separator only: OpenRouter-style ids carry their own
   // slashes ("openai/gpt-5" vs "azure/team/deployment").
   const separator = model.indexOf('/');
@@ -103,9 +124,7 @@ function resolveModel(model: string, apiKey: string, baseUrl?: string): Resolved
   const modelId = hasProvider ? model.slice(separator + 1) : model;
 
   if (!modelId) {
-    throw new HTTPException(400, {
-      message: `Malformed model identifier: '${model}'`,
-    });
+    return err({ code: 'MALFORMED_MODEL_IDENTIFIER', model });
   }
 
   const cacheKey = createCacheKey('chat-completions:', {
@@ -117,7 +136,7 @@ function resolveModel(model: string, apiKey: string, baseUrl?: string): Resolved
 
   const cached = providerCache.get(cacheKey);
   if (cached) {
-    return { provider, modelId, instance: cached };
+    return ok({ provider, modelId, instance: cached });
   }
 
   // .chat() rather than the bare factory call. The bare call returns the
@@ -131,7 +150,7 @@ function resolveModel(model: string, apiKey: string, baseUrl?: string): Resolved
 
   providerCache.set(cacheKey, instance);
 
-  return { provider, modelId, instance };
+  return ok({ provider, modelId, instance });
 }
 
 /**
@@ -155,7 +174,7 @@ function flattenText(content: string | Array<{ type: 'text'; text: string }>): s
  * @returns
  * The equivalent SDK messages.
  */
-function toModelMessages(messages: ChatCompletionMessage[]): ModelMessage[] {
+function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[], ChatCompletionFailure> {
   const toolNamesByCallId = new Map<string, string>();
   const converted: ModelMessage[] = [];
 
@@ -216,11 +235,7 @@ function toModelMessages(messages: ChatCompletionMessage[]): ModelMessage[] {
       case 'tool': {
         const toolName = toolNamesByCallId.get(message.tool_call_id);
         if (!toolName) {
-          throw new HTTPException(400, {
-            message:
-              `Tool message references tool_call_id '${message.tool_call_id}', which no ` +
-              'preceding assistant message issued',
-          });
+          return err({ code: 'UNKNOWN_TOOL_CALL', tool_call_id: message.tool_call_id });
         }
 
         converted.push({
@@ -239,7 +254,7 @@ function toModelMessages(messages: ChatCompletionMessage[]): ModelMessage[] {
     }
   }
 
-  return converted;
+  return ok(converted);
 }
 
 /**
@@ -263,23 +278,21 @@ function safeParseJson(value: string): unknown {
  * @param body
  * The validated request body.
  */
-function assertSupported(body: ChatCompletionBody): void {
+function checkSupported(body: ChatCompletionBody): Result<void, ChatCompletionFailure> {
   // Structured output would have to be routed through the SDK's `output`
   // option, which changes the result shape and the streaming contract. Until
   // that is built, saying no is the honest answer.
   if (body.response_format && body.response_format.type !== 'text') {
-    throw new HTTPException(400, {
-      message: `response_format '${body.response_format.type}' is not supported by this gateway`,
-    });
+    return err({ code: 'UNSUPPORTED_RESPONSE_FORMAT', response_format: body.response_format.type });
   }
 
   // top_logprobs is meaningless without logprobs, and OpenAI rejects the
   // combination too.
   if (body.top_logprobs != null && !body.logprobs) {
-    throw new HTTPException(400, {
-      message: 'top_logprobs requires logprobs to be true',
-    });
+    return err({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
   }
+
+  return ok(undefined);
 }
 
 /**
@@ -439,8 +452,7 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
 }
 
 /**
- * Turns whatever the SDK threw into an HTTPException with a status that means
- * something.
+ * Classifies whatever the SDK threw into an expected service outcome.
  *
  * The previous implementation swallowed the error and threw a bare 500, which
  * made a rejected credential, an oversized prompt and a provider outage
@@ -454,13 +466,9 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
  * The thrown value.
  *
  * @returns
- * An HTTPException to throw in its place.
+ * A typed failure for the handler to translate.
  */
-function toHttpException(error: unknown): HTTPException {
-  if (error instanceof HTTPException) {
-    return error;
-  }
-
+function toProviderFailure(error: unknown): ChatCompletionFailure {
   // Unwrap the retry wrapper first, or none of the checks below can match.
   //
   // Anything the SDK considers retryable - 429 above all, and provider 5xx -
@@ -477,13 +485,10 @@ function toHttpException(error: unknown): HTTPException {
     // An abort is the caller's timeout expiring mid-retry rather than a
     // provider verdict, and the attempts underneath are incidental to it.
     if (error.reason === 'abort') {
-      return new HTTPException(504, {
-        message: 'Upstream provider timed out',
-        cause: error,
-      });
+      return { code: 'PROVIDER_TIMEOUT', cause: error };
     }
 
-    return toHttpException(error.lastError);
+    return toProviderFailure(error.lastError);
   }
 
   // The request itself was unacceptable - a malformed prompt, a role the
@@ -495,41 +500,26 @@ function toHttpException(error: unknown): HTTPException {
     InvalidMessageRoleError.isInstance(error) ||
     InvalidArgumentError.isInstance(error)
   ) {
-    return new HTTPException(400, {
-      message: error.message,
-      cause: error,
-    });
+    return { code: 'PROVIDER_INVALID_REQUEST', message: error.message, cause: error };
   }
 
   if (APICallError.isInstance(error)) {
     const status = error.statusCode;
 
     if (status != null && status >= 400 && status < 500) {
-      return new HTTPException(status as 400, {
-        message: `Upstream provider rejected the request: ${error.message}`,
-        cause: error,
-      });
+      return { code: 'PROVIDER_REJECTED_REQUEST', status, message: error.message, cause: error };
     }
 
-    return new HTTPException(502, {
-      message: `Upstream provider failed: ${error.message}`,
-      cause: error,
-    });
+    return { code: 'PROVIDER_FAILED', message: error.message, cause: error };
   }
 
   // AbortSignal.timeout() rejects with a DOMException named TimeoutError, which
   // is what the ai-timeout-ms header ends up producing.
   if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-    return new HTTPException(504, {
-      message: 'Upstream provider timed out',
-      cause: error,
-    });
+    return { code: 'PROVIDER_TIMEOUT', cause: error };
   }
 
-  return new HTTPException(502, {
-    message: 'Upstream provider call failed',
-    cause: error,
-  });
+  return { code: 'PROVIDER_FAILED', message: 'Upstream provider call failed', cause: error };
 }
 
 /**
@@ -702,14 +692,17 @@ async function abandonLog(
  * @param log
  * The log opened for this request, or null when it could not be opened.
  *
- * @throws {HTTPException}
- * 503 when the log this delivery would point at could not be opened, 404 when
- * the webhook is not one of the caller's.
+ * @returns
+ * Ok when no delivery was requested or it was queued, otherwise the expected
+ * reason it could not be queued.
  */
-async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null): Promise<void> {
+async function queueWebhook(
+  headers: ChatCompletionHeaders,
+  log: OpenLog | null,
+): Promise<Result<void, ChatCompletionFailure>> {
   const webhookId = headers['ai-webhook-id'];
   if (!webhookId) {
-    return;
+    return ok(undefined);
   }
 
   // The outbox points at a log, and the worker joins through it to build the
@@ -720,18 +713,16 @@ async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null)
   // mistake and a 4xx would say it was. Told rather than dropped silently:
   // the caller asked for a delivery that cannot be made.
   if (!log) {
-    throw new HTTPException(503, {
-      message: 'Cannot queue a webhook delivery: the log it would point at could not be opened',
-    });
+    return err({ code: 'WEBHOOK_LOG_UNAVAILABLE' });
   }
 
   const queued = await WebhookServices.enqueueDelivery(webhookId, log.id);
 
   if (queued.isErr()) {
-    throw new HTTPException(404, {
-      message: `No webhook with id '${queued.error.id}'`,
-    });
+    return err({ code: 'WEBHOOK_NOT_FOUND', id: queued.error.id });
   }
+
+  return ok(undefined);
 }
 
 /**
@@ -748,20 +739,29 @@ async function queueWebhook(headers: ChatCompletionHeaders, log: OpenLog | null)
  * response header. Not called when the log could not be opened.
  *
  * @returns
- * A completion in OpenAI's chat.completion shape.
- *
- * @throws {HTTPException}
- * 400 for a parameter this gateway cannot honour, the provider's own status
- * for a provider 4xx, 502 for a provider failure, 504 on timeout.
+ * A completion in OpenAI's chat.completion shape, or an expected refusal.
  */
 async function createChatCompletion(
   headers: ChatCompletionHeaders,
   body: ChatCompletionBody,
   onLog?: (logId: string) => void,
-): Promise<ChatCompletion> {
-  assertSupported(body);
+): Promise<Result<ChatCompletion, ChatCompletionFailure>> {
+  const supported = checkSupported(body);
+  if (supported.isErr()) {
+    return err(supported.error);
+  }
 
-  const model = resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  const resolved = resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  if (resolved.isErr()) {
+    return err(resolved.error);
+  }
+
+  const messages = toModelMessages(body.messages);
+  if (messages.isErr()) {
+    return err(messages.error);
+  }
+
+  const model = resolved.value;
   const tools = toTools(body);
 
   const log = await openLog(headers, model);
@@ -769,7 +769,11 @@ async function createChatCompletion(
     onLog?.(log.id);
   }
 
-  await queueWebhook(headers, log);
+  const queued = await queueWebhook(headers, log);
+  if (queued.isErr()) {
+    await abandonLog(log, headers, body);
+    return err(queued.error);
+  }
 
   const startedAt = performance.now();
 
@@ -777,7 +781,7 @@ async function createChatCompletion(
   try {
     result = await generateText({
       model: model.instance,
-      messages: toModelMessages(body.messages),
+      messages: messages.value,
 
       // The SDK otherwise rejects system messages inside `messages` and insists
       // they move to `instructions`. That would mean hoisting them out of the
@@ -793,9 +797,7 @@ async function createChatCompletion(
   } catch (error) {
     await abandonLog(log, headers, body);
 
-    // Rethrown with a meaningful status rather than swallowed. The caller
-    // needs to be able to tell a bad key from an outage.
-    throw toHttpException(error);
+    return err(toProviderFailure(error));
   }
 
   const responseTimeMs = performance.now() - startedAt;
@@ -835,7 +837,7 @@ async function createChatCompletion(
 
   await closeLog(log, headers, body, completion, responseTimeMs);
 
-  return completion;
+  return ok(completion);
 }
 
 /**
@@ -856,22 +858,34 @@ async function createChatCompletion(
  * the response.
  *
  * @returns
- * An async iterable of chunks, in order.
- *
- * @throws {HTTPException}
- * On a failure that happens before the first chunk. A failure DURING the
- * stream cannot change the status code - the 200 and its headers are already
- * on the wire - so it surfaces as a thrown error mid-iteration and the handler
- * closes the stream.
+ * An async iterable of Results. An Err before the first chunk becomes a normal
+ * HTTP error response; an Err after streaming begins closes the already-
+ * committed response, because its status can no longer change.
  */
 async function* streamChatCompletion(
   headers: ChatCompletionHeaders,
   body: ChatCompletionBody,
   onLog?: (logId: string) => void,
-): AsyncGenerator<ChatCompletionChunk> {
-  assertSupported(body);
+): AsyncGenerator<Result<ChatCompletionChunk, ChatCompletionFailure>> {
+  const supported = checkSupported(body);
+  if (supported.isErr()) {
+    yield err(supported.error);
+    return;
+  }
 
-  const model = resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  const resolved = resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  if (resolved.isErr()) {
+    yield err(resolved.error);
+    return;
+  }
+
+  const messages = toModelMessages(body.messages);
+  if (messages.isErr()) {
+    yield err(messages.error);
+    return;
+  }
+
+  const model = resolved.value;
   const tools = toTools(body);
 
   const log = await openLog(headers, model);
@@ -879,34 +893,46 @@ async function* streamChatCompletion(
     onLog?.(log.id);
   }
 
-  await queueWebhook(headers, log);
+  const queued = await queueWebhook(headers, log);
+  if (queued.isErr()) {
+    await abandonLog(log, headers, body);
+    yield err(queued.error);
+    return;
+  }
 
   const startedAt = performance.now();
 
   // Declared before the call because onError closes over it.
-  let streamError: HTTPException | undefined;
+  let streamError: ChatCompletionFailure | undefined;
 
-  const result = streamText({
-    model: model.instance,
-    messages: toModelMessages(body.messages),
+  let result: ReturnType<typeof streamText>;
+  try {
+    result = streamText({
+      model: model.instance,
+      messages: messages.value,
 
-    // The SDK otherwise rejects system messages inside `messages` and insists
-    // they move to `instructions`. That would mean hoisting them out of the
-    // caller's conversation and merging them, which reorders a request a
-    // gateway has no business reordering - OpenAI permits a system message at
-    // any position and this endpoint has to behave the same way.
-    allowSystemInMessages: true,
+      // The SDK otherwise rejects system messages inside `messages` and insists
+      // they move to `instructions`. That would mean hoisting them out of the
+      // caller's conversation and merging them, which reorders a request a
+      // gateway has no business reordering - OpenAI permits a system message at
+      // any position and this endpoint has to behave the same way.
+      allowSystemInMessages: true,
 
-    ...toCallSettings(body, headers),
-    ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
-    ...(toProviderOptions(body) ? { providerOptions: toProviderOptions(body) } : {}),
+      ...toCallSettings(body, headers),
+      ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
+      ...(toProviderOptions(body) ? { providerOptions: toProviderOptions(body) } : {}),
 
-    // Without this the SDK logs the error and ends the stream silently, which
-    // would look to the caller like a completion that simply stopped early.
-    onError: ({ error }) => {
-      streamError = toHttpException(error);
-    },
-  });
+      // Without this the SDK logs the error and ends the stream silently, which
+      // would look to the caller like a completion that simply stopped early.
+      onError: ({ error }) => {
+        streamError = toProviderFailure(error);
+      },
+    });
+  } catch (error) {
+    await abandonLog(log, headers, body);
+    yield err(toProviderFailure(error));
+    return;
+  }
 
   // Every frame has to carry the same id/created/model, so all three are fixed
   // once, here - but they are the GATEWAY's, not the provider's.
@@ -969,14 +995,14 @@ async function* streamChatCompletion(
       opened = true;
 
       // OpenAI's first frame announces the role and carries no content.
-      yield frame({ role: 'assistant', content: '' }, null);
+      yield ok(frame({ role: 'assistant', content: '' }, null));
     }
 
     switch (part.type) {
       case 'text-delta':
         if (part.text) {
           assembledText += part.text;
-          yield frame({ content: part.text }, null);
+          yield ok(frame({ content: part.text }, null));
         }
         break;
 
@@ -989,11 +1015,13 @@ async function* streamChatCompletion(
           function: { name: part.toolName, arguments: '' },
         });
 
-        yield frame(
-          {
-            tool_calls: [{ index: index, id: part.id, type: 'function', function: { name: part.toolName } }],
-          },
-          null,
+        yield ok(
+          frame(
+            {
+              tool_calls: [{ index: index, id: part.id, type: 'function', function: { name: part.toolName } }],
+            },
+            null,
+          ),
         );
         break;
       }
@@ -1006,7 +1034,7 @@ async function* streamChatCompletion(
             accumulating.function.arguments += part.delta;
           }
 
-          yield frame({ tool_calls: [{ index: index, function: { arguments: part.delta } }] }, null);
+          yield ok(frame({ tool_calls: [{ index: index, function: { arguments: part.delta } }] }, null));
         }
         break;
       }
@@ -1019,9 +1047,10 @@ async function* streamChatCompletion(
       case 'error': {
         await abandonLog(log, headers, body);
 
-        // onError has already converted this; rethrow so the handler stops
+        // onError has already classified this. An Err makes the handler stop
         // rather than closing the stream as if it had succeeded.
-        throw streamError ?? toHttpException(part.error);
+        yield err(streamError ?? toProviderFailure(part.error));
+        return;
       }
 
       default:
@@ -1033,29 +1062,30 @@ async function* streamChatCompletion(
 
   if (streamError) {
     await abandonLog(log, headers, body);
-    throw streamError;
+    yield err(streamError);
+    return;
   }
 
   // A provider that answered with nothing at all never tripped the gate above,
   // and a stream whose only frame is a finish reason is malformed. Emit the
   // opening frame it is owed first.
   if (!opened) {
-    yield frame({ role: 'assistant', content: '' }, null);
+    yield ok(frame({ role: 'assistant', content: '' }, null));
   }
 
   // The terminating frame: an empty delta plus the finish reason.
-  yield frame({}, finishReason);
+  yield ok(frame({}, finishReason));
 
   // Usage rides in a trailing frame with no choices, and only when asked for.
   if (body.stream_options?.include_usage && usage) {
-    yield {
+    yield ok({
       id: id,
       object: 'chat.completion.chunk',
       created: created,
       model: modelId,
       choices: [],
       usage: usage,
-    };
+    });
   }
 
   // Logged only once the stream has run to completion, which is the first

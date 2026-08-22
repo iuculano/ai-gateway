@@ -4,10 +4,11 @@ import { type Caller, getActorId, getCaller, zodExceptionHook } from '@repo/hono
 import { consumeFixedWindowCounter } from '@repo/redis';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
+import type { Result } from 'neverthrow';
 import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
-import type { ChatCompletionBody, RateLimitPolicy } from './chat-completions.schemas';
-import Services from './chat-completions.services';
+import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from './chat-completions.schemas';
+import Services, { type ChatCompletionFailure } from './chat-completions.services';
 
 /**
  * What the ai-rate-limit-policy header counts against.
@@ -139,6 +140,80 @@ function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPExcept
 }
 
 /**
+ * The HTTP translation for an expected completion refusal.
+ *
+ * Kept here rather than in the service so the service can be reused without
+ * importing Hono, matching every other Result-returning endpoint.
+ */
+function toChatCompletionHttpException(failure: ChatCompletionFailure): HTTPException {
+  const { code } = failure;
+
+  switch (code) {
+    case 'MALFORMED_MODEL_IDENTIFIER':
+      return new HTTPException(400, {
+        message: `Malformed model identifier: '${failure.model}'`,
+      });
+
+    case 'UNKNOWN_TOOL_CALL':
+      return new HTTPException(400, {
+        message:
+          `Tool message references tool_call_id '${failure.tool_call_id}', which no ` +
+          'preceding assistant message issued',
+      });
+
+    case 'UNSUPPORTED_RESPONSE_FORMAT':
+      return new HTTPException(400, {
+        message: `response_format '${failure.response_format}' is not supported by this gateway`,
+      });
+
+    case 'TOP_LOGPROBS_REQUIRES_LOGPROBS':
+      return new HTTPException(400, {
+        message: 'top_logprobs requires logprobs to be true',
+      });
+
+    case 'WEBHOOK_LOG_UNAVAILABLE':
+      return new HTTPException(503, {
+        message: 'Cannot queue a webhook delivery: the log it would point at could not be opened',
+      });
+
+    case 'WEBHOOK_NOT_FOUND':
+      return new HTTPException(404, {
+        message: `No webhook with id '${failure.id}'`,
+      });
+
+    case 'PROVIDER_INVALID_REQUEST':
+      return new HTTPException(400, {
+        message: failure.message,
+        cause: failure.cause,
+      });
+
+    case 'PROVIDER_REJECTED_REQUEST':
+      return new HTTPException(failure.status as 400, {
+        message: `Upstream provider rejected the request: ${failure.message}`,
+        cause: failure.cause,
+      });
+
+    case 'PROVIDER_FAILED':
+      return new HTTPException(502, {
+        message:
+          failure.message === 'Upstream provider call failed'
+            ? failure.message
+            : `Upstream provider failed: ${failure.message}`,
+        cause: failure.cause,
+      });
+
+    case 'PROVIDER_TIMEOUT':
+      return new HTTPException(504, {
+        message: 'Upstream provider timed out',
+        cause: failure.cause,
+      });
+
+    default:
+      return assertNever(code);
+  }
+}
+
+/**
  * Expands a prompt reference into a leading system message.
  *
  * Returns a rewritten body rather than mutating: everything downstream - the
@@ -219,8 +294,14 @@ const createChatCompletion = defineOpenAPIRoute({
     };
 
     if (!expanded.body.stream) {
-      const completion = await Services.createChatCompletion(headers, expanded.body, echoLogId);
-      return c.json(completion, 200);
+      const result = await Services.createChatCompletion(headers, expanded.body, echoLogId);
+
+      return result.match(
+        (completion) => c.json(completion, 200),
+        (failure) => {
+          throw toChatCompletionHttpException(failure);
+        },
+      );
     }
 
     // The first chunk is pulled before streamSSE() takes over so that a
@@ -231,13 +312,26 @@ const createChatCompletion = defineOpenAPIRoute({
     const chunks = Services.streamChatCompletion(headers, expanded.body, echoLogId);
     const first = await chunks.next();
 
+    const unwrap = (result: Result<ChatCompletionChunk, ChatCompletionFailure>) =>
+      result.match(
+        (chunk) => chunk,
+        (failure) => {
+          throw toChatCompletionHttpException(failure);
+        },
+      );
+
+    // Unwrap before streamSSE commits a 200. Once the response begins, an Err
+    // can only terminate the stream; before it begins, it remains a normal
+    // JSON error response with the status chosen above.
+    const firstChunk = first.done ? undefined : unwrap(first.value);
+
     return streamSSE(c, async (sse) => {
-      if (!first.done) {
-        await sse.writeSSE({ data: JSON.stringify(first.value) });
+      if (firstChunk) {
+        await sse.writeSSE({ data: JSON.stringify(firstChunk) });
       }
 
-      for await (const chunk of chunks) {
-        await sse.writeSSE({ data: JSON.stringify(chunk) });
+      for await (const result of chunks) {
+        await sse.writeSSE({ data: JSON.stringify(unwrap(result)) });
       }
 
       await sse.writeSSE({ data: '[DONE]' });
