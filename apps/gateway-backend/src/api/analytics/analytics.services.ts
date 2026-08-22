@@ -20,7 +20,9 @@ import Schemas, {
  * The parameters for querying analytics data.
  *
  * @returns
- * A promise that resolves to the analytics response.
+ * The analytics response. This deliberately stays a plain Promise rather than
+ * Result: an empty aggregation is a valid response, so there is no expected
+ * refusal for a caller to act on. Infrastructure and schema failures reject.
  */
 async function queryAnalytics(request: AnalyticsBody): Promise<AnalyticsResponse> {
   const organizationId = getCaller().organization.id;
@@ -144,7 +146,9 @@ async function sealedThrough(organizationId: string): Promise<Date> {
  * The interval, the dimensions to pivot on, and any filters to narrow by.
  *
  * @returns
- * The points, plus the watermark they are current as of.
+ * The points, plus the watermark they are current as of. Like queryAnalytics,
+ * this has no expected refusal; an empty series is valid and dependency
+ * failures reject rather than creating a Result whose error type is never.
  */
 async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<AnalyticsSeriesResponse> {
   const organizationId = getCaller().organization.id;

@@ -10,9 +10,9 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook })
    */
   .openapi(Routes.postAnalytics, async (c) => {
     const body = c.req.valid('json');
-    const result = await Services.queryAnalytics(body);
+    const analytics = await Services.queryAnalytics(body);
 
-    return c.json(result, 200);
+    return c.json(analytics, 200);
   })
 
   /**
@@ -21,9 +21,9 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook })
    */
   .openapi(Routes.postAnalyticsSeries, async (c) => {
     const body = c.req.valid('json');
-    const result = await Services.queryAnalyticsSeries(body);
+    const series = await Services.queryAnalyticsSeries(body);
 
-    return c.json(result, 200);
+    return c.json(series, 200);
   });
 
 export default app;
