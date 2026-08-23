@@ -183,10 +183,7 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
       .where(and(eq(models.source, 'builtin'), inArray(models.provider, providers), isNull(models.delisted_at)))
       .returning({ id: models.id });
 
-    logger.debug(
-      { written, delisted: delisted, confirmed: confirmed.length },
-      'Catalogue upsert complete',
-    );
+    logger.debug({ written, delisted: delisted, confirmed: confirmed.length }, 'Catalogue upsert complete');
 
     return { written, delisted: delisted, confirmed: confirmed.length };
   });
