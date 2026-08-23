@@ -7,8 +7,7 @@ on:
     tags:     ['v*']
   workflow_dispatch:
 
-# Superseded pull request runs are worth nothing, so cancel them. Pushes to main
-# and tags are exempt: each one gates a publish, so each needs its own verdict.
+# New commit should supersede the previous and cancel it.
 concurrency:
   group:              ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -34,9 +33,9 @@ jobs:
           turbo-cache: 'false'
 
       # `biome ci` is the non-writing counterpart to `lint` plus `format` plus
-      # the import sorter, which is what the editor integration applies on save.
+      # the import sorter.
       - name: Check formatting, lints and import order
-        run:  bun run check
+        run:  bun run check # maybe think of a better name...
 
   check-types:
     name:            Types
@@ -48,7 +47,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Type check every workspace
-        run: bun run check-types
+        run:  bun run check-types
 
   audit:
     name:            Audit
@@ -58,20 +57,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Not the workspace setup: `bun audit` resolves from bun.lock, so having
+      # `bun audit` resolves from bun.lock, so having
       # the dependency tree on disk would buy nothing.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
 
-      # Informational. `--audit-level` filters output as well as the exit code,
-      # so without this pass the lower advisories would never be printed at all.
+      # || true is to avoid failing the workflow, it'll just force the shell
+      # command to succeed so we always print everything out.
       - name: Report every advisory
         run:  bun audit || true
 
-      # The gate. Only high and critical fail: a moderate advisory in a
-      # transitive dev dependency should not block every merge in the repository
-      # until someone upstream publishes a fix.
+      # Avoid blocking for a low or moderate advisory, but fail on high or
+      # critical.
       - name: Fail on high or critical
         run:  bun audit --audit-level=high
 
@@ -99,8 +97,8 @@ jobs:
       - name: Run integration tests
         run:  bun run test:integration
 
-      # A failure here is usually a service that never came up, and the runner
-      # is gone before anyone can look.
+      # Tests in prior step failed - try to preserve service logs before the
+      # runner is destroyed by just dumping the last 100 lines to output.
       - name: Dump service logs
         if:   failure()
         run:  docker compose logs --no-color --tail 100
@@ -121,8 +119,8 @@ jobs:
       - name: Build every workspace
         run:  bun run build
 
-  # Images are only worth building from a commit that passed everything, so this
-  # gates on the full set rather than racing them in a separate workflow.
+  # Only bother with trying to kick off the publish workflow if everything else
+  # has passed up til this point.
   publish:
     name:  Publish
     needs: [lint, check-types, audit, test-unit, test-integration, build]

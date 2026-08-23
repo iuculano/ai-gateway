@@ -5,12 +5,15 @@ on:
   workflow_call:
   workflow_dispatch:
   schedule:
-    - cron: '0 4 * * 1' # Midnight Eastern on Mondays.
+    - cron:     '0 0 * * 1'
+      timezone: America/New_York
 
-# A scheduled rebuild and a push would otherwise race to move `latest`.
+# Queue publishes so concurrent runs cannot race to move mutable tags such as
+# `latest` or a SemVer series tag such as `1.2`.
 concurrency:
-  group:              publish-${{ github.ref }}
+  group:              publish
   cancel-in-progress: false
+  queue:              max
 
 permissions:
   contents: read
