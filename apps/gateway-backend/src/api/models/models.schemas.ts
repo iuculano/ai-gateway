@@ -94,11 +94,6 @@ const listProviders = createSchema({
       z.object({
         id: z.string(),
 
-        // Whether the gateway can actually route to this provider. The
-        // catalogue is deliberately wider than that, so presence in this list
-        // is not a claim that a request would succeed.
-        routable: z.boolean(),
-
         // The newest sync across this provider's models. Diverges from the
         // others exactly when a provider stops arriving upstream.
         synced_at: nullableTimestamp,

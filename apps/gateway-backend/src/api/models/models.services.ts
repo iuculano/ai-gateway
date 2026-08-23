@@ -1,4 +1,4 @@
-import { isProvider, probe, toPage } from '@repo/core';
+import { probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, isNull, lt, or } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
@@ -164,19 +164,14 @@ async function listProviders(): Promise<ListProvidersResponse> {
     }
   }
 
-  const data = [...grouped.entries()]
-    .map(([provider, providerRows]) => ({
-      id: provider,
-      routable: isProvider(provider),
-      synced_at: providerRows.reduce<Date | null>(
-        (latest, row) => (row.synced_at && (!latest || row.synced_at > latest) ? row.synced_at : latest),
-        null,
-      ),
-      models: providerRows,
-    }))
-    // Routable providers first: a catalogue entry you can actually call is
-    // worth more than one you can only read about.
-    .sort((a, b) => Number(b.routable) - Number(a.routable) || a.id.localeCompare(b.id));
+  const data = [...grouped.entries()].map(([provider, providerRows]) => ({
+    id: provider,
+    synced_at: providerRows.reduce<Date | null>(
+      (latest, row) => (row.synced_at && (!latest || row.synced_at > latest) ? row.synced_at : latest),
+      null,
+    ),
+    models: providerRows,
+  }));
 
   return Schemas.listProviders.response.parse({ data });
 }
