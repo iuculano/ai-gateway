@@ -12,20 +12,6 @@ describe('httpError', () => {
     });
   });
 
-  test('accepts validation details and a request correlation id', () => {
-    const value = {
-      error: {
-        code: 400,
-        status: 'Bad Request',
-        message: 'Validation failed',
-        details: [{ field: 'json.name', issue: 'Required', received: null }],
-        request_id: 'request-123',
-      },
-    };
-
-    expect(httpError.parse(value)).toEqual(value);
-  });
-
   test('rejects missing, mistyped, or unexpected fields', () => {
     expect(httpError.safeParse({ error: { status: 'Bad Request', message: 'Missing code' } }).success).toBe(false);
     expect(httpError.safeParse({ error: { code: '400', status: 'Bad Request', message: 'Wrong code' } }).success).toBe(

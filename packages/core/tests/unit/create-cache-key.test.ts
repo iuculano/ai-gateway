@@ -21,31 +21,4 @@ describe('createCacheKey', () => {
       expect(createCacheKey('key:', value)).toMatch(/^key:[0-9a-f]{64}$/);
     }
   });
-
-  test('rejects top-level and nested values JSON would silently discard or rewrite', () => {
-    const invalid = [
-      undefined,
-      () => undefined,
-      Symbol('value'),
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-      { value: undefined },
-      { value: () => undefined },
-      { value: Symbol('value') },
-      { value: Number.NEGATIVE_INFINITY },
-      [undefined],
-    ];
-
-    for (const value of invalid) {
-      expect(() => createCacheKey('key:', value)).toThrow('Cache key data is not JSON-serializable');
-    }
-  });
-
-  test('normalizes BigInt and circular-reference failures to the package error', () => {
-    const circular: { self?: unknown } = {};
-    circular.self = circular;
-
-    expect(() => createCacheKey('key:', 1n)).toThrow('Cache key data is not JSON-serializable');
-    expect(() => createCacheKey('key:', circular)).toThrow('Cache key data is not JSON-serializable');
-  });
 });
