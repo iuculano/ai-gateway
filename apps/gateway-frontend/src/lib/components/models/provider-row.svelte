@@ -20,9 +20,8 @@ let {
   ontoggle: () => void;
 } = $props();
 
-// The display name is the frontend's, not the API's. It is a label for a closed
-// set of providers, so it lives beside the brand colour rather than travelling
-// over the wire on every row.
+// Known providers get their display name and brand colour locally; everything
+// else falls back to a generated label and neutral colour.
 const tone = $derived(providerTone(provider.id));
 
 const models = $derived(provider.models);
@@ -74,12 +73,6 @@ const sync = $derived.by(() => {
 
 const detailItems: DetailItem[] = $derived([
   { label: 'Provider id', value: provider.id },
-  {
-    label: 'Routing',
-    value: provider.routable ? 'Routable' : 'Catalogue only',
-    mono: false,
-    tone: provider.routable ? undefined : '#f59e0b',
-  },
   { label: 'Rows', value: `${builtinCount} built-in · ${customCount} custom`, mono: false },
   { label: 'Unpriced', value: `${unpricedCount} of ${models.length}`, mono: false },
 ]);
@@ -90,16 +83,6 @@ const detailItems: DetailItem[] = $derived([
 		<span class="inline-flex min-w-0 items-center gap-[9px]">
 			<span class="size-[7px] flex-none rounded-full" style:background={tone.color}></span>
 			<span class="overflow-hidden text-[13px] font-medium text-ellipsis whitespace-nowrap">{tone.label}</span>
-			{#if !provider.routable}
-				<!-- Said out loud, because a catalogue that lists models no request can
-				     reach is only honest if it admits which ones those are. -->
-				<span
-					class="flex-none rounded-[5px] bg-amber-500/12 px-1.5 py-px text-[10px] font-medium text-amber-500"
-					title="The catalogue carries this provider, but the gateway cannot route to it yet."
-				>
-					Catalogue only
-				</span>
-			{/if}
 		</span>
 
 		<span class="text-[12.5px] whitespace-nowrap text-zinc-500 tabular-nums">

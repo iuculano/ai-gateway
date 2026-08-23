@@ -3,7 +3,7 @@ import { boolean, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex
 import { organizations } from './organizations';
 
 /**
- * The model catalogue: what the gateway can route to, and what it costs.
+ * The model catalogue and its published prices.
  *
  * Holds two kinds of row, told apart by `source`. Built-ins are the catalogue
  * worker's, mirrored from models.dev and replaced on every sync. Custom rows are
@@ -34,7 +34,7 @@ export const models = pgTable(
       .default('custom'),
 
     name: text().notNull(), // The id the provider knows, e.g. 'gpt-5'.
-    provider: text().notNull(), // 'openai', 'azure' - see PROVIDERS in @repo/core.
+    provider: text().notNull(), // The provider id, such as 'openai' or 'azure'.
     display_name: text(),
 
     // As published upstream. 'available' is the absence of a status, not a

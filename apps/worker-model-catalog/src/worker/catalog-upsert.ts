@@ -92,9 +92,9 @@ const TRACKED = [
 ] as const;
 
 /**
- * Writes one narrowed snapshot into `models`.
+ * Writes one catalogue snapshot into `models`.
  *
- * Three statements in one transaction, each with a single job:
+ * Three jobs run in one transaction:
  *
  *  1. Upsert what arrived, touching only rows whose data actually differs.
  *  2. Mark absent built-ins delisted - never delete them, because a log from
@@ -110,7 +110,7 @@ const TRACKED = [
  * `source = 'builtin'`, and every statement below repeats that predicate.
  *
  * @param selected
- * The allowlisted offerings from one catalogue snapshot.
+ * The offerings from one catalogue snapshot.
  */
 export async function upsertCatalog(selected: SelectedOffering[]): Promise<UpsertSummary> {
   if (selected.length === 0) {
@@ -133,45 +133,54 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
   );
 
   return db.transaction(async (tx) => {
-    const written = await tx
-      .insert(models)
-      .values(rows)
-      .onConflictDoUpdate({
-        target: [models.provider, models.name],
+    let written = 0;
 
-        // Required, not optional: the unique index is partial, and without the
-        // same predicate Postgres cannot tell which index this conflicts on.
-        targetWhere: sql`${models.source} = 'builtin'`,
+    // The complete models.dev catalogue is larger than Postgres's bind
+    // parameter limit, so write it in bounded statements within this one
+    // transaction.
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const batch = await tx
+        .insert(models)
+        .values(rows.slice(offset, offset + 500))
+        .onConflictDoUpdate({
+          target: [models.provider, models.name],
 
-        set: {
-          display_name: sql`excluded.display_name`,
-          status: sql`excluded.status`,
-          cost_input: sql`excluded.cost_input`,
-          cost_output: sql`excluded.cost_output`,
-          cost_cache_read: sql`excluded.cost_cache_read`,
-          context_limit: sql`excluded.context_limit`,
-          attachment: sql`excluded.attachment`,
-          reasoning: sql`excluded.reasoning`,
-          tool_call: sql`excluded.tool_call`,
-          structured_output: sql`excluded.structured_output`,
-          config: sql`excluded.config`,
+          // Required, not optional: the unique index is partial, and without the
+          // same predicate Postgres cannot tell which index this conflicts on.
+          targetWhere: sql`${models.source} = 'builtin'`,
 
-          // A model that came back is no longer delisted.
-          delisted_at: sql`null`,
-          updated_at: sql`now()`,
-        },
+          set: {
+            display_name: sql`excluded.display_name`,
+            status: sql`excluded.status`,
+            cost_input: sql`excluded.cost_input`,
+            cost_output: sql`excluded.cost_output`,
+            cost_cache_read: sql`excluded.cost_cache_read`,
+            context_limit: sql`excluded.context_limit`,
+            attachment: sql`excluded.attachment`,
+            reasoning: sql`excluded.reasoning`,
+            tool_call: sql`excluded.tool_call`,
+            structured_output: sql`excluded.structured_output`,
+            config: sql`excluded.config`,
 
-        // The row is left completely alone when nothing differs, which is what
-        // keeps `updated_at` meaning "this model changed" rather than "the
-        // worker ran". `tags` is absent from both lists on purpose - those are
-        // the operator's labels, not the catalogue's.
-        setWhere: sql`(${current}) IS DISTINCT FROM (${incoming})`,
-      })
-      .returning({ id: models.id });
+            // A model that came back is no longer delisted.
+            delisted_at: sql`null`,
+            updated_at: sql`now()`,
+          },
+
+          // The row is left completely alone when nothing differs, which is what
+          // keeps `updated_at` meaning "this model changed" rather than "the
+          // worker ran". `tags` is absent from both lists on purpose - those are
+          // the operator's labels, not the catalogue's.
+          setWhere: sql`(${current}) IS DISTINCT FROM (${incoming})`,
+        })
+        .returning({ id: models.id });
+
+      written += batch.length;
+    }
 
     // Per provider, because "absent" is only meaningful within a provider that
-    // was itself present. A provider missing from the payload entirely has
-    // already been warned about and none of its rows are touched here.
+    // supplied offerings in this snapshot. Providers absent from the payload
+    // are not touched.
     let delisted = 0;
     for (const provider of providers) {
       const names = rows.filter((row) => row.provider === provider).map((row) => row.name);
@@ -202,10 +211,10 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
       .returning({ id: models.id });
 
     logger.debug(
-      { written: written.length, delisted: delisted, confirmed: confirmed.length },
+      { written, delisted: delisted, confirmed: confirmed.length },
       'Catalogue upsert complete',
     );
 
-    return { written: written.length, delisted: delisted, confirmed: confirmed.length };
+    return { written, delisted: delisted, confirmed: confirmed.length };
   });
 }

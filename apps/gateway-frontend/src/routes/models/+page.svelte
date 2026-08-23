@@ -103,7 +103,7 @@ const lastSynced = $derived.by(() => {
 
 <PageHeader
 	title="Models"
-	description="The catalogue the gateway prices and routes against, synced hourly from models.dev."
+	description="The model catalogue and published prices, synced hourly from models.dev."
 />
 
 <StatGrid>

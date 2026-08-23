@@ -1,5 +1,4 @@
 import { afterAll, expect, mock, test } from 'bun:test';
-import { CATALOG_SOURCE_IDS } from '@repo/core';
 import type { SelectedOffering } from '../../src/worker/catalog-sync';
 
 process.env.POSTGRES_CONNECTION_STRING = 'postgresql://test:test@localhost/worker_unit_test';
@@ -20,16 +19,12 @@ afterAll(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('narrows a changed catalog to the allowlist and reuses its ETag on the next tick', async () => {
+test('syncs every provider in a changed catalog and reuses its ETag on the next tick', async () => {
   const requests: RequestInit[] = [];
-  const providers: Record<string, { id: string; models: Record<string, { id: string; cost?: { input: number } }> }> =
-    Object.fromEntries(
-      CATALOG_SOURCE_IDS.map((provider) => [
-        provider,
-        { id: provider, models: { [`${provider}-model`]: { id: `${provider}-model`, cost: { input: 1 } } } },
-      ]),
-    );
-  providers.unused = { id: 'unused', models: { ignored: { id: 'ignored' } } };
+  const providers = {
+    openai: { id: 'openai', models: { 'gpt-test': { id: 'gpt-test', cost: { input: 1 } } } },
+    unsupported: { id: 'unsupported', models: { unknown: { id: 'unknown' } } },
+  };
 
   globalThis.fetch = mock(async (_input, init) => {
     requests.push(init ?? {});
@@ -45,8 +40,7 @@ test('narrows a changed catalog to the allowlist and reuses its ETag on the next
   await tickModelCatalog();
 
   expect(synced).toHaveLength(1);
-  expect(synced[0]?.map((item) => item.provider)).toEqual([...CATALOG_SOURCE_IDS]);
-  expect(synced[0]?.some((item) => item.offering.id === 'ignored')).toBe(false);
+  expect(synced[0]?.map((item) => item.provider)).toEqual(['openai', 'unsupported']);
   expect(requests[0]?.headers).toEqual({});
   expect(requests[1]?.headers).toEqual({ 'if-none-match': '"catalog-revision-1"' });
 });

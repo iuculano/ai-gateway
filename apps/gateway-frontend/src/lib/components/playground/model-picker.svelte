@@ -75,22 +75,17 @@ onMount(async () => {
   try {
     const result = await listProviders();
 
-    // Routable providers only. The catalogue deliberately carries more than the
-    // gateway can reach, and a playground whose whole job is to send a request
-    // should not offer one that is guaranteed to fail at the provider.
-    options = result.data
-      .filter((provider) => provider.routable)
-      .flatMap((provider) =>
-        provider.models
-          .filter((model) => model.delisted_at === null)
-          .map((model) => ({
-            slug: `${provider.id}/${model.name}`,
-            provider: provider.id,
-            name: model.name,
-            cost_input: model.cost_input,
-            context_limit: model.context_limit,
-          })),
-      );
+    options = result.data.flatMap((provider) =>
+      provider.models
+        .filter((model) => model.delisted_at === null)
+        .map((model) => ({
+          slug: `${provider.id}/${model.name}`,
+          provider: provider.id,
+          name: model.name,
+          cost_input: model.cost_input,
+          context_limit: model.context_limit,
+        })),
+    );
   } catch {
     // Suggestions are a convenience. Losing them leaves a plain text field,
     // which is exactly what this was before the catalogue existed.

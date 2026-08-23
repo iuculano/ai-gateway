@@ -1,4 +1,4 @@
-import { CATALOG_SOURCE_IDS, logger } from '@repo/core';
+import { logger } from '@repo/core';
 import { environment } from '../environment';
 import { upsertCatalog } from './catalog-upsert';
 
@@ -118,39 +118,15 @@ async function fetchCatalog(): Promise<Catalog | null> {
   return catalog;
 }
 
-/**
- * Narrows a snapshot to the providers this gateway can actually reach.
- *
- * models.dev has no per-provider endpoint - the whole 4 MB arrives either way -
- * so this is a filter over an already-downloaded body rather than a narrower
- * request.
- *
- * @param catalog
- * A freshly fetched catalogue snapshot.
- */
-function selectAllowed(catalog: Catalog): SelectedOffering[] {
-  const selected: SelectedOffering[] = [];
-
-  for (const sourceId of CATALOG_SOURCE_IDS) {
-    const provider = catalog.providers[sourceId];
-
-    if (!provider) {
-      // Not fatal, but it means the allowlist names something models.dev no
-      // longer publishes, and those models will quietly stop being repriced.
-      logger.warn({ provider: sourceId }, 'Allowlisted provider is absent from the models.dev catalogue');
-      continue;
-    }
-
-    for (const offering of Object.values(provider.models)) {
-      selected.push({ provider: sourceId, offering });
-    }
-  }
-
-  return selected;
+/** Flattens a models.dev snapshot into rows for the catalogue upsert. */
+function selectOfferings(catalog: Catalog): SelectedOffering[] {
+  return Object.entries(catalog.providers).flatMap(([provider, entry]) =>
+    Object.values(entry.models).map((offering) => ({ provider, offering })),
+  );
 }
 
 /**
- * One pass: fetch if changed, narrow to the allowlist, upsert.
+ * One pass: fetch if changed, flatten the provider offerings, and upsert.
  *
  * Throws on a failed fetch or an unparseable body. The caller decides what that
  * means - a catalogue that is a few hours stale is not an outage, so a failed
@@ -164,14 +140,14 @@ export async function tickModelCatalog(): Promise<void> {
     return;
   }
 
-  const selected = selectAllowed(catalog);
-  const unpriced = selected.filter((item) => !item.offering.cost).length;
-  const summary = await upsertCatalog(selected);
+  const offerings = selectOfferings(catalog);
+  const unpriced = offerings.filter((item) => !item.offering.cost).length;
+  const summary = await upsertCatalog(offerings);
 
   logger.info(
     {
-      providers: CATALOG_SOURCE_IDS.length,
-      offerings: selected.length,
+      providers: Object.keys(catalog.providers).length,
+      offerings: offerings.length,
       unpriced: unpriced,
       written: summary.written,
       delisted: summary.delisted,
