@@ -32,13 +32,13 @@ RUN bun run --cwd apps/gateway-backend build
 
 FROM ${RUNTIME_IMAGE} AS runtime
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=8080
 WORKDIR /app
 
 COPY --from=builder --chown=65532:65532 --chmod=0555 \
     /repo/apps/gateway-backend/dist/gateway-backend /app/gateway-backend
 
 USER 65532:65532
-EXPOSE 3000
+EXPOSE 8080
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/app/gateway-backend"]

@@ -7,8 +7,6 @@ services:
     environment:
       POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: postgres
-      # Must match the database in POSTGRES_CONNECTION_STRING - this is the one
-      # both the app and drizzle-kit connect to.
       POSTGRES_DB:       ai_gateway
     volumes:
       - pg_data:/var/lib/postgresql/18/docker

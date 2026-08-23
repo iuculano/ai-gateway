@@ -32,13 +32,13 @@ RUN bun run --cwd apps/worker-analytics-rollup build
 
 FROM ${RUNTIME_IMAGE} AS runtime
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=8084
 WORKDIR /app
 
 COPY --from=builder --chown=65532:65532 --chmod=0555 \
     /repo/apps/worker-analytics-rollup/dist/worker-analytics-rollup /app/worker-analytics-rollup
 
 USER 65532:65532
-EXPOSE 3000
+EXPOSE 8084
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/app/worker-analytics-rollup"]

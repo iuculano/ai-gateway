@@ -1,4 +1,3 @@
-import { swaggerUI } from '@hono/swagger-ui';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { logger } from '@repo/core';
 import { errorHandler } from '@repo/hono';
@@ -23,13 +22,6 @@ app.doc31('/open-api.json', {
     title: 'worker-model-catalog',
   },
 });
-
-app.get(
-  '/docs',
-  swaggerUI({
-    url: '/open-api.json',
-  }),
-);
 
 app.route('/', healthHandlers);
 

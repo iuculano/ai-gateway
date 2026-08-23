@@ -1,42 +1,33 @@
-# sv
+# gateway-frontend
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Web interface for the gateway.
 
-## Creating a project
+## Getting started
 
-If you're seeing this, you've probably already done this step. Congrats!
+If running locally, bring up the supporting infrastructure first.
 
-```sh
-# create a new project
-npx sv create my-app
+```bash
+# From the repository root, if not already running.
+docker compose up -d
+
+# Then you can start the app. You may need to create a .env file first.
+bun run --cwd apps/gateway-frontend dev
 ```
 
-To recreate this project with the same configuration:
+## Configuration
 
-```sh
-# recreate this project
-bun x sv@0.16.1 create --template minimal --types ts --install bun ./
-```
+The application can be configure via environment variables.
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+| Variable                   | Default                 | Description                    |
+| -------------------------- | ----------------------- | ------------------------------ |
+| `PORT`                     | `8081`                  | HTTP server port               |
+| `BACKEND_URL`              | `http://localhost:8080` | Gateway backend URL            |
+| `ZITADEL_ISSUER`           | Required                | OIDC issuer URL                |
+| `ZITADEL_CLIENT_ID`        | Required                | OIDC client ID                 |
+| `OIDC_REFRESH_ENABLED`     | `false`                 | Request refresh tokens         |
+| `POST_LOGOUT_REDIRECT_URI` | Optional                | Redirect after identity logout |
+| `REDIS_URL`                | `redis://localhost:6379` | Redis connection URL           |
+| `REDIS_USERNAME`           | Optional                | Redis username                 |
+| `REDIS_PASSWORD`           | Optional                | Redis password                 |
+| `SESSION_IDLE_SECONDS`     | `28800`                 | Session idle lifetime          |
+| `SESSION_ABSOLUTE_SECONDS` | `604800`                | Maximum session lifetime       |

@@ -35,7 +35,7 @@ RUN bun build apps/gateway-frontend/build/index.js \
 FROM ${RUNTIME_IMAGE} AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3000
+    PORT=8081
 WORKDIR /app
 
 COPY --from=builder --chown=65532:65532 --chmod=0555 \
@@ -44,6 +44,6 @@ COPY --from=builder --chown=65532:65532 \
     /repo/apps/gateway-frontend/build/client /app/client
 
 USER 65532:65532
-EXPOSE 3000
+EXPOSE 8081
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/app/gateway-frontend"]

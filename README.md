@@ -47,7 +47,8 @@ Unit tests don't need anything special to run.
 bun run test:unit
 ```
 
-From either the host or the repository dev container, a clean checkout only needs its packages installed.
+From either the host or the repository dev container, a clean checkout only
+needs its packages installed.
 
 ```bash
 bun install

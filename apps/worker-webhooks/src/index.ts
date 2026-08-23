@@ -1,13 +1,10 @@
-import { swaggerUI } from '@hono/swagger-ui';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { logger } from '@repo/core';
 import { errorHandler } from '@repo/hono';
 import { requestId } from 'hono/request-id';
-// Middleware
 import { secureHeaders } from 'hono/secure-headers';
 import healthHandlers from './api/health/health.handlers';
 import { environment } from './environment';
-
 import { tickWebhookProcessor } from './worker/webhook-processor';
 
 export const app = new OpenAPIHono();
@@ -23,13 +20,6 @@ app.doc31('/open-api.json', {
     title: 'gateway-api',
   },
 });
-
-app.get(
-  '/docs',
-  swaggerUI({
-    url: '/open-api.json',
-  }),
-);
 
 app.route('/', healthHandlers);
 
@@ -71,15 +61,22 @@ const interval = environment.WORKER_ENABLED
   : null;
 
 if (environment.WORKER_ENABLED) {
-  logger.info(
-    { poll_interval_ms: environment.WORKER_POLL_INTERVAL_MS, batch_size: environment.WORKER_BATCH_SIZE },
-    'Webhook processor started',
-  );
+  const startupInfo = {
+    poll_interval_ms: environment.WORKER_POLL_INTERVAL_MS,
+    batch_size: environment.WORKER_BATCH_SIZE,
+  };
+
+  logger.info(startupInfo, 'Webhook processor started');
 } else {
   logger.warn('Webhook processor is disabled by WORKER_ENABLED - the outbox will not be drained');
 }
 
-const shutdown = () => {
+/**
+ * Simple helper to shut down the process cleanly.
+ */
+function shutdown(): void {
+  // Guard to avoid running this logic multiple times, for example if we get
+  // multiple signals in quick succession.
   if (shuttingDown) {
     return;
   }
@@ -91,7 +88,7 @@ const shutdown = () => {
   }
 
   process.exit(0);
-};
+}
 
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);

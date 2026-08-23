@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --bun --env-file=.env vite dev --host 0.0.0.0",
     "build": "vite build",
-    "start": "bun build/index.js",
+    "start": "PORT=${PORT:-8081} bun build/index.js",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check-types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
