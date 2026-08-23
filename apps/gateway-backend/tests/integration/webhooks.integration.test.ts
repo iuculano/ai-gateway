@@ -58,8 +58,8 @@ test('a webhook with no filter or tags reads back', async () => {
   const fetched = await asCaller(acme, () => Services.getWebhook(created.id));
 
   expect(fetched.isOk()).toBe(true);
-  expect(fetched._unsafeUnwrap().filter).toBeUndefined();
-  expect(fetched._unsafeUnwrap().tags).toBeUndefined();
+  expect(fetched._unsafeUnwrap().filter).toBeNull();
+  expect(fetched._unsafeUnwrap().tags).toBeNull();
 });
 
 test('another organization cannot read the webhook', async () => {
