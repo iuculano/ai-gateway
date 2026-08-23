@@ -1,6 +1,5 @@
 import { createRoute } from '@hono/zod-openapi';
-import { authorize } from '@repo/hono';
-import { bearerSecurity, validatedProtectedRouteErrors } from '../../../../../packages/hono/src/openapi/route-helpers';
+import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/hono';
 import { SCOPES } from '../../authorization';
 import Schemas from './analytics.schemas';
 
