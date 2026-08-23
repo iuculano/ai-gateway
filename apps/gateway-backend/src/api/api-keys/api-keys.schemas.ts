@@ -107,7 +107,7 @@ const updateApiKey = createSchema({
       description: z.string().trim().max(250).nullish(),
       expires_at: z.coerce.date().nullable().optional(),
       rate_limit_requests: z.number().int().min(1).nullish(),
-      rate_limit_window: z.number().int().min(1).optional(),
+      rate_limit_window: z.number().int().min(1).nullish(),
     }),
 
   response: apiKeyShape,

@@ -4,13 +4,8 @@ import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schema
 import { environment } from '../environment';
 
 /**
- * Recorded as the status when there was no HTTP response at all - DNS failure,
- * connection refused, or the delivery timing out.
- *
- * A sentinel rather than a null because `status_code` is NOT NULL, and a
- * delivery row has to exist either way: the history is the only evidence the
- * attempt happened, and omitting the ones that failed hardest would make the
- * table lie by silence.
+ * Sentinel for transport failures where no HTTP status exists. Delivery rows
+ * still record these attempts because `status_code` is required.
  */
 const NO_RESPONSE = 0;
 
@@ -22,20 +17,12 @@ interface ClaimedDelivery {
 }
 
 /**
- * Takes a batch off the queue, and hands ownership of it to this process.
+ * Claims and deletes a batch in one short transaction so HTTP calls hold no
+ * database locks.
  *
- * The rows are deleted as they are claimed, inside the same short transaction
- * that selects them, so nothing is held while the HTTP calls happen. That is a
- * deliberate at-most-once trade: a crash mid-batch loses those notifications.
- *
- * The alternative it replaces was worse. Delivery used to run INSIDE the
- * claiming transaction, so one endpoint refusing a connection threw, rolled the
- * whole batch back, and left it to be reclaimed on the next tick - forever, for
- * every webhook behind it. One bad endpoint stopped the entire queue.
- *
- * Rows are joined to `webhooks` rather than to `logs`. The log is not read here
- * - only its id is sent - and joining it meant a pruned log stranded its outbox
- * row permanently, since the inner join could never match again.
+ * This is currently at-most-once - a crash after claiming loses the batch,
+ * but one failed endpoint cannot block the queue. Logs are not joined because
+ * delivery only needs their ids and pruned logs must not strand outbox rows.
  */
 async function claimBatch(): Promise<ClaimedDelivery[]> {
   return db.transaction(async (tx) => {
@@ -50,7 +37,7 @@ async function claimBatch(): Promise<ClaimedDelivery[]> {
       .innerJoin(webhooks, eq(webhookOutbox.webhook_id, webhooks.id))
       .orderBy(webhookOutbox.created_at)
       .limit(environment.WORKER_BATCH_SIZE)
-      .for('update', { skipLocked: true }); // skip already locked rows, otherwise multiple workers will block
+      .for('update', { skipLocked: true }); // Let replicas claim disjoint batches.
 
     if (rows.length === 0) {
       return [];
@@ -82,9 +69,7 @@ async function deliver(item: ClaimedDelivery): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ webhook_id: item.webhookId, log_id: item.logId }),
 
-      // Without this a hanging endpoint hangs the worker: the tick never
-      // finishes, and with the drain now outside a transaction there is nothing
-      // else to time it out.
+      // Try to avoid stalling the worker on a slow endpoint.
       signal: AbortSignal.timeout(environment.WORKER_DELIVERY_TIMEOUT_MS),
     });
 
@@ -109,8 +94,7 @@ async function deliver(item: ClaimedDelivery): Promise<void> {
       status_code: statusCode,
     });
   } catch (error) {
-    // The attempt happened whatever this says; losing the record of it is bad
-    // but not worth failing the tick over.
+    // Recording failure should not prevent the remaining deliveries.
     logger.error({ err: error, webhook_id: item.webhookId }, 'Failed to record a webhook delivery');
   }
 }
@@ -127,7 +111,6 @@ export async function tickWebhookProcessor(): Promise<void> {
 
   logger.debug({ count: batch.length }, 'Claimed a webhook batch');
 
-  // Should this be concurrent?
   for (const item of batch) {
     await deliver(item);
   }

@@ -44,12 +44,14 @@ return { allowed, math.max(0, math.floor(tokens)), retryAfterMs }
  * It is commonly useful for APIs that permit controlled traffic bursts while
  * enforcing a steady long-term request rate.
  *
- * @param key The unique key identifying the token bucket.
+ * @param key
+ * The unique key identifying the token bucket.
  *
- * @param policy The token bucket policy.
+ * @param policy
+ * The token bucket policy.
  *
  * @returns
- * A promise that resolves to the rate limit result.
+ * The allowance decision, remaining tokens, and retry timing.
  */
 export async function consumeTokenBucket(key: string, policy: TokenBucketPolicy): Promise<RateLimitResponse> {
   const incrementBy = policy.incrementBy ?? 1;

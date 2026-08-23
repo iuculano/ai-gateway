@@ -103,8 +103,6 @@ const listWebhooks = defineOpenAPIRoute({
   route: Routes.listWebhooks,
   handler: async (c) => {
     const query = c.req.valid('query');
-
-    // Plain promise: listing has no outcome the caller could correct.
     const result = await Services.listWebhooks(query);
 
     return c.json(result, 200);
@@ -119,7 +117,6 @@ const createWebhook = defineOpenAPIRoute({
   route: Routes.createWebhook,
   handler: async (c) => {
     const body = c.req.valid('json');
-
     const result = await Services.createWebhook(body);
 
     return c.json(result, 201);
@@ -155,7 +152,6 @@ const deleteWebhook = defineOpenAPIRoute({
   route: Routes.deleteWebhook,
   handler: async (c) => {
     const params = c.req.valid('param');
-
     const result = await Services.deleteWebhook(params.id);
 
     return result.match(

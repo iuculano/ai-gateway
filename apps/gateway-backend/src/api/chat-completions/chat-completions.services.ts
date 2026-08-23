@@ -70,11 +70,9 @@ interface ResolvedModel {
 /**
  * Outcomes a chat-completions caller can act on.
  *
- * HTTP is deliberately absent. The service describes what happened; the
- * handler decides which status, message and headers represent that outcome on
- * the wire. Unexpected failures in logging, storage, or response validation
- * still reject (or are deliberately degraded where noted below), matching the
- * rest of the endpoint services.
+ * These remain transport-neutral so the handler controls HTTP status, messages,
+ * and headers. Unexpected failures reject unless explicitly handled as
+ * best-effort.
  */
 export type ChatCompletionFailure =
   | { code: 'MALFORMED_MODEL_IDENTIFIER'; model: string }
@@ -91,16 +89,9 @@ export type ChatCompletionFailure =
 /**
  * Resolves a request's `model` to something callable.
  *
- * STUB. This is meant to read a `models` table - that is where per-model
- * pricing, enablement and provider config belong - but no such table exists in
- * @repo/drizzle, so there is nothing to read. Until one lands, the slug itself
- * is the only source of truth: `provider/model`, or a bare id that defaults to
- * openai so a stock OpenAI client works unchanged.
- *
- * The consequence to be aware of: any model name is accepted here and the
- * provider is what rejects an unknown one. A registry would turn that into a
- * local 404 and would also restore per-token cost accounting, which is absent
- * for the same reason.
+ * Accepts `provider/model` references and defaults bare ids to OpenAI. Resolution
+ * does not consult the catalogue, so model validity is determined upstream and
+ * catalogue pricing is not applied here.
  *
  * @param model
  * The `model` field from the request body.
@@ -115,8 +106,7 @@ export type ChatCompletionFailure =
  * The resolved provider, its model id, and a callable instance.
  */
 function resolveModel(model: string, apiKey: string, baseUrl?: string): Result<ResolvedModel, ChatCompletionFailure> {
-  // Split on the FIRST separator only: OpenRouter-style ids carry their own
-  // slashes ("openai/gpt-5" vs "azure/team/deployment").
+  // Split once because provider-specific model ids may contain more slashes.
   const separator = model.indexOf('/');
   const hasProvider = separator > 0 && isProvider(model.slice(0, separator));
 
@@ -139,10 +129,7 @@ function resolveModel(model: string, apiKey: string, baseUrl?: string): Result<R
     return ok({ provider, modelId, instance: cached });
   }
 
-  // .chat() rather than the bare factory call. The bare call returns the
-  // provider's Responses-API model, which is a different endpoint with
-  // different semantics - wrong for something whose entire contract is
-  // chat/completions.
+  // Use the chat model explicitly; the bare factory targets the Responses API.
   const instance =
     provider === 'openai'
       ? createOpenAI({ apiKey: apiKey, baseURL: baseUrl }).chat(modelId)
@@ -163,10 +150,8 @@ function flattenText(content: string | Array<{ type: 'text'; text: string }>): s
 /**
  * Translates OpenAI messages into the SDK's message model.
  *
- * The one piece of real work here is tool results. OpenAI's tool message
- * carries only a tool_call_id, but the SDK wants the tool's NAME as well, so
- * the assistant tool_calls seen earlier in the conversation are indexed on the
- * way past and looked up when the matching result arrives.
+ * OpenAI tool results contain only a call id, while the SDK also requires the
+ * tool name. Earlier assistant calls are indexed to supply it.
  *
  * @param messages
  * The request's messages, in order.
@@ -298,10 +283,8 @@ function checkSupported(body: ChatCompletionBody): Result<void, ChatCompletionFa
 /**
  * The generation settings that map onto the SDK's own call options.
  *
- * Every field is tested against null/undefined rather than truthiness. The
- * previous implementation used `x ? {...} : {}`, which silently dropped
- * `temperature: 0`, `top_p: 0` and `seed: 0` - the exact values a caller
- * chasing determinism sends.
+ * Nullish checks preserve valid zero values such as `temperature: 0` and
+ * `seed: 0`.
  *
  * @param body
  * The validated request body.
@@ -454,13 +437,8 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
 /**
  * Classifies whatever the SDK threw into an expected service outcome.
  *
- * The previous implementation swallowed the error and threw a bare 500, which
- * made a rejected credential, an oversized prompt and a provider outage
- * indistinguishable to the caller.
- *
- * A provider 4xx is the caller's problem and is passed through - they supplied
- * both the key and the parameters. A provider 5xx is not, and becomes a 502,
- * because the gateway itself is healthy.
+ * Caller-actionable provider 4xx responses are preserved; upstream failures are
+ * translated to gateway failures.
  *
  * @param error
  * The thrown value.
@@ -469,21 +447,9 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
  * A typed failure for the handler to translate.
  */
 function toProviderFailure(error: unknown): ChatCompletionFailure {
-  // Unwrap the retry wrapper first, or none of the checks below can match.
-  //
-  // Anything the SDK considers retryable - 429 above all, and provider 5xx -
-  // is attempted maxRetries times and then thrown as a RetryError holding the
-  // attempts, NOT as the APICallError itself. So the isInstance check below
-  // failed on exactly the errors it most needed to classify, and every rate
-  // limit reached the caller as a generic 502 'Upstream provider call failed'.
-  // That is the wrong status, the wrong retry advice, and it made the 429 this
-  // route documents unreachable for upstream limits.
-  //
-  // lastError is the one that ended the sequence and the one worth reporting;
-  // the earlier attempts are the same failure repeated.
+  // RetryError hides the provider error that determines the response status.
   if (RetryError.isInstance(error)) {
-    // An abort is the caller's timeout expiring mid-retry rather than a
-    // provider verdict, and the attempts underneath are incidental to it.
+    // An abort represents the caller's timeout rather than a provider response.
     if (error.reason === 'abort') {
       return { code: 'PROVIDER_TIMEOUT', cause: error };
     }
@@ -491,10 +457,7 @@ function toProviderFailure(error: unknown): ChatCompletionFailure {
     return toProviderFailure(error.lastError);
   }
 
-  // The request itself was unacceptable - a malformed prompt, a role the
-  // provider will not take, an out-of-range setting. That is a 400, and
-  // reporting it as an upstream failure would point the caller at the wrong
-  // thing entirely.
+  // These SDK errors identify request problems before an upstream response exists.
   if (
     InvalidPromptError.isInstance(error) ||
     InvalidMessageRoleError.isInstance(error) ||
@@ -538,16 +501,9 @@ interface OpenLog {
 /**
  * Opens a log for a call that is about to be made.
  *
- * Note that no request header skips this. The row is what carries the actor,
- * the tokens and the cost, so letting a header suppress it would let a caller
- * opt out of being accounted for - and a spend limit a request header can
- * switch off is not a limit. The ai-log-omit-* headers suppress the stored
- * PAYLOADS, which is the privacy interest they actually serve; see closeLog
- * and abandonLog.
- *
- * A failure to open the log is swallowed. Logging is observability, not the
- * product - refusing to serve a completion because the log store is unreachable
- * would turn a degraded dependency into an outage.
+ * The accounting row is always attempted; omit headers control payload storage,
+ * not usage tracking. Logging failures remain non-fatal so an observability
+ * outage does not block inference.
  *
  * @param headers
  * The gateway headers, carrying the ai-log-tags control.
@@ -559,10 +515,7 @@ interface OpenLog {
  * The open log, or null if it could not be opened.
  */
 async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Promise<OpenLog | null> {
-  // Read here, at the top of the request, while the ambient context is
-  // certainly live. The streaming path closes its log from a continuation that
-  // runs after the response stream has drained, and asking for the context
-  // there would be asking too late.
+  // Capture request-scoped state before a streaming continuation can outlive it.
   const caller = getCaller();
   const logger = getLogger();
   const organizationId = caller.organization.id;
@@ -574,10 +527,7 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
       model: model.modelId,
       provider: model.provider,
       tags: tags,
-      // The credential that spent, not the human behind it. An api_key actor
-      // reaches its owner through api_keys.creator_id when a report needs the
-      // person; the reverse - recovering which of a user's keys was used -
-      // is not possible after the fact.
+      // Record the credential that spent; its owner remains available through creator_id.
       actor_type: caller.actor.type,
       actor_id: getActorId(caller),
     });
@@ -592,14 +542,9 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
 /**
  * Stores the payloads for a finished call and closes the log.
  *
- * Swallows its own failures for the same reason openLog does - by this point
- * the completion has been generated and paid for, and losing the record of it
- * is strictly better than losing the answer. The failure is logged loudly so
- * the gap is visible.
- *
- * Note there is no cost accounting: input_cost / output_cost need per-model
- * pricing, which lives in the `models` table that resolveModel still does not
- * read. Tokens are recorded; the money columns keep their zero default.
+ * Failures are logged but remain non-fatal because the provider response already
+ * exists. Tokens are recorded; costs remain zero until model resolution applies
+ * catalogue pricing.
  *
  * @param log
  * The log opened by openLog, or null if there is none.
@@ -642,9 +587,7 @@ async function closeLog(
     log.logger.error({ err: error, log_id: log.id }, 'Failed to store inference log payloads');
   }
 
-  // After the log is complete, never before: a webhook is handed a log id and
-  // fetches it, and a row still marked 'incomplete' has nothing to show. The
-  // explicit ai-webhook-id queue is separate and already ran.
+  // Attempt completion first so successful log writes are visible before fan-out.
   await WebhookServices.fanOutForLog(log.organizationId, log.id, log.tags);
 }
 
@@ -682,9 +625,8 @@ async function abandonLog(
 /**
  * Queues the log for the webhook the request named, if it named one.
  *
- * Runs before the provider is called: a bad webhook id should cost nothing, and
- * finding out after the completion has been generated and paid for would leave
- * the caller with an answer and an error at the same time.
+ * Validation runs before inference so an invalid webhook cannot incur provider
+ * usage before the request is rejected.
  *
  * @param headers
  * The gateway headers, carrying the ai-webhook-id control.
@@ -705,13 +647,7 @@ async function queueWebhook(
     return ok(undefined);
   }
 
-  // The outbox points at a log, and the worker joins through it to build the
-  // delivery, so there is nothing to enqueue without one.
-  //
-  // No header suppresses the row, so the only way to get here is openLog
-  // failing - the log store being unreachable. That is not the caller's
-  // mistake and a 4xx would say it was. Told rather than dropped silently:
-  // the caller asked for a delivery that cannot be made.
+  // Deliveries reference a log, so a logging outage makes the requested webhook unavailable.
   if (!log) {
     return err({ code: 'WEBHOOK_LOG_UNAVAILABLE' });
   }
@@ -735,8 +671,7 @@ async function queueWebhook(
  * The validated request body.
  *
  * @param onLog
- * Called with the log id once one is open, so the handler can echo it as a
- * response header. Not called when the log could not be opened.
+ * Receives the log id in time for the handler to expose it as a response header.
  *
  * @returns
  * A completion in OpenAI's chat.completion shape, or an expected refusal.
@@ -783,11 +718,7 @@ async function createChatCompletion(
       model: model.instance,
       messages: messages.value,
 
-      // The SDK otherwise rejects system messages inside `messages` and insists
-      // they move to `instructions`. That would mean hoisting them out of the
-      // caller's conversation and merging them, which reorders a request a
-      // gateway has no business reordering - OpenAI permits a system message at
-      // any position and this endpoint has to behave the same way.
+      // Preserve caller message order instead of hoisting system messages into instructions.
       allowSystemInMessages: true,
 
       ...toCallSettings(body, headers),
@@ -853,14 +784,11 @@ async function createChatCompletion(
  * The validated request body.
  *
  * @param onLog
- * Called with the log id once one is open. The handler pulls the first chunk
- * before opening the SSE stream, so a header set from here still makes it onto
- * the response.
+ * Receives the log id before the handler commits the SSE response headers.
  *
  * @returns
- * An async iterable of Results. An Err before the first chunk becomes a normal
- * HTTP error response; an Err after streaming begins closes the already-
- * committed response, because its status can no longer change.
+ * Stream results; early errors can become HTTP responses, while errors after the
+ * first chunk terminate the already-committed stream.
  */
 async function* streamChatCompletion(
   headers: ChatCompletionHeaders,
@@ -902,7 +830,6 @@ async function* streamChatCompletion(
 
   const startedAt = performance.now();
 
-  // Declared before the call because onError closes over it.
   let streamError: ChatCompletionFailure | undefined;
 
   let result: ReturnType<typeof streamText>;
@@ -911,19 +838,14 @@ async function* streamChatCompletion(
       model: model.instance,
       messages: messages.value,
 
-      // The SDK otherwise rejects system messages inside `messages` and insists
-      // they move to `instructions`. That would mean hoisting them out of the
-      // caller's conversation and merging them, which reorders a request a
-      // gateway has no business reordering - OpenAI permits a system message at
-      // any position and this endpoint has to behave the same way.
+      // Preserve caller message order instead of hoisting system messages into instructions.
       allowSystemInMessages: true,
 
       ...toCallSettings(body, headers),
       ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
       ...(toProviderOptions(body) ? { providerOptions: toProviderOptions(body) } : {}),
 
-      // Without this the SDK logs the error and ends the stream silently, which
-      // would look to the caller like a completion that simply stopped early.
+      // Surface SDK stream failures instead of ending the response silently.
       onError: ({ error }) => {
         streamError = toProviderFailure(error);
       },
@@ -934,22 +856,9 @@ async function* streamChatCompletion(
     return;
   }
 
-  // Every frame has to carry the same id/created/model, so all three are fixed
-  // once, here - but they are the GATEWAY's, not the provider's.
-  //
-  // The provider's metadata cannot be used, because it is not knowable in time.
-  // `result.response` is one of the SDK's FINAL promises: it settles when
-  // generation has finished, not when the provider has answered. Awaiting it
-  // here held every frame back until the model had produced its last token and
-  // then flushed the lot at once - a stream in shape only. `fullStream` is no
-  // help either; it carries response metadata on `finish-step`, which is just
-  // as late.
-  //
-  // The consequence to be aware of: `model` echoes the id the request asked for
-  // rather than the dated build the provider chose, so a request for `gpt-4o`
-  // reports `gpt-4o` here where the non-streaming path reports
-  // `gpt-4o-2024-08-06`. Recovering the provider's own id would mean
-  // includeRawChunks and parsing provider-specific frames.
+  // Provider metadata arrives only after generation, so waiting for it would
+  // buffer the stream. Generate stable frame metadata up front; streamed model
+  // ids therefore echo the request rather than a provider-resolved version.
   const id = `chatcmpl-${randomUUID().replaceAll('-', '')}`;
   const created = Math.floor(Date.now() / 1000);
   const modelId = model.modelId;
@@ -969,28 +878,19 @@ async function* streamChatCompletion(
   // wants a positional index instead, so ids are assigned one on first sight.
   const toolCallIndexes = new Map<string, number>();
 
-  // Whether the opening frame has gone out. The first yield commits the 200 and
-  // its headers, so nothing may be emitted until the provider has accepted the
-  // request - otherwise a rejected credential could no longer be answered with
-  // a 401. This is the job the removed `await result.response` was doing, at
-  // the cost of also waiting for the whole generation.
+  // Delay the first yield until the provider responds so rejections can still
+  // use a non-200 status.
   let opened = false;
 
   let finishReason: ChatCompletionFinishReason = 'stop';
   let usage: ChatCompletionUsage | undefined;
 
-  // The stream is reassembled as it passes so the stored response object is the
-  // same chat.completion a non-streaming call would have produced. Storing the
-  // raw chunks instead would make the two paths log incomparable shapes, and
-  // every reader would have to know which one it was looking at.
+  // Reassemble chunks so streaming and non-streaming logs share one response shape.
   let assembledText = '';
   const assembledToolCalls: ChatCompletionToolCall[] = [];
 
   for await (const part of result.fullStream) {
-    // `start` is emitted locally the moment streamText() is called and proves
-    // nothing about the provider. Any other part means it has answered, so this
-    // is the earliest safe moment to commit to a 200 - excluding `error`, which
-    // is how onError surfaces a bad credential and must stay answerable.
+    // `start` is local-only; wait for a provider part before committing the 200.
     if (!opened && part.type !== 'start' && part.type !== 'error') {
       opened = true;
 

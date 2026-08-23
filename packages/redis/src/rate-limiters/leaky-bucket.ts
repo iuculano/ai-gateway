@@ -67,21 +67,16 @@ return { allowed, math.max(0, math.floor(capacity - queueDepth)), retryAfterMs, 
 `;
 
 /**
- * Consumes a leaky bucket for rate limiting.
+ * mode or delaying it in shaping mode.
  *
- * Drains requests from the bucket at a constant rate. In policing mode,
- * requests that exceed the bucket's capacity are rejected; in shaping mode,
- * accepted requests are delayed to maintain a steady processing rate.
+ * @param key
+ * The unique key identifying the rate limit bucket.
  *
- * It is commonly useful for smoothing traffic and protecting downstream
- * services from sudden request bursts.
- *
- * @param key The unique key identifying the rate limit bucket.
- *
- * @param policy The leaky bucket policy.
+ * @param policy
+ * The leaky bucket policy.
  *
  * @returns
- * A promise that resolves to the rate limit result.
+ * The allowance decision, remaining capacity, and retry timing.
  */
 export async function consumeLeakyBucket(key: string, policy: LeakyBucketPolicy): Promise<RateLimitResponse> {
   const incrementBy = policy.incrementBy ?? 1;

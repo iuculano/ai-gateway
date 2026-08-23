@@ -43,9 +43,9 @@ return { count, math.max(limit - count, 0), pttl }
  *
  * @param policy
  * The fixed window counter policy.
-
+ *
  * @returns
- * A promise that resolves to the rate limit result.
+ * The allowance decision, remaining quota, and reset timing.
  */
 export async function consumeFixedWindowCounter(
   key: string,

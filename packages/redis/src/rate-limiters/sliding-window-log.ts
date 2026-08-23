@@ -38,21 +38,16 @@ return { 0, math.max(limit - count, 0), retryAfterMs }
 `;
 
 /**
- * Consumes a sliding window log for rate limiting.
+ * higher memory cost than counter-based limits.
  *
- * Records the timestamp of each request and removes entries that fall outside
- * the rolling window, providing precise enforcement without fixed-window
- * boundary spikes.
+ * @param key
+ * The unique key identifying the rate limit log.
  *
- * It is commonly useful for high-value or security-sensitive
- * APIs where accuracy and request-level auditability justify higher memory use.
- *
- * @param key The unique key identifying the rate limit log.
- *
- * @param policy The sliding window log policy.
+ * @param policy
+ * The sliding window log policy.
  *
  * @returns
- * A promise that resolves to the rate limit result.
+ * The allowance decision, remaining quota, and retry timing.
  */
 export async function consumeSlidingWindowLog(key: string, policy: SlidingWindowLogPolicy): Promise<RateLimitResponse> {
   const incrementBy = policy.incrementBy ?? 1;

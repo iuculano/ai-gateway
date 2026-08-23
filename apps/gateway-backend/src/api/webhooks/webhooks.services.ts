@@ -78,9 +78,6 @@ async function getWebhook(id: string): Promise<Result<GetWebhookResponse, GetWeb
 /**
  * Retrieves a list of webhooks, filtered by the given criteria.
  *
- * Deliberately not a Result: an empty page is a page, and there is no outcome
- * here the caller could correct.
- *
  * @param request
  * The request object containing the filter criteria.
  */
@@ -103,7 +100,7 @@ async function listWebhooks(request: ListWebhooksQuery): Promise<ListWebhooksRes
 
   const hasMoreData = result.length > request.limit;
   if (hasMoreData) {
-    result.pop(); // Burn off the extra record.
+    result.pop(); // Remove the pagination probe row.
   }
 
   const oldestId = result[result.length - 1]?.id ?? null;
@@ -122,9 +119,8 @@ async function listWebhooks(request: ListWebhooksQuery): Promise<ListWebhooksRes
 /**
  * Creates a new webhook in the database.
  *
- * Deliberately not a Result: nothing about a create is refusable today. The
- * organization and the accountable human both come from the authenticated caller
- * rather than the body, so there is no cross-tenant grant to reject.
+ * Tenant and creator are derived from the authenticated caller rather than the
+ * request body.
  *
  * @param request
  * The request object containing the webhook data to create.
@@ -142,7 +138,6 @@ async function createWebhook(request: CreateWebhookBody): Promise<CreateWebhookR
     .returning();
 
   if (!result[0]) {
-    // Probably impossible: a returning() insert either throws or gives a row.
     throw new Error('Failed to create webhook');
   }
 
@@ -310,29 +305,13 @@ async function submitWebhookRequest(webhookId: string, logId: string) {
 }
 
 /**
- * Queues every webhook whose filter the log satisfies.
- *
- * The automatic half of fan-out, and the one that makes a webhook's `filter`
- * mean anything: without it the queue only ever held what a request named
- * explicitly, so a filter was configuration nothing consulted.
- *
- * Matching is done in postgres with `@>` rather than in JS over every webhook
- * in the organization: the containment operator is what the jsonb GIN index on
- * the logs side is built for, and pulling every webhook back per request to
- * compare maps by hand would put a table scan on the inference path.
- *
- * A webhook with no filter - null or `{}` - receives everything. That is the
- * documented meaning of an empty filter, and `@>` alone would not give it:
- * `NULL @> anything` is null, which is not a match.
- *
- * Failures are swallowed and logged. By the time this runs the completion has
- * been generated and paid for, and losing a notification is strictly better
- * than turning a served request into an error.
+ * Queues webhooks whose filters match a completed log. Matching stays in
+ * Postgres instead of loading and comparing filters in application code; null
+ * and empty filters match every log. Failures are logged but do not turn a
+ * completed inference into an error.
  *
  * @param organizationId
- * Passed explicitly rather than read from the caller: this runs from the
- * streaming path's continuation, after the request's asynchronous context has
- * ended.
+ * Tenant captured before a streaming continuation can outlive request context.
  *
  * @param logId
  * The log to deliver.
@@ -373,17 +352,8 @@ async function fanOutForLog(
 }
 
 /**
- * Queues one (webhook, log) pair for delivery.
- *
- * The counterpart to the worker, which drains this table - nothing else writes
- * to it, so before this existed the queue could only ever be empty. Automatic
- * fan-out (every log matched against every webhook's filter) is still absent;
- * this covers the explicit case, where a request names the webhook it wants
- * notified.
- *
- * The organization predicate is the point of the lookup rather than a
- * formality: without it a caller could queue their own log id against another
- * tenant's endpoint, and the worker would dutifully POST it there.
+ * Queues an explicitly requested webhook delivery. The tenant-scoped lookup
+ * prevents callers from routing their logs to another tenant's endpoint.
  *
  * @param webhookId
  * The webhook to notify.

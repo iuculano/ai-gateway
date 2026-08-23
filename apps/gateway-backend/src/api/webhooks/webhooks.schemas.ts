@@ -4,22 +4,10 @@ import { createSchema } from '@repo/hono';
 const webhookShape = z.object({
   id: z.uuidv7(),
   name: z.string(),
-  description: z
-    .string()
-    .nullish()
-    .transform((x) => x ?? undefined)
-    .optional(),
+  description: z.string().nullish().optional(),
   endpoint: z.string(),
-  filter: z
-    .record(z.string(), z.string())
-    .nullish()
-    .transform((x) => x ?? undefined)
-    .optional(),
-  tags: z
-    .record(z.string(), z.string())
-    .nullish()
-    .transform((x) => x ?? undefined)
-    .optional(),
+  filter: z.record(z.string(), z.string()).nullish().optional(),
+  tags: z.record(z.string(), z.string()).nullish().optional(),
   created_at: z.date().transform((date) => date.toISOString()),
   updated_at: z.date().transform((date) => date.toISOString()),
 });

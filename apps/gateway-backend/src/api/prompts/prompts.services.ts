@@ -167,12 +167,8 @@ async function getPrompt(id: string): Promise<Result<GetPromptResponse, GetPromp
 /**
  * Retrieves a single prompt by its name.
  *
- * Names are unique per organization rather than globally, so this resolves
- * within the caller's organization and nowhere else.
- *
- * Not routed today - it exists for the inference path, where a prompt is
- * referred to by the name a caller wrote in their own configuration rather
- * than by an id they would have to look up first.
+ * Names resolve within the caller's organization. This supports inference
+ * references, which use configured names rather than database ids.
  *
  * @param name
  * The name of the prompt to retrieve.
@@ -237,10 +233,8 @@ async function createPrompt(body: CreatePromptBody): Promise<Result<CreatePrompt
   const caller = getCaller();
 
   const result = await db.transaction(async (tx): Promise<Result<PromptRow, CreatePromptFailure>> => {
-    // ON CONFLICT DO NOTHING rather than a SELECT first: the name is unique
-    // per organization, and a check-then-insert has a window between the two
-    // where a concurrent create takes the name. Here the index itself decides,
-    // and losing the race comes back as the same refusal instead of a 500.
+    // Let the unique index arbitrate concurrent creates so both name conflicts
+    // return the same refusal.
     const [row] = await tx
       .insert(prompts)
       .values({
@@ -293,10 +287,7 @@ async function updatePrompt(
   id: string,
   body: UpdatePromptBody,
 ): Promise<Result<UpdatePromptResponse, UpdatePromptFailure>> {
-  // The transaction resolves with a Result rather than throwing the refusal: a
-  // missing row is an answer, and rolling back a read-only block to deliver one
-  // would be theatre. Everything below that throws is a malfunction, and those
-  // still take the transaction down with them.
+  // Expected refusals use Result; thrown failures still roll back the transaction.
   const result = await db.transaction(async (tx): Promise<Result<PromptRow, UpdatePromptFailure>> => {
     const existing = await findPrompt(tx, id, true);
 
@@ -304,11 +295,7 @@ async function updatePrompt(
       return err({ code: 'PROMPT_NOT_FOUND', id });
     }
 
-    // Checked rather than left to the foreign key, because there isn't one:
-    // active_version holds the version ordinal, not a prompt_versions.id, so
-    // nothing at the storage layer stops it pointing at a version that was
-    // never created. An unchecked write here means every later read of the
-    // active version 404s on a prompt that looks fine.
+    // active_version stores an ordinal rather than a foreign key, so validate it here.
     if (body.active_version !== undefined && body.active_version !== null) {
       const [version] = await tx
         .select({ version: promptVersions.version })
@@ -327,10 +314,7 @@ async function updatePrompt(
       return ok(existing);
     }
 
-    // The lock above is on this row, which does not stop a concurrent create
-    // from taking the name. Losing that race hits the unique index and rejects
-    // rather than returning this refusal - the check is here so the ordinary
-    // case, renaming onto a name that already exists, reads as a 409.
+    // Give ordinary name conflicts a 409; the unique index handles concurrent races.
     const nextName = body.name;
 
     if (nextName !== undefined && difference.name !== undefined) {
@@ -421,9 +405,8 @@ async function deletePrompt(id: string): Promise<Result<DeletePromptResponse, De
 /**
  * Retrieves a single version of a prompt.
  *
- * Scoped through the parent: prompt_versions carries no organization_id of its
- * own, so the join to `prompts` is what makes this a tenancy check rather than
- * a lookup by a pair of ids the caller could guess.
+ * The parent join enforces tenancy because prompt versions have no
+ * `organization_id` of their own.
  *
  * @param id
  * The ID of the parent prompt.
@@ -464,9 +447,7 @@ async function listPromptVersions(
   id: string,
   query: ListPromptVersionsQuery,
 ): Promise<Result<ListPromptVersionsResponse, ListPromptVersionsFailure>> {
-  // Resolved first so that an unknown prompt is a 404 rather than an empty
-  // page. "This prompt has no versions" and "there is no such prompt" are
-  // different answers, and only one of them is worth retrying.
+  // Resolve the parent first so a missing prompt is not mistaken for an empty page.
   const prompt = await findPrompt(db, id);
 
   if (!prompt) {
@@ -478,9 +459,7 @@ async function listPromptVersions(
     query.after_id !== undefined ? lt(promptVersions.id, query.after_id) : undefined,
   ];
 
-  // Explicit columns rather than select(): the response schema drops `prompt`,
-  // and fetching a page of full prompt bodies only to strip them is the cost
-  // this listing exists to avoid.
+  // Avoid loading prompt bodies that the version listing does not return.
   const rows = await db
     .select({
       id: promptVersions.id,
@@ -513,14 +492,9 @@ async function createPromptVersion(
   id: string,
   body: CreatePromptVersionBody,
 ): Promise<Result<CreatePromptVersionResponse, CreatePromptVersionFailure>> {
-  // Atomic because the version ordinal is derived from the versions that
-  // already exist, so two concurrent creates would otherwise compute the same
-  // number.
+  // Version allocation must be serialized per prompt.
   const result = await db.transaction(async (tx): Promise<Result<PromptVersionRow, CreatePromptVersionFailure>> => {
-    // Locks the parent row, and answers "is this prompt mine" in the same
-    // statement. Every create for a given prompt takes this lock before
-    // computing a version, which serializes them per prompt; the unique index
-    // on (prompt_id, version) is what catches anything that does not.
+    // Lock the tenant-scoped parent before deriving the next version.
     const prompt = await findPrompt(tx, id, true);
 
     if (!prompt) {
@@ -533,7 +507,6 @@ async function createPromptVersion(
         prompt_id: id,
         prompt: body.prompt,
 
-        // next version = max(version) + 1 for this prompt
         version: sql`
           (
             SELECT COALESCE(MAX(${promptVersions.version}), 0) + 1
@@ -545,14 +518,11 @@ async function createPromptVersion(
       .returning();
 
     if (!row) {
-      // Probably impossible: a returning() insert either throws or gives a row.
       throw new Error('Failed to insert prompt version');
     }
 
-    // The first version becomes the active one. Without this a freshly created
-    // prompt stays unusable until a separate PATCH points at the version that
-    // was just made, which is a step with no decision in it. Later versions do
-    // not move the pointer - promoting one is an explicit act.
+    // Make the first version usable immediately, later promotion stays
+    // explicit.
     if (prompt.active_version === null) {
       await tx.update(prompts).set({ active_version: row.version }).where(scopedToCaller(id));
     }
@@ -675,10 +645,8 @@ async function deletePromptVersion(
       return err({ code: 'PROMPT_VERSION_NOT_FOUND', id, version });
     }
 
-    // Refused rather than silently repointed. active_version is not a foreign
-    // key, so deleting the version it names leaves a prompt that looks healthy
-    // and 404s on every read of its active version. Choosing the replacement is
-    // the caller's decision, not one to make on their behalf mid-delete.
+    // Require the caller to choose a replacement before deleting the active
+    // version.
     if (prompt.active_version === version) {
       return err({ code: 'PROMPT_VERSION_ACTIVE', id, version });
     }
@@ -715,27 +683,17 @@ async function deletePromptVersion(
 /**
  * The mustache tags this renderer recognises.
  *
- * Whitespace inside the braces is optional rather than required, which the
- * previous pattern got wrong - it only matched `{{ name }}` with exactly one
- * space on each side, so `{{name}}` was left in the output untouched.
- *
- * Case-sensitive on purpose. Names are compared verbatim against `inputs` and
- * against the `aig.` prefix, so matching case-insensitively here would make
- * `{{ AIG.DATE }}` a recognised tag that then resolves to nothing.
+ * Inner whitespace is optional. Matching remains case-sensitive because input
+ * names and the `aig.` namespace are case-sensitive.
  */
 const SUBSTITUTION_PATTERN = /\{\{\s*([A-Za-z0-9._-]+)\s*\}\}/g;
 
 /**
  * Renders a prompt, replacing mustache tags with their values.
  *
- * Built-ins win over `inputs`, and a tag nothing can fill is left in place and
- * named in `unresolved` rather than replaced with an empty string - an empty
- * substitution reads as a deliberately blank value downstream, which is not
- * what a missing input means.
- *
- * Substitution is single-pass: a value that itself contains a mustache tag is
- * emitted as-is and not re-scanned, so a caller cannot smuggle a built-in
- * reference in through an input.
+ * Built-ins take precedence over caller inputs. Missing values remain visible
+ * and are reported as unresolved; a single pass prevents substituted values
+ * from introducing new built-in references.
  *
  * @param prompt
  * The prompt template to render.
@@ -744,8 +702,7 @@ const SUBSTITUTION_PATTERN = /\{\{\s*([A-Za-z0-9._-]+)\s*\}\}/g;
  * Caller-supplied values, keyed by tag name.
  *
  * @param context
- * What the built-ins read. Assembled once by the caller, so every tag in one
- * render sees the same instant.
+ * Shared built-in context so every tag in one render sees the same instant.
  */
 function renderTemplate(
   prompt: string,
@@ -755,10 +712,7 @@ function renderTemplate(
   const unresolved = new Set<string>();
 
   const rendered = prompt.replace(SUBSTITUTION_PATTERN, (match, variable: string) => {
-    // hasOwn rather than a plain lookup: `inputs` is an ordinary object, so
-    // `inputs['constructor']` and `inputs['toString']` find inherited functions
-    // rather than nothing, and a template containing `{{ constructor }}` would
-    // otherwise render native code into the prompt.
+    // Exclude inherited properties such as `constructor` from prompt inputs.
     const supplied = Object.hasOwn(inputs, variable) ? inputs[variable] : undefined;
     const value = resolveBuiltin(variable, context) ?? supplied;
 
@@ -781,10 +735,6 @@ function renderTemplate(
 /**
  * Renders a stored prompt version with the supplied inputs.
  *
- * Composed here rather than in the handler so that the tenancy check and the
- * rendering stay one operation with one failure union, the same way every other
- * service call is shaped.
- *
  * @param id
  * The ID of the parent prompt.
  *
@@ -801,9 +751,7 @@ async function renderPromptVersion(
 ): Promise<Result<RenderPromptVersionResponse, RenderPromptVersionFailure>> {
   const caller = getCaller();
 
-  // One query rather than getPromptVersion(), because the built-ins need the
-  // prompt's name as well as the version's text, and the join that scopes this
-  // to the caller is already passing through the row that carries it.
+  // The same tenant-scoped join supplies both the template and its name for built-ins.
   const [row] = await db
     .select({ template: promptVersions.prompt, name: prompts.name })
     .from(promptVersions)
@@ -829,20 +777,9 @@ async function renderPromptVersion(
 /**
  * Resolves a prompt by name and renders it for an inference request.
  *
- * The inference counterpart to renderPromptVersion. Two things differ, and both
- * are deliberate:
- *
- * Rendering is STRICT. The preview leaves an unfilled tag in place and reports
- * it, which is the right answer when a human is looking at the result. On the
- * way to a model it is not: the literal `{{ ticket_body }}` would be sent,
- * billed, and answered as though it were prose, and nothing downstream could
- * tell that from a prompt that legitimately contains braces. So an unresolved
- * tag refuses the request and names what is missing.
- *
- * And the caller is checked for promptsRead here rather than by route
- * middleware. The scope is only required of a request that actually names a
- * prompt, so existing inference traffic - which does not - keeps working
- * against keys that were issued before prompts existed.
+ * Inference rendering is strict: unresolved tags fail instead of being sent to
+ * the provider. The prompt scope is checked here because only inference
+ * requests that reference a prompt require it.
  *
  * @param reference
  * The prompt name, the version to pin (or none, for the active one), and the
@@ -868,10 +805,7 @@ async function resolvePrompt(reference: {
     return err({ code: 'PROMPT_NOT_FOUND', name: reference.name });
   }
 
-  // A pinned version, or whatever the prompt currently points at. Distinct
-  // refusals: "you asked for v9 and there is no v9" is a caller error, while
-  // "this prompt has never been given a version" is a configuration one, and
-  // collapsing them would send someone hunting for the wrong mistake.
+  // Keep missing pinned versions distinct from prompts with no active version.
   const version = reference.version ?? prompt.active_version;
 
   if (version == null) {

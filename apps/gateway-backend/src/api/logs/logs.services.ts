@@ -103,11 +103,8 @@ async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>
 /**
  * Retrieves one side of a log's stored payload.
  *
- * The row is read first and the key comes off it. That ordering is what makes
- * this safe: the read includes the caller's organization, so a log id belonging
- * to another organization returns no row and never reaches object
- * storage. Building a key straight from the caller's id would bypass the
- * organization check entirely, because object storage has no idea who is asking.
+ * The tenant-scoped row is resolved before its object key, so object storage is
+ * never queried for another tenant's log.
  *
  * @param id
  * The id of the log.
@@ -116,8 +113,8 @@ async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>
  * Which payload to read.
  *
  * @returns
- * The stored payload, or the reason there is not one to return. Object storage
- * failing outright is not one of those reasons - that rejects.
+ * The stored payload or the expected reason it is unavailable. Storage failures
+ * still reject.
  */
 async function getLogPayload(
   id: string,
@@ -138,14 +135,11 @@ async function getLogPayload(
     return err({ code: 'PAYLOAD_NOT_STORED', id, side });
   }
 
-  // A null here is the object being absent. Anything else that can go wrong
-  // with the read - credentials, network, a corrupt body - throws out of
-  // getJson and stays in the unexpected channel.
+  // Null means absent - transport and decoding failures are unexpected errors.
   const payload = await objectStorage.getJson(key);
   if (payload === null) {
-    // The row names an object that is not there - expired under a lifecycle
-    // rule, or deleted out from under us. Same status as "never stored", but
-    // worth distinguishing: this one says something was lost.
+    // Distinguish a missing referenced object from a payload that was never
+    // stored.
     return err({ code: 'PAYLOAD_UNAVAILABLE', id, side });
   }
 
@@ -155,24 +149,15 @@ async function getLogPayload(
 /**
  * Retrieves one side of the payload for many logs at once.
  *
- * The object reads are concurrent - see CompressedJsonStore.getManyJson - so the
- * cost is roughly the slowest single object rather than the sum of them.
- *
- * Tenancy works the same way as the single-log read, and matters more here: the
- * id list arrives from the caller, and the scoped query is what filters it down
- * to the ids this organization may actually see. Ids that survive that filter
- * are the only ones ever turned into object keys.
+ * Only ids that survive the tenant-scoped query become object keys. Reads are
+ * concurrent, and absent payloads are reported in `meta.missing` rather than
+ * failing the batch.
  *
  * @param ids
  * The log ids to read. Already length-capped by the schema.
  *
  * @param side
  * Which payload to read.
- *
- * Deliberately not a Result, unlike the single-log read: absence is the normal
- * case for a batch and is already modelled in the success value, as
- * `meta.missing`. A caller asking for fifty payloads and getting forty-nine has
- * not failed at anything.
  *
  * @returns
  * The payloads that resolved, keyed by log id, plus the ids that did not.
@@ -200,9 +185,7 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
     }
   }
 
-  // Do not require object storage for an entirely missing batch. Apart from
-  // avoiding a pointless remote call, this preserves the tenancy boundary:
-  // ids filtered out by the scoped query never cause any storage access.
+  // Preserve the tenancy boundary: ids rejected by the scoped query never reach storage.
   if (keysByLogId.size === 0) {
     return Schemas.batch.response.parse({
       data: {},
@@ -288,14 +271,10 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
 
   const page = toPage(rows, query.limit);
 
-  // Order is messed up for before_id, need to reverse it back. This has to
-  // happen after the trim - the probe row is the extra neighbour in whichever
-  // direction we scanned, so dropping it before reversing is what keeps the
-  // page contiguous.
+  // Trim the probe row before reversing to keep the page contiguous.
   const data = query.before_id ? page.data.toReversed() : page.data;
 
-  // Cursors are recomputed rather than taken from page.meta: this endpoint
-  // pages both ways, so it needs both ends, and reversing moved them.
+  // Recompute both cursors after the possible reversal.
   return Schemas.listLogs.response.parse({
     data: data.map(toLogShape),
     meta: {
@@ -307,61 +286,34 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
 }
 
 /**
- * Where counting stops and estimating starts.
- *
- * The exact aggregate is a full index-only scan of the tenant's rows: measured
- * at roughly 60ms per 100k logs, which is a fine price for a number that is
- * simply correct, and not a fine price at ten times that. Above the threshold
- * the same figures come from a sample and land within about 1%.
+ * Above this size, statistics use a bounded sample instead of scanning every
+ * tenant row.
  */
 const EXACT_THRESHOLD = 100_000;
 
 /**
- * How many rows the estimate samples.
- *
- * The sample PERCENTAGE is derived from this rather than fixed, so the row
- * count stays roughly constant as a tenant grows and the cost of this endpoint
- * does not grow with it. 20k lands under 1% error on every figure here; going
- * wider buys accuracy nobody can see behind a "~".
+ * Target sample size keeps estimated-query work stable as tenants grow.
  */
 const TARGET_SAMPLE_ROWS = 20_000;
 
 /**
- * The most of the table a single request may sample.
- *
- * TABLESAMPLE SYSTEM reads PAGES, and it reads them from the whole table before
- * the organization predicate filters anything - so the pages it must touch to collect
- * TARGET_SAMPLE_ROWS of one tenant scale with that tenant's share of the table,
- * not with its size. A tenant holding most of the table needs ~4% of the pages;
- * one holding a hundredth of a much larger table would need a hundred times as
- * many for the same evidence, which is how a flat-cost endpoint quietly becomes
- * a table scan.
- *
- * The clamp bounds the work instead. Past it the sample is smaller than the
- * target and the small buckets get noisier - which `estimated` already warns
- * about - but the request cannot run away. If that trade ever stops being
- * acceptable, the next step is a rollup maintained out of band, not a bigger
- * sample.
+ * Caps page reads because `TABLESAMPLE` runs before the tenant predicate; small
+ * tenants in a shared table may therefore receive a noisier sample.
  */
 const MAX_SAMPLE_PERCENTAGE = 5;
 
 /**
  * The planner's own estimate of how many rows this tenant has.
  *
- * EXPLAIN without ANALYZE, so nothing is executed - this is the plan's row
- * estimate, which for a plain `organization_id` predicate comes from real
- * column statistics and lands within a fraction of a percent. It is NOT
- * trustworthy for a jsonb filter, which is one of the reasons this endpoint
- * takes no filters, and it degrades on narrow buckets - a status holding 1% of
- * the table came out 12% low, which is why the breakdown is sampled instead.
+ * `EXPLAIN` without `ANALYZE` avoids executing the count. The estimate is used
+ * only for the tenant predicate; narrower breakdowns come from the sample.
  */
 async function estimateLogCount(organizationId: string): Promise<number> {
   const rows = await db.execute<Record<string, unknown>>(
     sql`explain (format json) select 1 from ${logs} where ${logs.organization_id} = ${organizationId}`,
   );
 
-  // The driver usually hands back parsed json; a string is still valid output
-  // from EXPLAIN and cheaper to handle than to rule out.
+  // Drivers may return EXPLAIN JSON either parsed or serialized.
   const raw = Object.values(rows[0] ?? {})[0];
   const plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
 
@@ -373,25 +325,9 @@ async function estimateLogCount(organizationId: string): Promise<number> {
 /**
  * Tenant-wide totals, counted when that is cheap and sampled when it is not.
  *
- * Three steps, and the first one earns its keep twice:
- *
- * 1. A capped count - `limit EXACT_THRESHOLD + 1` - decides which mode to use.
- *    It stops as soon as it has seen one row too many, so it costs the same for
- *    a tenant with a hundred thousand logs as for one with fifty million. When
- *    it comes back under the cap it IS the exact total, so the decision is free.
- *    A planner estimate would have been cheaper still, but it would make the
- *    `estimated` flag flicker for tenants sitting near the threshold, and a
- *    number that changes shape between two page loads reads as a bug.
- *
- * 2. Under the cap, one aggregate counts everything.
- *
- * 3. Over it, the total is the planner's estimate and the breakdown comes from
- *    a single TABLESAMPLE, scaled by total/sampled.
- *
- * Deliberately not a Result: there is no outcome here a caller could correct.
- * A tenant with no logs gets zeroes, which is a true answer rather than a
- * failure - and every aggregate is COALESCEd to make sure it is a zero and not
- * the null that sum() returns over an empty set.
+ * A capped count selects the exact or estimated path without scanning beyond
+ * the threshold. Large tenants use the planner for the total and one bounded
+ * sample for all breakdowns; empty tenants return zeroes.
  */
 async function getLogStats(): Promise<LogStatsResponse> {
   const organizationId = getCaller().organization.id;
@@ -424,27 +360,10 @@ async function getLogStats(): Promise<LogStatsResponse> {
     return toStats(row ?? {}, false);
   }
 
-  // The tenant's size, from the planner. Accurate to a fraction of a percent
-  // for a plain organization_id predicate, and it anchors everything below.
   const estimate = await estimateLogCount(organizationId);
 
-  // One sample supplies the whole breakdown. Taking the per-status counts from
-  // the planner instead was tried and measured, and is NOT better: it improved
-  // 'failed' from -5.7% to -1.2% and made 'incomplete' worse, -0.3% to -12.1%,
-  // for three extra round trips. Both methods sit in the same few-percent band
-  // on the small buckets, so the one that costs a single query wins.
-  //
-  // Where that error comes from is worth knowing: TABLESAMPLE SYSTEM selects
-  // whole PAGES, so rows sharing a page are correlated and a bucket holding 3%
-  // of the table carries less independent evidence than its row count suggests.
-  // Expect the dominant status to be within a percent and the rare ones to
-  // drift by several. That is the deal `estimated: true` is announcing.
-  //
-  // The percentage is derived from the estimate so the number of sampled rows
-  // stays near TARGET_SAMPLE_ROWS however large the tenant is - which is what
-  // keeps this endpoint's cost flat rather than proportional to the table.
-  // Clamped at both ends: MAX_SAMPLE_PERCENTAGE bounds the page reads, and a
-  // percentage small enough to round to zero would sample nothing at all.
+  // One page-level sample supplies every breakdown. Derive its percentage from
+  // the estimate, then clamp it to bound work and avoid rounding to an empty sample.
   const percentage = Math.min(
     MAX_SAMPLE_PERCENTAGE,
     Math.max(0.01, (100 * TARGET_SAMPLE_ROWS) / Math.max(estimate, 1)),
@@ -466,17 +385,13 @@ async function getLogStats(): Promise<LogStatsResponse> {
 
   const sampled = Number(sample?.sampled ?? 0);
 
-  // A sample that caught none of this tenant's rows says nothing about them, so
-  // the whole total is attributed to 'complete' rather than reporting a
-  // confident zero or dividing by it. Only reachable if the tenant's rows are
-  // clustered into pages the sample happened to miss entirely.
+  // A page sample can miss a tenant entirely; preserve the estimated total
+  // instead of reporting a confident zero or dividing by it.
   if (!sample || sampled === 0) {
     return toStats({ complete: estimate }, true);
   }
 
-  // Scaling from the sample's SUMS rather than its averages is what makes the
-  // null-heavy columns work without special-casing: an 'incomplete' row has no
-  // tokens, and sum() already ignores those where avg() would have to be told.
+  // Scale sums so null token and cost values need no separate treatment.
   const scale = estimate / sampled;
 
   return toStats(
@@ -496,11 +411,8 @@ async function getLogStats(): Promise<LogStatsResponse> {
 /**
  * Assembles the response from either branch's raw figures.
  *
- * `total` is built by ADDING the three status counts rather than being carried
- * separately. Exactly, that is what it already is; estimated, the three are
- * rounded independently and would otherwise miss their own total by a row or
- * two - a discrepancy that is invisible in the number and glaring in a panel
- * that renders both.
+ * Deriving `total` from the rounded status counts keeps estimated totals
+ * consistent with the visible breakdown.
  */
 function toStats(row: Record<string, string | number | undefined>, estimated: boolean): LogStatsResponse {
   const complete = Number(row.complete ?? 0);
@@ -525,10 +437,8 @@ function toStats(row: Record<string, string | number | undefined>, estimated: bo
 /**
  * Deletes a log and both of its stored payloads.
  *
- * The row goes first. If object deletion fails afterwards the objects are
- * orphaned, which a lifecycle rule will eventually collect - whereas deleting
- * the objects first and then failing to delete the row would leave a log that
- * advertises payloads nobody can fetch.
+ * The row is deleted first so a later storage failure leaves lifecycle-cleanable
+ * orphans rather than references to missing payloads.
  *
  * @param id
  * The id of the log to delete.
@@ -546,9 +456,7 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
 
   const keys = [row.request_object_reference, row.response_object_reference].filter((key) => key !== null);
 
-  // Deliberately not swallowed: the row is already gone by here, so a failure
-  // leaves orphaned objects, and the caller should hear about it rather than be
-  // told the delete was clean.
+  // Surface storage failures because they leave orphaned objects after row deletion.
   await objectStorage.deleteMany(keys);
 
   return ok(undefined);
@@ -557,9 +465,8 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
 /**
  * Opens a log for an inference request that is about to be made.
  *
- * Written before the provider is called so that a request which dies in flight
- * still leaves a trace. The row starts 'incomplete' and one of completeLog or
- * failLog resolves it.
+ * The row is created as incomplete before the provider call so failures in
+ * flight remain observable.
  *
  * @param organizationId
  * The tenant the log belongs to.
@@ -587,14 +494,10 @@ async function startLog(
       organization_id: organizationId,
       model: entry.model,
       provider: entry.provider,
-      // The caller is authenticated before this runs, so there is always an
-      // actor. Attribution that can be skipped is attribution a budget cannot
-      // rely on, which is why both columns are NOT NULL.
+      // Required attribution ensures usage budgets cannot be bypassed.
       actor_type: entry.actor_type,
       actor_id: entry.actor_id,
-      // Written at open rather than at close, because this is what webhook
-      // fan-out matches on and the column is nullable - a log that never got
-      // tags is distinguishable from one tagged with nothing.
+      // Capture tags before provider work because webhook fan-out reads them later.
       tags: entry.tags,
       status: 'incomplete',
     })
@@ -610,15 +513,9 @@ async function startLog(
 /**
  * Stores the payloads for a finished inference and marks the log complete.
  *
- * The two payloads are written as separate objects, concurrently, and either
- * may be skipped - `omitRequest` / `omitResponse` carry the caller's
- * ai-log-omit-* headers. A side that is skipped leaves its key column null,
- * which is what makes has_request / has_response and the 404s on those
- * endpoints truthful.
- *
- * Objects are written BEFORE the row is updated. The row is what advertises a
- * payload as fetchable, so publishing that claim before the object exists would
- * open a window where the endpoint 404s on a log that says it has data.
+ * Non-omitted payloads are written concurrently before their references are
+ * published on the row, preventing a completed log from advertising an object
+ * that is not yet readable.
  *
  * @param organizationId
  * The tenant the log belongs to. Passed explicitly - see startLog.
@@ -673,8 +570,8 @@ async function completeLog(
 /**
  * Marks a log failed.
  *
- * The request payload is still stored when available - a failed call is
- * precisely the one somebody will want to inspect the inputs of.
+ * The request payload remains useful for diagnosing the failure and is retained
+ * unless explicitly omitted.
  *
  * @param organizationId
  * The tenant the log belongs to. Passed explicitly - see startLog.

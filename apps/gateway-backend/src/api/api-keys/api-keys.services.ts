@@ -264,9 +264,8 @@ async function listApiKeys(query: ListApiKeysQuery): Promise<ListApiKeysResponse
  * Scopes we're trying to grant. Space-separated.
  *
  * @returns
- * The caller's own scopes plus the subset of `scopes` it cannot grant. An
- * empty `ungrantable` means the grant is allowed. Nothing here throws, so
- * callers have to check it.
+ * An object representing the scopes the caller holds and the ones it cannot
+ * grant.
  */
 function checkScopes(caller: Caller, scopes: string): { held: string[]; ungrantable: string[] } {
   const requested = scopes.split(' ').filter(Boolean);
@@ -397,10 +396,6 @@ async function updateApiKey(
     }
   }
 
-  // The transaction resolves with a Result rather than throwing the refusals:
-  // a missing or revoked key is an answer, and rolling back a read-only block
-  // to deliver one would be theatre. Everything below that throws is a
-  // malfunction, and those still take the transaction down with them.
   const result = await db.transaction(async (tx): Promise<Result<ApiKeyRow, UpdateApiKeyFailure>> => {
     // biome-ignore format: looks nicer
     const [existing] = await tx
@@ -424,21 +419,13 @@ async function updateApiKey(
     const writeableFields = Object.keys(Schemas.updateApiKey.body.shape);
     const { updates, difference } = diffFields(existing, body, writeableFields);
 
-    // Can just bail early if the diff is empty. Deliberately ahead of the rate
-    // limit check below: a no-op patch changes nothing, so it cannot be what
-    // put a row into a state worth refusing.
+    // Can just bail early if the diff is empty.d
     if (Object.keys(difference).length === 0) {
       return ok(existing);
     }
 
-    // The pair has to stay coherent across the merge, not just within the body.
-    // `updates` holds every field the caller actually sent, so a field absent
-    // from it keeps whatever the row already had.
-    //
-    // Scoped to patches that touch the rate limit at all. A key stored in the
-    // bad state before the API refused it should not have every unrelated edit
-    // blocked as collateral - those keys already authenticate again, because
-    // enforceKeyQuota defaults the missing window.
+    // Validate the merged policy because a PATCH may supply only one field.
+    // Ignore invalid legacy policies during unrelated updates.
     const touchesRateLimit = 'rate_limit_requests' in updates || 'rate_limit_window' in updates;
     const merged = { ...existing, ...updates };
 
@@ -456,6 +443,7 @@ async function updateApiKey(
       ))
       .returning();
 
+    // Likely a database malfunction rather than a refusal, just throw...
     if (!row) {
       throw new Error('Failed to update API key');
     }
@@ -471,13 +459,7 @@ async function updateApiKey(
       tx,
     );
 
-    // The fixed-window counter's TTL is established only when Redis creates the
-    // counter. Reusing it after either half of the policy changes would combine
-    // the new database policy with the old count and expiry. Clear the window as
-    // part of the update operation so the next request starts coherently under
-    // the new policy. A Redis failure throws and rolls the database/audit
-    // transaction back rather than committing a policy whose stale window is
-    // still active.
+    // Reset an API key’s active rate-limit counter when its policy changes.
     const rateLimitChanged = 'rate_limit_requests' in difference || 'rate_limit_window' in difference;
     if (rateLimitChanged) {
       await redis.del(apiKeyQuotaKey(row.id));
@@ -543,7 +525,7 @@ async function revokeApiKey(id: string): Promise<Result<RevokeApiKeyResponse, Re
       }
 
       // Already revoked. Revocation is idempotent, so this is a success with
-      // nothing left to do - not a refusal.
+      // nothing left to do.
       return ok(undefined);
     }
 
@@ -554,10 +536,7 @@ async function revokeApiKey(id: string): Promise<Result<RevokeApiKeyResponse, Re
         target_id: row.id,
         status: 'success',
 
-        // Stated rather than diffed. Both old values are known to be null -
-        // the isNull(revoked_at) above is what let this row match at all - and
-        // diffFields compares a request body against a row, so it finds
-        // nothing here: neither column is in the update schema's writable set.
+        // Stated rather than diffed.
         difference: {
           revoked_at: { old: null, new: row.revoked_at },
           revoked_by: { old: null, new: row.revoked_by },

@@ -35,20 +35,16 @@ return { 1, math.max(0, math.floor(limit - newEstimate)) }
 `;
 
 /**
- * Consumes a sliding window counter for rate limiting.
+ * storing individual request timestamps.
  *
- * Estimates usage across the current and previous windows using a weighted
- * count, smoothing boundary spikes while maintaining a low memory footprint.
+ * @param key
+ * The unique key identifying the rate limit counter.
  *
- * It is commonly useful for general-purpose API rate limiting where accuracy
- * and memory efficiency both matter.
- *
- * @param key The unique key identifying the rate limit counter.
- *
- * @param policy The sliding window counter policy.
+ * @param policy
+ * The sliding window counter policy.
  *
  * @returns
- * A promise that resolves to the rate limit result.
+ * The allowance decision and estimated remaining quota.
  */
 export async function consumeSlidingWindowCounter(
   key: string,

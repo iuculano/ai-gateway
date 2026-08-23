@@ -1,20 +1,10 @@
-// Imported rather than reached for as the `Bun` global: the global is only in
-// scope when a tsconfig happens to pick up @types/bun, which the packages here
-// do not, and a shared package should not depend on its consumer's compiler
-// options to type-check.
 import { deepEquals } from 'bun';
 
 /**
  * Field-level comparison between a stored row and a partial update.
- *
- * Both halves come from one pass because they answer different questions about
- * the same fields: `updates` is what to write, `difference` is what to tell the
- * audit log. A field the caller sent unchanged belongs in the first and not the
- * second.
  */
-
 export interface FieldDiff<TRow> {
-  /** Every field the caller actually sent, ready to hand to .set(). */
+  /** Every field the caller actually sent. */
   updates: Partial<TRow>;
 
   /** Only the fields whose value changed, as before/after pairs. */
@@ -68,11 +58,5 @@ export function diffFields<TRow extends Record<string, unknown>>(
     }
   }
 
-  // Built loose and narrowed once on the way out. Typing `updates` as
-  // Partial<TRow> up front would hit the same correlated-key limitation that
-  // blocks `updates[field] = next` - TypeScript reads a union-keyed index fine
-  // but refuses to write through one. Returning Partial<TRow> is what keeps
-  // the caller's .set() actually type-checked; a bare Record<string, unknown>
-  // satisfies it vacuously.
   return { updates: updates as Partial<TRow>, difference };
 }
