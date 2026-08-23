@@ -4,7 +4,7 @@ updates:
   # One entry covers every workspace. Bun resolves the whole monorepo from the
   # root lockfile, so pointing Dependabot at a nested package.json would only
   # produce updates it cannot apply.
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory:         /
     schedule:
       interval: weekly
@@ -29,10 +29,28 @@ updates:
       actions:
         patterns: ['*']
 
-  # Doesn't recurse down, need to explicitly point it at the setup action
-  # directory.
+  # Doesn't recurse down, need to explicitly point it at the setup action dir.
   - package-ecosystem: github-actions
     directory:         /.github/actions/setup
+    schedule:
+      interval: weekly
+      day:      monday
+
+  - package-ecosystem: docker
+    directories:
+      - "/apps/*"
+    schedule:
+      interval: weekly
+      day:      monday
+
+  - package-ecosystem: docker-compose
+    directory:         /
+    schedule:
+      interval: weekly
+      day:      monday
+
+  - package-ecosystem: devcontainers
+    directory:         /
     schedule:
       interval: weekly
       day:      monday
