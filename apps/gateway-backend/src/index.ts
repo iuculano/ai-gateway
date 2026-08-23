@@ -22,23 +22,12 @@ createObjectStorage({
 
 await connectRedis();
 
-app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
-  type: 'http',
-  scheme: 'bearer',
-  bearerFormat: 'JWT or API key',
-  description: 'A Zitadel JWT or an opaque aik_ API key',
-});
-
+// Be mindful of the order of these middleware - it matters. Don't change it
+// unless you know what you're doing.
 app.onError(errorHandler());
 app.use('*', secureHeaders());
 app.use('*', requestId());
-
-// Must be ahead of requestLogger() so the histogram spans the logging work too.
-// The labels it records come from c.req.routePath, which only resolves to the
-// matched route after the handler has run - so this must wrap the chain
-// rather than sit at the end of it.
 app.use('*', requestMetrics());
-
 app.use('*', requestLogger());
 app.get('/metrics', exposeMetrics());
 
@@ -68,9 +57,17 @@ app.use(
 
 // Binds the authenticated Caller to the request's asynchronous flow. Services
 // can call getCaller() instead of receiving it through every function.
+//
+// This should come last in the middleware chain, it relies on information
+// from the previous middleware.
 app.use('/v1/*', callerContext());
 
-const routes = app.route('/', healthHandlers).route('/v1', apiRoutes);
+// Note, this being method-chained is very intentional here!  We need to
+// preserve the type of the entire route tree in AppType for the typed Hono
+// client to work. The frontend relies on this!
+const routes = app
+  .route('/', healthHandlers) // internal health check routes
+  .route('/v1', apiRoutes); // public, versioned API routes
 
 export type AppType = typeof routes;
 export default routes;

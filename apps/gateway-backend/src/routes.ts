@@ -10,8 +10,13 @@ import promptHandlers from './api/prompts/prompts.handlers';
 import webhookHandlers from './api/webhooks/webhooks.handlers';
 
 /**
- * Shared, unprefixed route tree with Hono's inferred route types intact.
- * The backend mounts it at /v1; the frontend client mounts it at /api.
+ * See the comment on this in index.ts for why this is chained like this.
+ *
+ * This is split out and must remain unprefixed for the frontend.
+ *
+ * The frontend exposes `/api/*` and proxies it to the backend's `/v1/*`
+ * instead. So, this needs to be unprefixed or the Hono client will incorrectly
+ * request `/api/v1/*` instead.
  */
 export const apiRoutes = new OpenAPIHono()
   .route('/', analyticsHandlers)
