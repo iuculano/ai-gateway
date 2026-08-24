@@ -252,7 +252,8 @@ mock.module('../../src/api/models/models.services', () => ({
     async getModelBySlug(slug: string) {
       modelLookupState.calls.push(slug);
 
-      if (!modelLookupState.known || slug.split('/').length !== 2) {
+      const parts = slug.split('/');
+      if (!modelLookupState.known || parts.length !== 2 || parts.some((part) => part.length === 0)) {
         return err({ code: 'MODEL_NOT_FOUND', slug });
       }
 
