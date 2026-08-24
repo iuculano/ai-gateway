@@ -6,6 +6,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionHeaders,
 } from '../../src/api/chat-completions/chat-completions.schemas';
+import type { GetModelResponse } from '../../src/api/models/models.schemas';
 import type { ResolvePromptFailure } from '../../src/api/prompts/prompts.services';
 import {
   callerFixture,
@@ -13,6 +14,7 @@ import {
   installModuleMocks,
   LOG_ID,
   logCapture,
+  MODEL_ID,
   resetDoubles,
   rows,
   USER_ID,
@@ -204,6 +206,61 @@ mock.module('../../src/api/prompts/prompts.services', () => ({
   },
 }));
 
+function catalogModel(slug: string): GetModelResponse {
+  const [provider, name] = slug.split('/');
+
+  return {
+    id: MODEL_ID,
+    source: 'builtin',
+    name: name ?? slug,
+    provider: provider ?? 'openai',
+    display_name: null,
+    status: 'available',
+    cost_input: null,
+    cost_output: null,
+    cost_cache_read: null,
+    context_limit: null,
+    attachment: false,
+    reasoning: false,
+    tool_call: false,
+    structured_output: false,
+    config: {},
+    tags: {},
+    delisted_at: null,
+    synced_at: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+const modelLookupState = {
+  calls: [] as string[],
+  known: true,
+  override: null as Partial<GetModelResponse> | null,
+
+  reset() {
+    modelLookupState.calls = [];
+    modelLookupState.known = true;
+    modelLookupState.override = null;
+  },
+};
+
+const actualModelServices = { ...(await import('../../src/api/models/models.services')).default };
+mock.module('../../src/api/models/models.services', () => ({
+  default: {
+    ...actualModelServices,
+    async getModelBySlug(slug: string) {
+      modelLookupState.calls.push(slug);
+
+      if (!modelLookupState.known || slug.split('/').length !== 2) {
+        return err({ code: 'MODEL_NOT_FOUND', slug });
+      }
+
+      return ok({ ...catalogModel(slug), ...modelLookupState.override });
+    },
+  },
+}));
+
 const { OpenAPIHono } = await import('@hono/zod-openapi');
 const { callerContext, errorHandler } = await import('@repo/hono');
 const { default: handlers } = await import('../../src/api/chat-completions/chat-completions.handlers');
@@ -256,6 +313,7 @@ beforeEach(() => {
   aiState.reset();
   providerFactory.reset();
   promptState.reset();
+  modelLookupState.reset();
   // This suite watches the log lifecycle rather than running it. Every other
   // suite leaves passthrough on and gets the real module.
   logCapture.passthrough = false;
@@ -370,6 +428,20 @@ test('the omit headers keep the row and its accounting, and store neither payloa
   });
 });
 
+test('catalogue pricing is applied to non-streaming logs, including cached input tokens', async () => {
+  modelLookupState.override = {
+    cost_input: 2,
+    cost_output: 8,
+    cost_cache_read: 0.5,
+  };
+
+  await withCaller(() => Services.createChatCompletion(headers(), body()));
+
+  expect(modelLookupState.calls).toEqual(['openai/test-model']);
+  expect(logCapture.completed[0]?.entry.input_cost).toBeCloseTo(0.000011, 15);
+  expect(logCapture.completed[0]?.entry.output_cost).toBeCloseTo(0.000032, 15);
+});
+
 test('ai-log-omit-request suppresses the request payload on the failure path too', async () => {
   aiState.generateError = Object.assign(new Error('provider timed out'), { name: 'TimeoutError' });
 
@@ -410,6 +482,12 @@ test('an unsupported response format is rejected before provider or logging work
 });
 
 test('a stream emits OpenAI chunks and stores the assembled completion after it drains', async () => {
+  modelLookupState.override = {
+    cost_input: 2,
+    cost_output: 8,
+    cost_cache_read: null,
+  };
+
   aiState.streamParts = [
     { type: 'text-delta', text: 'Hello ' },
     { type: 'text-delta', text: 'stream' },
@@ -441,6 +519,8 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
     choices: [{ message: { content: 'Hello stream' }, finish_reason: 'length' }],
     usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
   });
+  expect(logCapture.completed[0]?.entry.input_cost).toBeCloseTo(0.000006, 15);
+  expect(logCapture.completed[0]?.entry.output_cost).toBeCloseTo(0.000016, 15);
   expect(logCapture.failed).toHaveLength(0);
 });
 
@@ -501,36 +581,54 @@ test('a provider-prefixed model resolves to that provider and forwards the bare 
   });
 });
 
-test('a bare model id resolves to openai, so a stock OpenAI client works unchanged', async () => {
-  await withCaller(() => Services.createChatCompletion(headers(), body({ model: 'gpt-bare' })));
+test('a bare model id is rejected because it is not a catalogue slug', async () => {
+  const failure = await withCaller(() => completionFailure(headers(), body({ model: 'gpt-bare' })));
 
-  expect(providerFactory.openai).toHaveLength(1);
-  expect(logCapture.started[0]).toMatchObject({
-    entry: { provider: 'openai', model: 'gpt-bare' },
-  });
+  expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'gpt-bare' });
+  expect(providerFactory.openai).toHaveLength(0);
+  expect(logCapture.started).toHaveLength(0);
 });
 
-test('an unknown prefix is part of the model id rather than a provider', async () => {
-  // Only the two names this gateway can reach are treated as providers, so an
-  // OpenRouter-style slug keeps its own slash instead of being cut in half.
-  await withCaller(() => Services.createChatCompletion(headers(), body({ model: 'meta/llama-4' })));
+test('an unregistered model is rejected before provider or logging work starts', async () => {
+  modelLookupState.known = false;
 
-  expect(logCapture.started[0]).toMatchObject({
-    entry: { provider: 'openai', model: 'meta/llama-4' },
+  const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/gpt-unknown' })));
+
+  expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'openai/gpt-unknown' });
+  expect(modelLookupState.calls).toEqual(['openai/gpt-unknown']);
+  expect(providerFactory.openai).toHaveLength(0);
+  expect(logCapture.started).toHaveLength(0);
+});
+
+test('a registered but unsupported provider is rejected before provider or logging work starts', async () => {
+  modelLookupState.override = { provider: 'anthropic', name: 'claude-sonnet' };
+
+  const failure = await withCaller(() => completionFailure(headers(), body({ model: 'anthropic/claude-sonnet' })));
+
+  expect(failure).toEqual({
+    code: 'UNSUPPORTED_MODEL_PROVIDER',
+    model: 'anthropic/claude-sonnet',
+    provider: 'anthropic',
   });
+  expect(providerFactory.openai).toHaveLength(0);
+  expect(providerFactory.azure).toHaveLength(0);
+  expect(logCapture.started).toHaveLength(0);
 });
 
 test('a model identifier with a provider and no model is a typed refusal', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/' })));
 
-  expect(failure).toMatchObject({ code: 'MALFORMED_MODEL_IDENTIFIER' });
+  expect(failure).toMatchObject({ code: 'MODEL_NOT_FOUND', model: 'openai/' });
 
   expect(logCapture.started).toHaveLength(0);
 });
 
 test('the base url override reaches the provider client', async () => {
   await withCaller(() =>
-    Services.createChatCompletion(headers({ 'ai-base-url': 'https://proxy.test/v1' }), body({ model: 'gpt-proxied' })),
+    Services.createChatCompletion(
+      headers({ 'ai-base-url': 'https://proxy.test/v1' }),
+      body({ model: 'openai/gpt-proxied' }),
+    ),
   );
 
   expect(providerFactory.openai[0]).toMatchObject({
@@ -540,7 +638,8 @@ test('the base url override reaches the provider client', async () => {
 });
 
 test('a second call on the same credential reuses the cached provider client', async () => {
-  const request = () => withCaller(() => Services.createChatCompletion(headers(), body({ model: 'gpt-cached' })));
+  const request = () =>
+    withCaller(() => Services.createChatCompletion(headers(), body({ model: 'openai/gpt-cached' })));
 
   await request();
   await request();
@@ -550,7 +649,10 @@ test('a second call on the same credential reuses the cached provider client', a
   expect(providerFactory.openai).toHaveLength(1);
 
   await withCaller(() =>
-    Services.createChatCompletion(headers({ 'ai-api-key': 'someone-elses-secret' }), body({ model: 'gpt-cached' })),
+    Services.createChatCompletion(
+      headers({ 'ai-api-key': 'someone-elses-secret' }),
+      body({ model: 'openai/gpt-cached' }),
+    ),
   );
 
   expect(providerFactory.openai).toHaveLength(2);

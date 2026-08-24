@@ -59,7 +59,7 @@ const createChatCompletion = createRoute({
       },
     },
     404: {
-      description: 'The request named a prompt, prompt version, or webhook that does not exist',
+      description: 'The request named a prompt, prompt version, webhook, or model that does not exist',
       content: {
         'application/json': {
           schema: httpError,

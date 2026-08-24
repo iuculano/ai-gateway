@@ -24,6 +24,8 @@ import {
 import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
 import LogsService from '../logs/logs.services';
+import type { GetModelResponse } from '../models/models.schemas';
+import ModelsService from '../models/models.services';
 import WebhookServices from '../webhooks/webhooks.services';
 import type {
   ChatCompletion,
@@ -65,6 +67,9 @@ interface ResolvedModel {
   modelId: string;
 
   instance: LanguageModel;
+
+  /** The catalogue row that authorized this call and supplies its pricing. */
+  info: GetModelResponse;
 }
 
 /**
@@ -75,7 +80,8 @@ interface ResolvedModel {
  * best-effort.
  */
 export type ChatCompletionFailure =
-  | { code: 'MALFORMED_MODEL_IDENTIFIER'; model: string }
+  | { code: 'MODEL_NOT_FOUND'; model: string }
+  | { code: 'UNSUPPORTED_MODEL_PROVIDER'; model: string; provider: string }
   | { code: 'UNKNOWN_TOOL_CALL'; tool_call_id: string }
   | { code: 'UNSUPPORTED_RESPONSE_FORMAT'; response_format: string }
   | { code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' }
@@ -89,9 +95,9 @@ export type ChatCompletionFailure =
 /**
  * Resolves a request's `model` to something callable.
  *
- * Accepts `provider/model` references and defaults bare ids to OpenAI. Resolution
- * does not consult the catalogue, so model validity is determined upstream and
- * catalogue pricing is not applied here.
+ * Accepts the catalogue's `provider/model` slug. Every request must resolve to
+ * a catalogue row; the row is the source of truth for the provider,
+ * provider-side model id, and accounting prices.
  *
  * @param model
  * The `model` field from the request body.
@@ -103,19 +109,25 @@ export type ChatCompletionFailure =
  * Optional override for the provider's base URL.
  *
  * @returns
- * The resolved provider, its model id, and a callable instance.
+ * The registered model, its callable instance, and provider metadata.
  */
-function resolveModel(model: string, apiKey: string, baseUrl?: string): Result<ResolvedModel, ChatCompletionFailure> {
-  // Split once because provider-specific model ids may contain more slashes.
-  const separator = model.indexOf('/');
-  const hasProvider = separator > 0 && isProvider(model.slice(0, separator));
-
-  const provider: Provider = hasProvider ? (model.slice(0, separator) as Provider) : 'openai';
-  const modelId = hasProvider ? model.slice(separator + 1) : model;
-
-  if (!modelId) {
-    return err({ code: 'MALFORMED_MODEL_IDENTIFIER', model });
+async function resolveModel(
+  model: string,
+  apiKey: string,
+  baseUrl?: string,
+): Promise<Result<ResolvedModel, ChatCompletionFailure>> {
+  const registered = await ModelsService.getModelBySlug(model);
+  if (registered.isErr()) {
+    return err({ code: 'MODEL_NOT_FOUND', model });
   }
+
+  const info = registered.value;
+  if (!isProvider(info.provider)) {
+    return err({ code: 'UNSUPPORTED_MODEL_PROVIDER', model, provider: info.provider });
+  }
+
+  const provider = info.provider;
+  const modelId = info.name;
 
   const cacheKey = createCacheKey('chat-completions:', {
     provider: provider,
@@ -126,7 +138,7 @@ function resolveModel(model: string, apiKey: string, baseUrl?: string): Result<R
 
   const cached = providerCache.get(cacheKey);
   if (cached) {
-    return ok({ provider, modelId, instance: cached });
+    return ok({ provider, modelId, instance: cached, info });
   }
 
   // Use the chat model explicitly; the bare factory targets the Responses API.
@@ -137,7 +149,7 @@ function resolveModel(model: string, apiKey: string, baseUrl?: string): Result<R
 
   providerCache.set(cacheKey, instance);
 
-  return ok({ provider, modelId, instance });
+  return ok({ provider, modelId, instance, info });
 }
 
 /**
@@ -543,8 +555,8 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
  * Stores the payloads for a finished call and closes the log.
  *
  * Failures are logged but remain non-fatal because the provider response already
- * exists. Tokens are recorded; costs remain zero until model resolution applies
- * catalogue pricing.
+ * exists. Tokens and catalogue-derived costs are recorded when prices are
+ * available; missing prices leave the database defaults untouched.
  *
  * @param log
  * The log opened by openLog, or null if there is none.
@@ -558,6 +570,9 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
  * @param response
  * The completion returned to the caller, stored as the response object.
  *
+ * @param model
+ * The registered model whose catalogue pricing is used for accounting.
+ *
  * @param responseTimeMs
  * Wall-clock time spent in the provider call.
  */
@@ -566,6 +581,7 @@ async function closeLog(
   headers: ChatCompletionHeaders,
   request: ChatCompletionBody,
   response: ChatCompletion,
+  model: GetModelResponse,
   responseTimeMs: number,
 ): Promise<void> {
   if (!log) {
@@ -581,6 +597,7 @@ async function closeLog(
       omitResponse: headers['ai-log-omit-response'],
       input_tokens: response.usage.prompt_tokens,
       output_tokens: response.usage.completion_tokens,
+      ...calculateCosts(response.usage, model),
       response_time_ms: Math.round(responseTimeMs),
     });
   } catch (error) {
@@ -589,6 +606,35 @@ async function closeLog(
 
   // Attempt completion first so successful log writes are visible before fan-out.
   await WebhookServices.fanOutForLog(log.organizationId, log.id, log.tags);
+}
+
+/**
+ * Calculates dollar costs from prices stored per million tokens.
+ *
+ * Cached input tokens use the catalogue's cache-read price when one is
+ * published. If it is absent, the normal input price is used for the complete
+ * input total; this is the least surprising fallback for providers that do not
+ * publish a separate cache price.
+ */
+function calculateCosts(
+  usage: ChatCompletionUsage,
+  model: Pick<GetModelResponse, 'cost_input' | 'cost_output' | 'cost_cache_read'>,
+): { input_cost?: number; output_cost?: number } {
+  const costs: { input_cost?: number; output_cost?: number } = {};
+  const cachedTokens = Math.min(usage.prompt_tokens, usage.prompt_tokens_details?.cached_tokens ?? 0);
+
+  if (model.cost_input != null) {
+    const inputTokens = usage.prompt_tokens - cachedTokens;
+    const cachedInputCost =
+      model.cost_cache_read == null ? cachedTokens * model.cost_input : cachedTokens * model.cost_cache_read;
+    costs.input_cost = (inputTokens * model.cost_input + cachedInputCost) / 1_000_000;
+  }
+
+  if (model.cost_output != null) {
+    costs.output_cost = (usage.completion_tokens * model.cost_output) / 1_000_000;
+  }
+
+  return costs;
 }
 
 /**
@@ -686,7 +732,7 @@ async function createChatCompletion(
     return err(supported.error);
   }
 
-  const resolved = resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  const resolved = await resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
   if (resolved.isErr()) {
     return err(resolved.error);
   }
@@ -766,7 +812,7 @@ async function createChatCompletion(
     usage: toUsage(result.totalUsage),
   };
 
-  await closeLog(log, headers, body, completion, responseTimeMs);
+  await closeLog(log, headers, body, completion, model.info, responseTimeMs);
 
   return ok(completion);
 }
@@ -801,7 +847,7 @@ async function* streamChatCompletion(
     return;
   }
 
-  const resolved = resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  const resolved = await resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
   if (resolved.isErr()) {
     yield err(resolved.error);
     return;
@@ -1013,7 +1059,7 @@ async function* streamChatCompletion(
     usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 
-  await closeLog(log, headers, body, completion, performance.now() - startedAt);
+  await closeLog(log, headers, body, completion, model.info, performance.now() - startedAt);
 }
 
 export default {

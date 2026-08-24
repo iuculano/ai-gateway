@@ -149,9 +149,14 @@ function toChatCompletionHttpException(failure: ChatCompletionFailure): HTTPExce
   const { code } = failure;
 
   switch (code) {
-    case 'MALFORMED_MODEL_IDENTIFIER':
+    case 'MODEL_NOT_FOUND':
+      return new HTTPException(404, {
+        message: `Model '${failure.model}' is not registered in the catalogue`,
+      });
+
+    case 'UNSUPPORTED_MODEL_PROVIDER':
       return new HTTPException(400, {
-        message: `Malformed model identifier: '${failure.model}'`,
+        message: `Model '${failure.model}' uses unsupported provider '${failure.provider}'`,
       });
 
     case 'UNKNOWN_TOOL_CALL':
