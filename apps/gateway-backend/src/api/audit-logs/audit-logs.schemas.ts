@@ -57,11 +57,6 @@ const auditEventValues = [
   'prompts.created',
   'prompts.updated',
   'prompts.deleted',
-
-  // Versions are audited against the prompt rather than as a target type of
-  // their own: a version has no identity outside its parent, and target_id is
-  // a uuid column, so pointing it at a (prompt, ordinal) pair is not available.
-  // The ordinal travels in `metadata` instead.
   'prompts.versions.created',
   'prompts.versions.updated',
   'prompts.versions.deleted',
@@ -90,10 +85,6 @@ const createAuditLogBase = createInsertSchema(auditLogs).omit({
   created_at: true, // server-generated
 });
 
-// One member of the createAuditLog body union: an event pinned to the target
-// type it must carry. Zod validates the member the `event` literal selects, so
-// the pairing is enforced at runtime, and z.infer carries it to callers. Add a
-// targetless event as an inline member with `target_type: z.null().optional()`.
 const event = <E extends AuditEvent, T extends AuditTargetType>(name: E, target: T) =>
   createAuditLogBase.extend({
     event: z.literal(name),
