@@ -12,9 +12,7 @@
     "check-types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:e2e": "playwright test",
-    "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration",
-    "test:unit": "bun test --preload ./tests/unit/setup.ts --isolate tests/unit",
-    "test:unit:coverage": "bun test --preload ./tests/unit/setup.ts --isolate --coverage tests/unit"
+    "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {
     "@repo/redis": "workspace:*",
