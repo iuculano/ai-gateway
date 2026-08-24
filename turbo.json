@@ -24,6 +24,10 @@
       "inputs": ["$TURBO_DEFAULT$", "!**/*.md"],
       "outputs": ["coverage/**"]
     },
+    "test:e2e": {
+      "cache": false,
+      "env": ["REDIS_E2E_URL"]
+    },
     "test:integration": {
       "dependsOn": ["gateway-backend#test:db:setup"],
       "cache": false,

@@ -107,6 +107,39 @@ jobs:
       # Don't try to `docker compose down --volumes` - you will smash your own
       # local dev environment if you're using ACT!
 
+  test-e2e:
+    name:            Frontend browser tests
+    runs-on:         ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+        with:
+          # Playwright is not run through turbo.
+          turbo-cache: 'false'
+
+      - name: Install Chromium and its system dependencies
+        run:  bunx playwright install --with-deps chromium
+
+      - name: Run frontend browser tests
+        run:  bun run test:e2e
+
+      - name: Upload browser-test diagnostics
+        if:   failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: |
+            apps/gateway-frontend/playwright-report
+            apps/gateway-frontend/test-results
+          if-no-files-found: ignore
+          retention-days:    7
+
+      - name: Dump Valkey logs
+        if:   failure()
+        run:  docker compose logs --no-color --tail 100 valkey
+
   build:
     name:            Build
     runs-on:         ubuntu-latest
@@ -123,7 +156,7 @@ jobs:
   # has passed up til this point.
   publish:
     name:  Publish
-    needs: [lint, check-types, audit, test-unit, test-integration, build]
+    needs: [lint, check-types, audit, test-unit, test-integration, test-e2e, build]
     if:    github.event_name == 'push'
     permissions:
       contents: read

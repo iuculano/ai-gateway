@@ -22,6 +22,7 @@ const SECTIONS = [
   { prefix: '/prompts', label: 'Prompts', placeholder: 'Search prompts…' },
   { prefix: '/webhooks', label: 'Webhooks', placeholder: 'Search webhooks…' },
   { prefix: '/audit', label: 'Audit log', placeholder: 'Search events…' },
+  { prefix: '/settings', label: 'Settings', placeholder: 'Search…' },
 ];
 
 const section = $derived(SECTIONS.find((s) => page.url.pathname.startsWith(s.prefix)) ?? SECTIONS[0]);

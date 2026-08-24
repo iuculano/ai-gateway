@@ -11,7 +11,10 @@
     "prepare": "svelte-kit sync || echo ''",
     "check-types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
+    "test:e2e": "playwright test",
+    "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration",
+    "test:unit": "bun test --preload ./tests/unit/setup.ts --isolate tests/unit",
+    "test:unit:coverage": "bun test --preload ./tests/unit/setup.ts --isolate --coverage tests/unit"
   },
   "dependencies": {
     "@repo/redis": "workspace:*",
@@ -23,6 +26,7 @@
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@internationalized/date": "^3.12.3",
     "@lucide/svelte": "^1.33.0",
+    "@playwright/test": "^1.62.1",
     "@sveltejs/adapter-node": "^5.5.7",
     "@sveltejs/kit": "^2.70.3",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
