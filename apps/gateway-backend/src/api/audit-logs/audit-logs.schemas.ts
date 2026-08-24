@@ -65,9 +65,15 @@ const auditEventValues = [
   'prompts.versions.created',
   'prompts.versions.updated',
   'prompts.versions.deleted',
+  'models.created',
+  'models.updated',
+  'models.deleted',
+  'webhooks.created',
+  'webhooks.updated',
+  'webhooks.deleted',
 ] as const;
 
-const auditTargetTypeValues = ['api_key', 'guardrail', 'prompt', 'organization', 'user'] as const;
+const auditTargetTypeValues = ['api_key', 'guardrail', 'prompt', 'model', 'webhook', 'organization', 'user'] as const;
 
 type AuditTargetType = (typeof auditTargetTypeValues)[number];
 type AuditEvent = (typeof auditEventValues)[number];
@@ -108,6 +114,12 @@ const createAuditLog = createSchema({
     event('prompts.versions.created', 'prompt'),
     event('prompts.versions.updated', 'prompt'),
     event('prompts.versions.deleted', 'prompt'),
+    event('models.created', 'model'),
+    event('models.updated', 'model'),
+    event('models.deleted', 'model'),
+    event('webhooks.created', 'webhook'),
+    event('webhooks.updated', 'webhook'),
+    event('webhooks.deleted', 'webhook'),
   ]),
 
   response: auditLogShape,

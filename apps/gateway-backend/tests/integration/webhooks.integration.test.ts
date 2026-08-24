@@ -3,7 +3,7 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
 import { runWithCaller } from '@repo/hono';
 import Services from '../../src/api/webhooks/webhooks.services';
-import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
+import { admin, callerFor, prepareSuite, readAuditRows, resetDatabase, seedTenant, type Tenant } from './setup';
 
 /**
  * Webhook tenancy, against a real database.
@@ -107,6 +107,30 @@ test('the owner can update and delete it', async () => {
   const deleted = await asCaller(acme, () => Services.deleteWebhook(created.id));
   expect(deleted.isOk()).toBe(true);
   expect(await readWebhookRow(created.id)).toBeUndefined();
+
+  const audits = await readAuditRows(created.id);
+  expect(audits.map((audit: { event: string }) => audit.event)).toEqual([
+    'webhooks.created',
+    'webhooks.updated',
+    'webhooks.deleted',
+  ]);
+  expect(audits[1]?.difference).toEqual({ name: { old: 'deploys', new: 'renamed' } });
+});
+
+test('a failing webhook audit write rolls the update back', async () => {
+  const created = await createWebhook(acme);
+
+  await admin.unsafe(
+    "alter table audit_logs add constraint audit_webhooks_integration_block check (event <> 'webhooks.updated')",
+  );
+
+  try {
+    await expect(asCaller(acme, () => Services.updateWebhook(created.id, { name: 'renamed' }))).rejects.toThrow();
+  } finally {
+    await admin.unsafe('alter table audit_logs drop constraint audit_webhooks_integration_block');
+  }
+
+  expect((await readWebhookRow(created.id))?.name).toBe('deploys');
 });
 
 test('deleting the same webhook twice refuses the second time', async () => {

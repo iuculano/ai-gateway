@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from 'bun:test';
 import type { CreateWebhookBody } from '../../src/api/webhooks/webhooks.schemas';
 import {
+  audit,
   callerFixture,
   database,
   failsWith,
@@ -99,15 +100,22 @@ test('getWebhook rejects when the row will not parse', async () => {
 // --- updateWebhook -----------------------------------------------------------
 
 test('updateWebhook returns Ok', async () => {
-  database.script(rows(webhookRow({ name: 'renamed' })));
+  database.script(rows(webhookRow()), rows(webhookRow({ name: 'renamed' })));
 
   const updated = expectOk(await asCaller(() => Services.updateWebhook(WEBHOOK_ID, { name: 'renamed' })));
 
   expect(updated.name).toBe('renamed');
+  expect(audit.calls[0]?.body).toMatchObject({
+    event: 'webhooks.updated',
+    target_type: 'webhook',
+    target_id: WEBHOOK_ID,
+    difference: { name: { old: 'deploys', new: 'renamed' } },
+  });
+  expect(audit.calls[0]?.transactional).toBe(true);
 });
 
 test('updateWebhook rejects when the update fails', async () => {
-  database.script(failsWith(new Error('deadlock detected')));
+  database.script(rows(webhookRow()), failsWith(new Error('deadlock detected')));
 
   await expect(asCaller(() => Services.updateWebhook(WEBHOOK_ID, { name: 'renamed' }))).rejects.toThrow(
     'deadlock detected',
@@ -120,6 +128,12 @@ test('deleteWebhook returns Ok when a row was removed', async () => {
   database.script(rows(webhookRow()));
 
   expect((await asCaller(() => Services.deleteWebhook(WEBHOOK_ID))).isOk()).toBe(true);
+  expect(audit.calls[0]?.body).toMatchObject({
+    event: 'webhooks.deleted',
+    target_type: 'webhook',
+    target_id: WEBHOOK_ID,
+  });
+  expect(audit.calls[0]?.transactional).toBe(true);
 });
 
 test('deleteWebhook rejects when the delete fails', async () => {
@@ -138,6 +152,12 @@ test('createWebhook stays a plain promise', async () => {
   // Deliberately not a Result: there is no expected failure to model.
   expect('isOk' in created).toBe(false);
   expect(created.id).toBe(WEBHOOK_ID);
+  expect(audit.calls[0]?.body).toMatchObject({
+    event: 'webhooks.created',
+    target_type: 'webhook',
+    target_id: WEBHOOK_ID,
+  });
+  expect(audit.calls[0]?.transactional).toBe(true);
 });
 
 test('createWebhook takes the organization and creator from the caller, not the body', async () => {

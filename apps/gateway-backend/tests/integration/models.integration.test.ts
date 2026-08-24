@@ -1,8 +1,9 @@
 // ./setup rewrites POSTGRES_CONNECTION_STRING and is loaded by --preload, so
 // the order of these imports does not matter. See the test:integration script.
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
+import { runWithCaller } from '@repo/hono';
 import Services from '../../src/api/models/models.services';
-import { admin, prepareSuite, resetDatabase } from './setup';
+import { admin, callerFor, prepareSuite, readAuditRows, resetDatabase, seedTenant, type Tenant } from './setup';
 
 /**
  * The model catalogue, against a real database.
@@ -17,15 +18,26 @@ import { admin, prepareSuite, resetDatabase } from './setup';
 
 beforeAll(prepareSuite);
 
-beforeEach(resetDatabase);
+let tenant: Tenant;
+
+beforeEach(async () => {
+  await resetDatabase();
+  tenant = await seedTenant('models');
+});
+
+function asCaller<T>(work: () => Promise<T>): Promise<T> {
+  return runWithCaller(callerFor(tenant, ['models:read', 'models:write']), work);
+}
 
 async function createModel(overrides: Record<string, unknown> = {}) {
-  return Services.createModel({
-    name: 'gpt-4-turbo',
-    provider: 'openai',
-    ...overrides,
-    // biome-ignore lint/suspicious/noExplicitAny: the create body is the schema's to police, not this fixture's
-  } as any);
+  return asCaller(() =>
+    Services.createModel({
+      name: 'gpt-4-turbo',
+      provider: 'openai',
+      ...overrides,
+      // biome-ignore lint/suspicious/noExplicitAny: the create body is the schema's to police, not this fixture's
+    } as any),
+  );
 }
 
 test('a model round-trips through the response schema', async () => {
@@ -59,8 +71,10 @@ test('an unknown id refuses rather than throwing', async () => {
   const missing = '01912d3f-9b4a-7c3d-8e2f-0000000000ff';
 
   expect((await Services.getModel(missing))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
-  expect((await Services.updateModel(missing, { name: 'x' }))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
-  expect((await Services.deleteModel(missing))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
+  expect((await asCaller(() => Services.updateModel(missing, { name: 'x' })))._unsafeUnwrapErr().code).toBe(
+    'MODEL_NOT_FOUND',
+  );
+  expect((await asCaller(() => Services.deleteModel(missing)))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
 });
 
 test('getModelBySlug finds a model by provider and name', async () => {
@@ -85,15 +99,39 @@ test('getModelBySlug refuses a slug that names nothing', async () => {
 test('an update writes and a delete removes', async () => {
   const created = await createModel();
 
-  const updated = await Services.updateModel(created.id, { name: 'gpt-4o' });
+  const updated = await asCaller(() => Services.updateModel(created.id, { name: 'gpt-4o' }));
   expect(updated._unsafeUnwrap().name).toBe('gpt-4o');
 
-  expect((await Services.deleteModel(created.id)).isOk()).toBe(true);
+  expect((await asCaller(() => Services.deleteModel(created.id))).isOk()).toBe(true);
   expect(await admin`select 1 from models where id = ${created.id}`).toHaveLength(0);
+
+  const audits = await readAuditRows(created.id);
+  expect(audits.map((audit: { event: string }) => audit.event)).toEqual([
+    'models.created',
+    'models.updated',
+    'models.deleted',
+  ]);
+  expect(audits[1]?.difference).toEqual({ name: { old: 'gpt-4-turbo', new: 'gpt-4o' } });
 
   // Deletion is not idempotent: the row is gone, so a second call is
   // indistinguishable from one for an id that never existed.
-  expect((await Services.deleteModel(created.id))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
+  expect((await asCaller(() => Services.deleteModel(created.id)))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
+});
+
+test('a failing model audit write rolls the update back', async () => {
+  const created = await createModel();
+
+  await admin.unsafe(
+    "alter table audit_logs add constraint audit_models_integration_block check (event <> 'models.updated')",
+  );
+
+  try {
+    await expect(asCaller(() => Services.updateModel(created.id, { name: 'renamed' }))).rejects.toThrow();
+  } finally {
+    await admin.unsafe('alter table audit_logs drop constraint audit_models_integration_block');
+  }
+
+  expect((await admin`select name from models where id = ${created.id}`)[0]?.name).toBe('gpt-4-turbo');
 });
 
 test('the cursor walks the catalogue exactly once', async () => {

@@ -1,8 +1,9 @@
-import { parseTags } from '@repo/core';
+import { diffFields, parseTags } from '@repo/core';
 import { and, db, desc, eq, lt, sql } from '@repo/drizzle';
 import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
 import { getAccountableUserId, getCaller, getLogger } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
+import AuditLogServices from '../audit-logs/audit-logs.services';
 import Schemas, {
   type CreateWebhookBody,
   type CreateWebhookResponse,
@@ -128,20 +129,41 @@ async function listWebhooks(request: ListWebhooksQuery): Promise<ListWebhooksRes
 async function createWebhook(request: CreateWebhookBody): Promise<CreateWebhookResponse> {
   const caller = getCaller();
 
-  const result = await db
-    .insert(webhooks)
-    .values({
-      ...request,
-      organization_id: caller.organization.id,
-      creator_id: getAccountableUserId(caller),
-    })
-    .returning();
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(webhooks)
+      .values({
+        ...request,
+        organization_id: caller.organization.id,
+        creator_id: getAccountableUserId(caller),
+      })
+      .returning();
 
-  if (!result[0]) {
-    throw new Error('Failed to create webhook');
-  }
+    if (!row) {
+      throw new Error('Failed to create webhook');
+    }
 
-  const parsed = Schemas.createWebhook.response.parse(result[0]);
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'webhooks.created',
+        target_type: 'webhook',
+        target_id: row.id,
+        status: 'success',
+        metadata: {
+          name: row.name,
+          description: row.description,
+          endpoint: row.endpoint,
+          filter: row.filter,
+          tags: row.tags,
+        },
+      },
+      tx,
+    );
+
+    return row;
+  });
+
+  const parsed = Schemas.createWebhook.response.parse(result);
   return parsed;
 }
 
@@ -160,19 +182,57 @@ async function updateWebhook(
 ): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> {
   const caller = getCaller();
 
-  const result = await db
-    .update(webhooks)
-    .set(request)
-    .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
-    .returning();
+  const result = await db.transaction(
+    async (tx): Promise<Result<typeof webhooks.$inferSelect, UpdateWebhookFailure>> => {
+      const [existing] = await tx
+        .select()
+        .from(webhooks)
+        .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+        .for('update');
 
-  // Either the webhook does not exist, or it belongs to someone else. Both are
-  // the same refusal on purpose.
-  if (!result[0]) {
-    return err({ code: 'WEBHOOK_NOT_FOUND', id });
+      // Either the webhook does not exist, or it belongs to someone else. Both
+      // are the same refusal on purpose.
+      if (!existing) {
+        return err({ code: 'WEBHOOK_NOT_FOUND', id });
+      }
+
+      const writeableFields = Object.keys(Schemas.updateWebhook.body.shape);
+      const { updates, difference } = diffFields(existing, request, writeableFields);
+
+      if (Object.keys(difference).length === 0) {
+        return ok(existing);
+      }
+
+      const [row] = await tx
+        .update(webhooks)
+        .set(updates)
+        .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+        .returning();
+
+      if (!row) {
+        throw new Error('Failed to update webhook');
+      }
+
+      await AuditLogServices.createAuditLog(
+        {
+          event: 'webhooks.updated',
+          target_type: 'webhook',
+          target_id: row.id,
+          status: 'success',
+          difference,
+        },
+        tx,
+      );
+
+      return ok(row);
+    },
+  );
+
+  if (result.isErr()) {
+    return err(result.error);
   }
 
-  const parsed = Schemas.updateWebhook.response.parse(result[0]);
+  const parsed = Schemas.updateWebhook.response.parse(result.value);
   return ok(parsed);
 }
 
@@ -185,16 +245,35 @@ async function updateWebhook(
 async function deleteWebhook(id: string): Promise<Result<DeleteWebhookResponse, DeleteWebhookFailure>> {
   const caller = getCaller();
 
-  const result = await db
-    .delete(webhooks)
-    .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
-    .returning();
+  return db.transaction(async (tx): Promise<Result<DeleteWebhookResponse, DeleteWebhookFailure>> => {
+    const [row] = await tx
+      .delete(webhooks)
+      .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+      .returning();
 
-  if (!result[0]) {
-    return err({ code: 'WEBHOOK_NOT_FOUND', id });
-  }
+    if (!row) {
+      return err({ code: 'WEBHOOK_NOT_FOUND', id });
+    }
 
-  return ok(undefined);
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'webhooks.deleted',
+        target_type: 'webhook',
+        target_id: row.id,
+        status: 'success',
+        metadata: {
+          name: row.name,
+          description: row.description,
+          endpoint: row.endpoint,
+          filter: row.filter,
+          tags: row.tags,
+        },
+      },
+      tx,
+    );
+
+    return ok(undefined);
+  });
 }
 
 // ---

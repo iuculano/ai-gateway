@@ -1,8 +1,9 @@
-import { probe, toPage } from '@repo/core';
+import { diffFields, probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, isNull, lt, or } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
+import AuditLogServices from '../audit-logs/audit-logs.services';
 import Schemas, {
   type CreateModelRequest,
   type CreateModelResponse,
@@ -187,14 +188,34 @@ async function listProviders(): Promise<ListProvidersResponse> {
  * The request object containing the model data to create.
  */
 async function createModel(request: CreateModelRequest): Promise<CreateModelResponse> {
-  const result = await db.insert(models).values(request).returning();
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx.insert(models).values(request).returning();
 
-  if (!result[0]) {
-    // Probably impossible: a returning() insert either throws or gives a row.
-    throw new Error('Failed to create model');
-  }
+    if (!row) {
+      // Probably impossible: a returning() insert either throws or gives a row.
+      throw new Error('Failed to create model');
+    }
 
-  const parsed = Schemas.createModel.response.parse(result[0]);
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'models.created',
+        target_type: 'model',
+        target_id: row.id,
+        status: 'success',
+        metadata: {
+          source: row.source,
+          provider: row.provider,
+          name: row.name,
+          display_name: row.display_name,
+        },
+      },
+      tx,
+    );
+
+    return row;
+  });
+
+  const parsed = Schemas.createModel.response.parse(result);
   return parsed;
 }
 
@@ -211,14 +232,46 @@ async function updateModel(
   id: string,
   request: UpdateModelRequest,
 ): Promise<Result<UpdateModelResponse, UpdateModelFailure>> {
-  const result = await db.update(models).set(request).where(eq(models.id, id)).returning();
+  const result = await db.transaction(async (tx): Promise<Result<typeof models.$inferSelect, UpdateModelFailure>> => {
+    const [existing] = await tx.select().from(models).where(eq(models.id, id)).for('update');
 
-  // Almost guaranteed that the model doesn't exist.
-  if (!result[0]) {
-    return err({ code: 'MODEL_NOT_FOUND', id });
+    // Almost guaranteed that the model doesn't exist.
+    if (!existing) {
+      return err({ code: 'MODEL_NOT_FOUND', id });
+    }
+
+    const writeableFields = Object.keys(Schemas.updateModel.body.shape);
+    const { updates, difference } = diffFields(existing, request, writeableFields);
+
+    if (Object.keys(difference).length === 0) {
+      return ok(existing);
+    }
+
+    const [row] = await tx.update(models).set(updates).where(eq(models.id, id)).returning();
+
+    if (!row) {
+      throw new Error('Failed to update model');
+    }
+
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'models.updated',
+        target_type: 'model',
+        target_id: row.id,
+        status: 'success',
+        difference,
+      },
+      tx,
+    );
+
+    return ok(row);
+  });
+
+  if (result.isErr()) {
+    return err(result.error);
   }
 
-  const parsed = Schemas.updateModel.response.parse(result[0]);
+  const parsed = Schemas.updateModel.response.parse(result.value);
   return ok(parsed);
 }
 
@@ -229,13 +282,31 @@ async function updateModel(
  * The ID of the model to delete.
  */
 async function deleteModel(id: string): Promise<Result<DeleteModelResponse, DeleteModelFailure>> {
-  const result = await db.delete(models).where(eq(models.id, id)).returning();
+  return db.transaction(async (tx): Promise<Result<DeleteModelResponse, DeleteModelFailure>> => {
+    const [row] = await tx.delete(models).where(eq(models.id, id)).returning();
 
-  if (!result[0]) {
-    return err({ code: 'MODEL_NOT_FOUND', id });
-  }
+    if (!row) {
+      return err({ code: 'MODEL_NOT_FOUND', id });
+    }
 
-  return ok(undefined);
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'models.deleted',
+        target_type: 'model',
+        target_id: row.id,
+        status: 'success',
+        metadata: {
+          source: row.source,
+          provider: row.provider,
+          name: row.name,
+          display_name: row.display_name,
+        },
+      },
+      tx,
+    );
+
+    return ok(undefined);
+  });
 }
 
 export default {

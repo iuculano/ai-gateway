@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'bun:test';
 import type { CreateModelRequest } from '../../src/api/models/models.schemas';
-import { database, failsWith, installModuleMocks, MODEL_ID, modelRow, resetDoubles, rows } from './doubles';
+import { audit, database, failsWith, installModuleMocks, MODEL_ID, modelRow, resetDoubles, rows } from './doubles';
 import { expectErr, expectOk } from './result';
 
 await installModuleMocks();
@@ -107,15 +107,23 @@ test('a slug with too many segments refuses the same way', async () => {
 // --- updateModel and deleteModel ---------------------------------------------
 
 test('updateModel returns Ok', async () => {
-  database.script(rows(modelRow({ name: 'renamed' })));
+  database.script(rows(modelRow()), rows(modelRow({ name: 'renamed' })));
 
   const updated = expectOk(await Services.updateModel(MODEL_ID, { name: 'renamed' }));
 
   expect(updated.name).toBe('renamed');
+  expect(audit.calls).toHaveLength(1);
+  expect(audit.calls[0]?.body).toMatchObject({
+    event: 'models.updated',
+    target_type: 'model',
+    target_id: MODEL_ID,
+    difference: { name: { old: 'gpt-4-turbo', new: 'renamed' } },
+  });
+  expect(audit.calls[0]?.transactional).toBe(true);
 });
 
 test('updateModel rejects when the update fails', async () => {
-  database.script(failsWith(new Error('deadlock detected')));
+  database.script(rows(modelRow()), failsWith(new Error('deadlock detected')));
 
   await expect(Services.updateModel(MODEL_ID, { name: 'renamed' })).rejects.toThrow('deadlock detected');
 });
@@ -124,6 +132,12 @@ test('deleteModel returns Ok when a row was removed', async () => {
   database.script(rows(modelRow()));
 
   expect((await Services.deleteModel(MODEL_ID)).isOk()).toBe(true);
+  expect(audit.calls[0]?.body).toMatchObject({
+    event: 'models.deleted',
+    target_type: 'model',
+    target_id: MODEL_ID,
+  });
+  expect(audit.calls[0]?.transactional).toBe(true);
 });
 
 test('deleteModel rejects when the delete fails', async () => {
@@ -143,6 +157,12 @@ test('createModel stays a plain promise', async () => {
   // provider/name, so there is nothing about a create to refuse.
   expect('isOk' in created).toBe(false);
   expect(created.id).toBe(MODEL_ID);
+  expect(audit.calls[0]?.body).toMatchObject({
+    event: 'models.created',
+    target_type: 'model',
+    target_id: MODEL_ID,
+  });
+  expect(audit.calls[0]?.transactional).toBe(true);
 });
 
 test('createModel rejects when the insert returns no row', async () => {
