@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { database, installModuleMocks, LOG_ID, logRow, resetDoubles, rows } from './doubles';
+import { database, forCaller, installModuleMocks, LOG_ID, logRow, resetDoubles, rows } from './doubles';
 
 /**
  * getLogStats, which counts exactly when that is cheap and samples when it is not.
@@ -13,7 +13,7 @@ import { database, installModuleMocks, LOG_ID, logRow, resetDoubles, rows } from
 
 await installModuleMocks();
 
-const { default: Services } = await import('../../src/api/logs/logs.services');
+const Services = forCaller((await import('../../src/api/logs/logs.services')).default);
 
 /** Mirrors EXACT_THRESHOLD in the service. */
 const EXACT_THRESHOLD = 100_000;
@@ -58,7 +58,9 @@ function explain(planRows: unknown, { asString = false } = {}) {
 
 describe('exact mode', () => {
   test('counts everything and does not flag the result as estimated', async () => {
-    database.script(
+    database.respondTo(
+      'execute',
+      null,
       capped(42),
       rows({
         complete: 10,
@@ -86,7 +88,7 @@ describe('exact mode', () => {
   test('a tenant with no logs gets zeroes rather than nulls', async () => {
     // sum() over an empty set returns null; the query COALESCEs it, and an
     // absent row has to end up at zero too rather than NaN.
-    database.script(capped(0), rows());
+    database.respondTo('execute', null, capped(0), rows());
 
     const stats = await Services.getLogStats();
 
@@ -98,9 +100,9 @@ describe('exact mode', () => {
 
   test('exactly at the threshold still counts rather than samples', async () => {
     // The capped count asks for THRESHOLD + 1, so landing on the threshold
-    // means the count is exact and the estimate is never needed. Two scripted
+    // means the count is exact and the estimate is never needed. Two arranged
     // queries, not three - a third would mean the sampled branch ran.
-    database.script(capped(EXACT_THRESHOLD), rows({ complete: EXACT_THRESHOLD }));
+    database.respondTo('execute', null, capped(EXACT_THRESHOLD), rows({ complete: EXACT_THRESHOLD }));
 
     const stats = await Services.getLogStats();
 
@@ -111,7 +113,9 @@ describe('exact mode', () => {
 
 describe('sampled mode', () => {
   test('scales the sample by the planner estimate', async () => {
-    database.script(
+    database.respondTo(
+      'execute',
+      null,
       capped(EXACT_THRESHOLD + 1),
       explain(5_000_000),
       rows({
@@ -141,7 +145,13 @@ describe('sampled mode', () => {
     // missed. Reporting a confident zero would be worse than saying "about this
     // many, status unknown", and dividing by the sample size would be worse
     // still.
-    database.script(capped(EXACT_THRESHOLD + 1), explain(3_000_000), sampleRow({ sampled: 0, complete: 0 }));
+    database.respondTo(
+      'execute',
+      null,
+      capped(EXACT_THRESHOLD + 1),
+      explain(3_000_000),
+      sampleRow({ sampled: 0, complete: 0 }),
+    );
 
     const stats = await Services.getLogStats();
 
@@ -151,7 +161,7 @@ describe('sampled mode', () => {
   });
 
   test('no sample row at all is handled the same way', async () => {
-    database.script(capped(EXACT_THRESHOLD + 1), explain(1_000), rows());
+    database.respondTo('execute', null, capped(EXACT_THRESHOLD + 1), explain(1_000), rows());
 
     const stats = await Services.getLogStats();
 
@@ -162,7 +172,7 @@ describe('sampled mode', () => {
 
 describe('the planner estimate', () => {
   test('is read from a plan the driver already parsed', async () => {
-    database.script(capped(EXACT_THRESHOLD + 1), explain(2_500_000), sampleRow());
+    database.respondTo('execute', null, capped(EXACT_THRESHOLD + 1), explain(2_500_000), sampleRow());
 
     expect((await Services.getLogStats()).total).toBe(2_500_000);
   });
@@ -170,14 +180,20 @@ describe('the planner estimate', () => {
   test('is read from a plan handed back as a string', async () => {
     // EXPLAIN may arrive as text rather than parsed json - valid output, and
     // cheaper to handle than to rule out.
-    database.script(capped(EXACT_THRESHOLD + 1), explain(1_200_000, { asString: true }), sampleRow());
+    database.respondTo(
+      'execute',
+      null,
+      capped(EXACT_THRESHOLD + 1),
+      explain(1_200_000, { asString: true }),
+      sampleRow(),
+    );
 
     expect((await Services.getLogStats()).total).toBe(1_200_000);
   });
 
   test('falls back to zero when the plan carries no usable estimate', async () => {
     // A shape change upstream must not turn into NaN in a dashboard.
-    database.script(capped(EXACT_THRESHOLD + 1), rows({ 'QUERY PLAN': [{}] }), sampleRow());
+    database.respondTo('execute', null, capped(EXACT_THRESHOLD + 1), rows({ 'QUERY PLAN': [{}] }), sampleRow());
 
     const stats = await Services.getLogStats();
 
@@ -186,13 +202,13 @@ describe('the planner estimate', () => {
   });
 
   test('a non-numeric estimate is rejected rather than propagated', async () => {
-    database.script(capped(EXACT_THRESHOLD + 1), explain('not a number'), sampleRow());
+    database.respondTo('execute', null, capped(EXACT_THRESHOLD + 1), explain('not a number'), sampleRow());
 
     expect((await Services.getLogStats()).total).toBe(0);
   });
 
   test('an empty EXPLAIN result does not throw', async () => {
-    database.script(capped(EXACT_THRESHOLD + 1), rows(), sampleRow());
+    database.respondTo('execute', null, capped(EXACT_THRESHOLD + 1), rows(), sampleRow());
 
     expect((await Services.getLogStats()).total).toBe(0);
   });
@@ -202,7 +218,7 @@ describe('startLog', () => {
   test('throws when the insert returns nothing to identify the log by', async () => {
     // Every later write is keyed on this id, so continuing without one would
     // silently drop the request's entire record.
-    database.script(rows());
+    database.respondTo('insert', 'logs', rows());
 
     expect(Services.startLog('org', { model: 'gpt-5', provider: 'openai' } as never)).rejects.toThrow(
       'Failed to open log',
@@ -210,7 +226,7 @@ describe('startLog', () => {
   });
 
   test('returns the new id on success', async () => {
-    database.script(rows(logRow({ id: LOG_ID })));
+    database.respondTo('insert', 'logs', rows(logRow({ id: LOG_ID })));
 
     expect(await Services.startLog('org', { model: 'gpt-5', provider: 'openai' } as never)).toBe(LOG_ID);
   });

@@ -95,36 +95,38 @@ async function message(response: Response): Promise<string> {
 }
 
 test('GET /audit-logs/:id maps AUDIT_LOG_NOT_FOUND to 404', async () => {
-  database.script(rows());
+  database.respondTo('select', 'audit_logs', rows());
 
   expect((await request(`/audit-logs/${AUDIT_ID}`)).status).toBe(404);
 });
 
 test('guardrail handlers map GUARDRAIL_NOT_FOUND to 404', async () => {
-  database.script(rows());
+  database.respondTo('select', 'guardrails', rows());
   expect((await request(`/guardrails/${GUARDRAIL_ID}`)).status).toBe(404);
 
-  database.script(rows());
+  database.respondTo('select', 'guardrails', rows());
   expect((await patch(`/guardrails/regex/${GUARDRAIL_ID}`, { name: 'renamed' })).status).toBe(404);
 
-  database.script(rows());
+  database.respondTo('delete', 'guardrails', rows());
   expect((await request(`/guardrails/${GUARDRAIL_ID}`, { method: 'DELETE' })).status).toBe(404);
 });
 
 test('GET /logs/:id maps LOG_NOT_FOUND to 404', async () => {
-  database.script(rows());
+  database.respondTo('select', 'logs', rows());
 
   expect((await request(`/logs/${LOG_ID}`)).status).toBe(404);
 });
 
 test('DELETE /logs/:id maps LOG_NOT_FOUND to 404', async () => {
-  database.script(rows());
+  database.respondTo('delete', 'logs', rows());
 
   expect((await request(`/logs/${LOG_ID}`, { method: 'DELETE' })).status).toBe(404);
 });
 
 test('static collection routes are not swallowed by parameter routes', async () => {
-  database.script(
+  database.respondTo(
+    'execute',
+    null,
     rows({ total: 0 }),
     rows({
       complete: 0,
@@ -138,51 +140,51 @@ test('static collection routes are not swallowed by parameter routes', async () 
   );
   expect((await request('/logs/stats')).status).toBe(200);
 
-  database.script(rows());
+  database.respondTo('select', 'webhook_outbox', rows());
   expect((await request('/webhooks/outbox')).status).toBe(200);
 
-  database.script(rows());
+  database.respondTo('select', 'webhook_deliveries', rows());
   expect((await request('/webhooks/deliveries')).status).toBe(200);
 
-  database.script(rows());
+  database.respondTo('select', 'guardrails', rows());
   expect((await post('/guardrails/evaluate', { request: 'safe' })).status).toBe(200);
 });
 
 test('log payload handlers preserve the reason for each 404', async () => {
-  database.script(rows());
+  database.respondTo('select', 'logs', rows());
   const missingLog = await request(`/logs/${LOG_ID}/request`);
   expect(missingLog.status).toBe(404);
   expect(await message(missingLog)).toBe('An error occurred');
 
-  database.script(rows(logRow({ request_object_reference: null })));
+  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: null })));
   const notStored = await request(`/logs/${LOG_ID}/request`);
   expect(notStored.status).toBe(404);
   expect(await message(notStored)).toBe('No request payload was stored for this log');
 
-  database.script(rows(logRow({ response_object_reference: 'missing-response' })));
+  database.respondTo('select', 'logs', rows(logRow({ response_object_reference: 'missing-response' })));
   const unavailable = await request(`/logs/${LOG_ID}/response`);
   expect(unavailable.status).toBe(404);
   expect(await message(unavailable)).toBe('The response payload for this log is no longer available');
 });
 
 test('model handlers map MODEL_NOT_FOUND to 404', async () => {
-  database.script(rows());
+  database.respondTo('select', 'models', rows());
   expect((await request(`/models/${MODEL_ID}`)).status).toBe(404);
 
-  database.script(rows());
+  database.respondTo('select', 'models', rows());
   expect((await patch(`/models/${MODEL_ID}`, { name: 'renamed' })).status).toBe(404);
 
-  database.script(rows());
+  database.respondTo('delete', 'models', rows());
   expect((await request(`/models/${MODEL_ID}`, { method: 'DELETE' })).status).toBe(404);
 });
 
 test('webhook handlers map WEBHOOK_NOT_FOUND to 404', async () => {
-  database.script(rows());
+  database.respondTo('select', 'webhooks', rows());
   expect((await request(`/webhooks/${WEBHOOK_ID}`)).status).toBe(404);
 
-  database.script(rows());
+  database.respondTo('select', 'webhooks', rows());
   expect((await patch(`/webhooks/${WEBHOOK_ID}`, { name: 'renamed' })).status).toBe(404);
 
-  database.script(rows());
+  database.respondTo('delete', 'webhooks', rows());
   expect((await request(`/webhooks/${WEBHOOK_ID}`, { method: 'DELETE' })).status).toBe(404);
 });

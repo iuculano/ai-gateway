@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { compile, findMatches, sidesFor } from '../../src/api/guardrails/guardrails.evaluation';
 import { regexConfig } from '../../src/api/guardrails/guardrails.schemas';
 
-// --- config validation -------------------------------------------------------
+// Config validation
 //
 // This is the whole of the shape checking for a jsonb column, so what it lets
 // through is what the database ends up holding.
@@ -33,7 +33,7 @@ test('rejects an empty pattern', () => {
   expect(regexConfig.safeParse({ pattern: '' }).success).toBe(false);
 });
 
-// --- compilation -------------------------------------------------------------
+// Compilation
 
 test('compiles with g so matchAll can iterate, whatever the caller asked for', () => {
   expect(compile({ pattern: 'a' }).flags).toBe('g');
@@ -62,7 +62,7 @@ test('a cached pattern gives the same answer every time it is used', () => {
   expect(findMatches(config, content)).toHaveLength(2);
 });
 
-// --- matching ----------------------------------------------------------------
+// Matching
 
 test('reports each match with its offsets', () => {
   const matches = findMatches({ pattern: '\\d{3}-\\d{2}-\\d{4}' }, 'my ssn is 123-45-6789 ok');
@@ -104,7 +104,7 @@ test('truncates an individual match', () => {
   expect(matches[0]?.end).toBe(5000);
 });
 
-// --- targets -----------------------------------------------------------------
+// Targets
 
 test('expands both into two independent sides', () => {
   expect(sidesFor('request')).toEqual(['request']);

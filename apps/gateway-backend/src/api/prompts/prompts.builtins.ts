@@ -76,7 +76,7 @@ function part(now: Date, options: Intl.DateTimeFormatOptions): string {
 }
 
 export const BUILTINS = {
-  // --- clock ---------------------------------------------------------------
+  // Clock
   //
   // All UTC, always. A gateway has no reliable notion of the caller's zone -
   // the request carries none - so a "local" time here would silently be the
@@ -156,7 +156,7 @@ export const BUILTINS = {
     resolve: ({ now }) => part(now, { year: 'numeric', month: 'long', day: 'numeric' }),
   },
 
-  // --- who and what --------------------------------------------------------
+  // Who and what
 
   'aig.organization_name': {
     description: 'The name of the organization the request is running under',
@@ -196,7 +196,7 @@ export const BUILTINS = {
     resolve: ({ requestId }) => requestId,
   },
 
-  // --- generated -----------------------------------------------------------
+  // Generated
 
   // globalThis.crypto rather than node:crypto - this module is bundled for the
   // dashboard too, and randomUUID is on both platforms.

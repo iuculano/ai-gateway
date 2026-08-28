@@ -40,6 +40,24 @@ function authenticate(key = VALID_KEY) {
   return createGenericKeyAdapter()({ key, request: { ipAddress: '203.0.113.8' } });
 }
 
+interface KeyLookup {
+  key: Record<string, unknown> | null;
+  organization?: Record<string, unknown> | null;
+  owner?: Record<string, unknown> | null;
+}
+
+function arrangeKeyLookup(lookup: KeyLookup): void {
+  database.respondTo('select', 'api_keys', lookup.key === null ? rows() : rows(lookup.key));
+
+  if ('organization' in lookup) {
+    database.respondTo('select', 'organizations', lookup.organization === null ? rows() : rows(lookup.organization));
+  }
+
+  if ('owner' in lookup) {
+    database.respondTo('select', 'users', lookup.owner === null ? rows() : rows(lookup.owner));
+  }
+}
+
 describe('createGenericKeyAdapter', () => {
   test('rejects invalid cache TTLs when the adapter is created', () => {
     expect(() => createGenericKeyAdapter({ cacheTtlSeconds: -1 })).toThrow(RangeError);
@@ -51,14 +69,14 @@ describe('createGenericKeyAdapter', () => {
 
     expect(error.status).toBe(401);
     expect(error.cause).toBe('Invalid API key: malformed');
-    expect(database.consumed).toBe(0);
+    expect(database.queries).toHaveLength(0);
     expect(quota.calls).toEqual([]);
     expect(usage.pipelines).toEqual([]);
   });
 
   test('rejects missing, revoked, expired, and orphaned keys', async () => {
     const cases = [
-      { row: undefined, cause: 'Invalid API key: not found' },
+      { row: null, cause: 'Invalid API key: not found' },
       { row: apiKeyRow({ revoked_at: new Date() }), cause: 'Invalid API key: revoked' },
       { row: apiKeyRow({ expires_at: new Date(Date.now() - 1) }), cause: 'Invalid API key: expired' },
       { row: apiKeyRow({ creator_id: null }), cause: 'Invalid API key: creator not found (no owning user)' },
@@ -66,7 +84,7 @@ describe('createGenericKeyAdapter', () => {
 
     for (const fixture of cases) {
       resetDoubles();
-      database.script(fixture.row ? rows(fixture.row) : rows());
+      arrangeKeyLookup({ key: fixture.row });
       const error = await rejectedHttpException(authenticate());
       expect(error.status).toBe(401);
       expect(error.cause).toBe(fixture.cause);
@@ -78,26 +96,26 @@ describe('createGenericKeyAdapter', () => {
   test('checks fresh organization and owner status before quota or usage side effects', async () => {
     const cases = [
       {
-        steps: [rows(apiKeyRow()), rows()],
+        lookup: { key: apiKeyRow(), organization: null },
         cause: 'Invalid API key: organization not found',
       },
       {
-        steps: [rows(apiKeyRow()), rows(organizationRow({ status: 'suspended' }))],
+        lookup: { key: apiKeyRow(), organization: organizationRow({ status: 'suspended' }) },
         cause: 'Invalid API key: organization is not active',
       },
       {
-        steps: [rows(apiKeyRow()), rows(organizationRow()), rows()],
+        lookup: { key: apiKeyRow(), organization: organizationRow(), owner: null },
         cause: 'Invalid API key: creator not found',
       },
       {
-        steps: [rows(apiKeyRow()), rows(organizationRow()), rows(userRow({ status: 'deleted' }))],
+        lookup: { key: apiKeyRow(), organization: organizationRow(), owner: userRow({ status: 'deleted' }) },
         cause: 'Invalid API key: creator is not active',
       },
     ];
 
     for (const fixture of cases) {
       resetDoubles();
-      database.script(...fixture.steps);
+      arrangeKeyLookup(fixture.lookup);
       const error = await rejectedHttpException(authenticate());
       expect(error.status).toBe(401);
       expect(error.cause).toBe(fixture.cause);
@@ -107,11 +125,11 @@ describe('createGenericKeyAdapter', () => {
   });
 
   test('builds the API-key caller and records one successful use', async () => {
-    database.script(
-      rows(apiKeyRow({ scopes: 'logs:read  logs:write' })),
-      rows(organizationRow()),
-      rows(userRow({ email: null, name: null })),
-    );
+    arrangeKeyLookup({
+      key: apiKeyRow({ scopes: 'logs:read  logs:write' }),
+      organization: organizationRow(),
+      owner: userRow({ email: null, name: null }),
+    });
 
     const caller = await authenticate();
 
@@ -139,7 +157,7 @@ describe('createGenericKeyAdapter', () => {
   });
 
   test('reuses a Redis authorization snapshot and skips all database reads on a cache hit', async () => {
-    database.script(rows(apiKeyRow()), rows(organizationRow()), rows(userRow()));
+    arrangeKeyLookup({ key: apiKeyRow(), organization: organizationRow(), owner: userRow() });
     const adapter = createGenericKeyAdapter({ cacheTtlSeconds: 60 });
     const request = { key: VALID_KEY, request: { ipAddress: '203.0.113.8' } };
 
@@ -149,7 +167,7 @@ describe('createGenericKeyAdapter', () => {
     const hash = createHash('sha256').update(VALID_KEY).digest('hex');
     const cacheKey = `api-keys:auth:v1:${hash}`;
     expect(second).toEqual(first);
-    expect(database.consumed).toBe(3);
+    expect(database.queries).toHaveLength(3);
     expect(authCache.gets).toEqual([cacheKey, cacheKey]);
     expect(authCache.sets).toEqual([
       {
@@ -163,7 +181,11 @@ describe('createGenericKeyAdapter', () => {
 
   test('does not use an authorization snapshot after the API key expiry', async () => {
     const expiresAt = new Date(Date.now() + 60_000);
-    database.script(rows(apiKeyRow({ expires_at: expiresAt })), rows(organizationRow()), rows(userRow()));
+    arrangeKeyLookup({
+      key: apiKeyRow({ expires_at: expiresAt }),
+      organization: organizationRow(),
+      owner: userRow(),
+    });
     const adapter = createGenericKeyAdapter({ cacheTtlSeconds: 60 });
     const request = { key: VALID_KEY, request: { ipAddress: '203.0.113.8' } };
 
@@ -176,7 +198,7 @@ describe('createGenericKeyAdapter', () => {
     const expired = JSON.parse(serialized);
     expired.key.expiresAtMs = Date.now() - 1;
     authCache.values.set(cacheKey, JSON.stringify(expired));
-    database.script(rows(apiKeyRow({ expires_at: new Date(Date.now() - 1) })));
+    database.respondTo('select', 'api_keys', rows(apiKeyRow({ expires_at: new Date(Date.now() - 1) })));
 
     const error = await rejectedHttpException(adapter(request));
     expect(error.cause).toBe('Invalid API key: expired');
@@ -185,11 +207,11 @@ describe('createGenericKeyAdapter', () => {
   });
 
   test('enforces a configured fixed-window quota before recording usage', async () => {
-    database.script(
-      rows(apiKeyRow({ rate_limit_requests: 25, rate_limit_window: 60 })),
-      rows(organizationRow()),
-      rows(userRow()),
-    );
+    arrangeKeyLookup({
+      key: apiKeyRow({ rate_limit_requests: 25, rate_limit_window: 60 }),
+      organization: organizationRow(),
+      owner: userRow(),
+    });
     quota.response = {
       limit: 25,
       isLimited: false,
@@ -210,11 +232,11 @@ describe('createGenericKeyAdapter', () => {
   });
 
   test('returns standard limit headers and does not record rejected attempts', async () => {
-    database.script(
-      rows(apiKeyRow({ rate_limit_requests: 2, rate_limit_window: 30 })),
-      rows(organizationRow()),
-      rows(userRow()),
-    );
+    arrangeKeyLookup({
+      key: apiKeyRow({ rate_limit_requests: 2, rate_limit_window: 30 }),
+      organization: organizationRow(),
+      owner: userRow(),
+    });
     quota.response = {
       limit: 2,
       isLimited: true,
@@ -234,25 +256,29 @@ describe('createGenericKeyAdapter', () => {
   });
 
   test('treats allowed_ips as reserved configuration until allowlisting is implemented', async () => {
-    database.script(rows(apiKeyRow({ allowed_ips: ['10.0.0.0/8'] })), rows(organizationRow()), rows(userRow()));
+    arrangeKeyLookup({
+      key: apiKeyRow({ allowed_ips: ['10.0.0.0/8'] }),
+      organization: organizationRow(),
+      owner: userRow(),
+    });
 
     await expect(authenticate()).resolves.toMatchObject({ actor: { type: 'api_key' } });
   });
 
   test('surfaces Redis failures and never misreports them as invalid credentials', async () => {
     const quotaFailure = new Error('quota Redis unavailable');
-    database.script(
-      rows(apiKeyRow({ rate_limit_requests: 2, rate_limit_window: 30 })),
-      rows(organizationRow()),
-      rows(userRow()),
-    );
+    arrangeKeyLookup({
+      key: apiKeyRow({ rate_limit_requests: 2, rate_limit_window: 30 }),
+      organization: organizationRow(),
+      owner: userRow(),
+    });
     quota.failure = quotaFailure;
     await expect(authenticate()).rejects.toBe(quotaFailure);
     expect(usage.pipelines).toEqual([]);
 
     resetDoubles();
     const usageFailure = new Error('usage Redis unavailable');
-    database.script(rows(apiKeyRow()), rows(organizationRow()), rows(userRow()));
+    arrangeKeyLookup({ key: apiKeyRow(), organization: organizationRow(), owner: userRow() });
     usage.failure = usageFailure;
     await expect(authenticate()).rejects.toBe(usageFailure);
     expect(usage.pipelines).toHaveLength(1);

@@ -1,8 +1,8 @@
 import { beforeEach, expect, test } from 'bun:test';
 import {
-  audit,
   database,
   failsWith,
+  forCaller,
   installModuleMocks,
   KEY_ID,
   ORGANIZATION_ID,
@@ -14,19 +14,12 @@ import { expectErr } from './result';
 
 await installModuleMocks();
 
-const { default: Services } = await import('../../src/api/audit-logs/audit-logs.services');
+const Services = forCaller((await import('../../src/api/audit-logs/audit-logs.services')).default);
 const { default: Schemas } = await import('../../src/api/audit-logs/audit-logs.schemas');
 
 const AUDIT_ID = '01912d3f-9b4a-7c3d-8e2f-00000000000a';
 
-beforeEach(() => {
-  resetDoubles();
-
-  // This suite is testing the real audit service, so writes go through it
-  // rather than into the stand-in. Set per test rather than at install time:
-  // mock.module is process-wide and bun decides the file order.
-  audit.passthrough = true;
-});
+beforeEach(resetDoubles);
 
 /** A joined row, as the select in getAuditLog projects it. */
 function auditRow(overrides: Record<string, unknown> = {}) {
@@ -56,10 +49,10 @@ function auditRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// --- the expected failure ----------------------------------------------------
+// The expected failure
 
 test('getAuditLog returns AUDIT_LOG_NOT_FOUND as a value', async () => {
-  database.script(rows());
+  database.respondTo('select', 'audit_logs', rows());
 
   expect(expectErr(await Services.getAuditLog(AUDIT_ID))).toEqual({
     code: 'AUDIT_LOG_NOT_FOUND',
@@ -68,7 +61,7 @@ test('getAuditLog returns AUDIT_LOG_NOT_FOUND as a value', async () => {
 });
 
 test('getAuditLog returns Ok with the actor resolved', async () => {
-  database.script(rows(auditRow()));
+  database.respondTo('select', 'audit_logs', rows(auditRow()));
 
   const result = await Services.getAuditLog(AUDIT_ID);
 
@@ -77,15 +70,15 @@ test('getAuditLog returns Ok with the actor resolved', async () => {
 });
 
 test('getAuditLog rejects when the query fails', async () => {
-  database.script(failsWith(new Error('connection terminated')));
+  database.respondTo('select', 'audit_logs', failsWith(new Error('connection terminated')));
 
   await expect(Services.getAuditLog(AUDIT_ID)).rejects.toThrow('connection terminated');
 });
 
-// --- the operations that stay plain promises ---------------------------------
+// The operations that stay plain promises
 
 test('listAuditLogs stays a plain promise', async () => {
-  database.script(rows(auditRow()));
+  database.respondTo('select', 'audit_logs', rows(auditRow()));
 
   const page = await Services.listAuditLogs({ limit: 50 });
 
@@ -97,7 +90,7 @@ test('listAuditLogs stays a plain promise', async () => {
 test('createAuditLog rejects when the insert returns no row', async () => {
   // Internal - written by other services inside their own transactions, never
   // reached over HTTP, so there is nobody to hand a refusal to.
-  database.script(rows());
+  database.respondTo('insert', 'audit_logs', rows());
 
   await expect(
     Services.createAuditLog({
@@ -108,7 +101,7 @@ test('createAuditLog rejects when the insert returns no row', async () => {
   ).rejects.toThrow('Failed to insert audit log');
 });
 
-// --- the query schema --------------------------------------------------------
+// The query schema
 
 test('actor_type survives validation', () => {
   // listAuditLogs has always applied this filter; it was simply never declared,

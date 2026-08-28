@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from 'bun:test';
 import type { CreateRegexGuardrailBody } from '../../src/api/guardrails/guardrails.schemas';
 import {
-  audit,
+  auditWrites,
   callerFixture,
   database,
   failsWith,
@@ -48,7 +48,7 @@ function guardrailRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// --- the expected failures ---------------------------------------------------
+// The expected failures
 //
 // All three unions have a single code, so there is no scenario matrix: the
 // assertNever in each handler mapper is what makes a new variant fail to
@@ -57,13 +57,13 @@ function guardrailRow(overrides: Record<string, unknown> = {}) {
 const notFound = { code: 'GUARDRAIL_NOT_FOUND', id: GUARDRAIL_ID } as const;
 
 test('getGuardrail returns GUARDRAIL_NOT_FOUND as a value', async () => {
-  database.script(rows());
+  database.respondTo('select', 'guardrails', rows());
 
   expect(expectErr(await asCaller(() => Services.getGuardrail(GUARDRAIL_ID)))).toEqual(notFound);
 });
 
 test('updateRegexGuardrail returns GUARDRAIL_NOT_FOUND as a value', async () => {
-  database.script(rows()); // select ... for update finds nothing
+  database.respondTo('select', 'guardrails', rows());
 
   expect(expectErr(await asCaller(() => Services.updateRegexGuardrail(GUARDRAIL_ID, { name: 'renamed' })))).toEqual(
     notFound,
@@ -71,15 +71,15 @@ test('updateRegexGuardrail returns GUARDRAIL_NOT_FOUND as a value', async () => 
 });
 
 test('deleteGuardrail returns GUARDRAIL_NOT_FOUND as a value', async () => {
-  database.script(rows());
+  database.respondTo('delete', 'guardrails', rows());
 
   expect(expectErr(await asCaller(() => Services.deleteGuardrail(GUARDRAIL_ID)))).toEqual(notFound);
 });
 
-// --- getGuardrail ------------------------------------------------------------
+// getGuardrail
 
 test('getGuardrail returns Ok', async () => {
-  database.script(rows(guardrailRow()));
+  database.respondTo('select', 'guardrails', rows(guardrailRow()));
 
   const guardrail = expectOk(await asCaller(() => Services.getGuardrail(GUARDRAIL_ID)));
 
@@ -88,34 +88,35 @@ test('getGuardrail returns Ok', async () => {
 });
 
 test('getGuardrail rejects when the query fails', async () => {
-  database.script(failsWith(new Error('connection terminated')));
+  database.respondTo('select', 'guardrails', failsWith(new Error('connection terminated')));
 
   await expect(asCaller(() => Services.getGuardrail(GUARDRAIL_ID))).rejects.toThrow('connection terminated');
 });
 
-// --- updateRegexGuardrail ----------------------------------------------------
+// updateRegexGuardrail
 
 test('a guardrail of another type refuses exactly like a missing one', async () => {
   // /guardrails/regex/:id addresses regex guardrails, and this id is not one of
   // them. A distinct code would confirm the id exists as something else, which
   // the caller has not asked about - so the service does not produce one and
   // the handler has nothing it could accidentally leak.
-  database.script(rows(guardrailRow({ type: 'semantic' })));
+  database.respondTo('select', 'guardrails', rows(guardrailRow({ type: 'semantic' })));
 
   const failure = expectErr(await asCaller(() => Services.updateRegexGuardrail(GUARDRAIL_ID, { name: 'renamed' })));
 
   expect(failure).toEqual({ code: 'GUARDRAIL_NOT_FOUND', id: GUARDRAIL_ID });
-  expect(audit.calls).toHaveLength(0);
+  expect(auditWrites.calls).toHaveLength(0);
 });
 
 test('updateRegexGuardrail returns Ok and audits the difference', async () => {
-  database.script(rows(guardrailRow()), rows(guardrailRow({ name: 'renamed' })));
+  database.respondTo('select', 'guardrails', rows(guardrailRow()));
+  database.respondTo('update', 'guardrails', rows(guardrailRow({ name: 'renamed' })));
 
   const updated = expectOk(await asCaller(() => Services.updateRegexGuardrail(GUARDRAIL_ID, { name: 'renamed' })));
 
   expect(updated.name).toBe('renamed');
   expect(database.transactions[0]?.committed).toBe(true);
-  expect(audit.calls[0]?.body).toMatchObject({
+  expect(auditWrites.calls[0]?.body).toMatchObject({
     event: 'guardrails.updated',
     status: 'success',
     difference: { name: { old: 'no-ssn', new: 'renamed' } },
@@ -123,17 +124,18 @@ test('updateRegexGuardrail returns Ok and audits the difference', async () => {
 });
 
 test('a no-op update returns Ok and writes nothing', async () => {
-  // Only the select is scripted: an update would run off the end of the script
-  // and reject, which is how this test knows one was not issued.
-  database.script(rows(guardrailRow()));
+  // Only the select response is arranged: an update would have no matching
+  // response and reject, which is how this test knows one was not issued.
+  database.respondTo('select', 'guardrails', rows(guardrailRow()));
 
   expect((await asCaller(() => Services.updateRegexGuardrail(GUARDRAIL_ID, { name: 'no-ssn' }))).isOk()).toBe(true);
-  expect(audit.calls).toHaveLength(0);
+  expect(auditWrites.calls).toHaveLength(0);
 });
 
 test('updateRegexGuardrail rolls back when the audit write fails', async () => {
-  database.script(rows(guardrailRow()), rows(guardrailRow({ name: 'renamed' })));
-  audit.failure = new Error('audit log unavailable');
+  database.respondTo('select', 'guardrails', rows(guardrailRow()));
+  database.respondTo('update', 'guardrails', rows(guardrailRow({ name: 'renamed' })));
+  auditWrites.failNext(new Error('audit log unavailable'));
 
   await expect(asCaller(() => Services.updateRegexGuardrail(GUARDRAIL_ID, { name: 'renamed' }))).rejects.toThrow(
     'audit log unavailable',
@@ -143,40 +145,41 @@ test('updateRegexGuardrail rolls back when the audit write fails', async () => {
 });
 
 test('updateRegexGuardrail rejects when the update returns no row', async () => {
-  database.script(rows(guardrailRow()), rows());
+  database.respondTo('select', 'guardrails', rows(guardrailRow()));
+  database.respondTo('update', 'guardrails', rows());
 
   await expect(asCaller(() => Services.updateRegexGuardrail(GUARDRAIL_ID, { name: 'renamed' }))).rejects.toThrow(
     'Failed to update guardrail',
   );
 });
 
-// --- deleteGuardrail ---------------------------------------------------------
+// deleteGuardrail
 
 test('deleteGuardrail returns Ok and records what was being enforced', async () => {
-  database.script(rows(guardrailRow()));
+  database.respondTo('delete', 'guardrails', rows(guardrailRow()));
 
   expect((await asCaller(() => Services.deleteGuardrail(GUARDRAIL_ID))).isOk()).toBe(true);
 
   // The row is gone, so the audit entry is the only remaining record of it.
-  expect(audit.calls[0]?.body).toMatchObject({
+  expect(auditWrites.calls[0]?.body).toMatchObject({
     event: 'guardrails.deleted',
     metadata: { name: 'no-ssn', type: 'regex', action: 'block' },
   });
 });
 
 test('deleteGuardrail rolls back when the audit write fails', async () => {
-  database.script(rows(guardrailRow()));
-  audit.failure = new Error('audit log unavailable');
+  database.respondTo('delete', 'guardrails', rows(guardrailRow()));
+  auditWrites.failNext(new Error('audit log unavailable'));
 
   await expect(asCaller(() => Services.deleteGuardrail(GUARDRAIL_ID))).rejects.toThrow('audit log unavailable');
 
   expect(database.transactions[0]?.rolledBack).toBe(true);
 });
 
-// --- the operations that stay plain promises ---------------------------------
+// The operations that stay plain promises
 
 test('createRegexGuardrail stays a plain promise', async () => {
-  database.script(rows(guardrailRow()));
+  database.respondTo('insert', 'guardrails', rows(guardrailRow()));
 
   const created = await asCaller(() =>
     Services.createRegexGuardrail({
@@ -193,7 +196,7 @@ test('createRegexGuardrail stays a plain promise', async () => {
 });
 
 test('createRegexGuardrail takes the organization and creator from the caller', async () => {
-  database.script(rows(guardrailRow()));
+  database.respondTo('insert', 'guardrails', rows(guardrailRow()));
 
   await asCaller(() =>
     Services.createRegexGuardrail({
@@ -204,7 +207,8 @@ test('createRegexGuardrail takes the organization and creator from the caller', 
     } as CreateRegexGuardrailBody),
   );
 
-  const values = database.calls.find((call) => call.method === 'values')?.args[0] as Record<string, unknown>;
+  const insert = database.queriesFor('insert', 'guardrails')[0];
+  const values = insert?.calls.find((call) => call.method === 'values')?.args[0] as Record<string, unknown>;
 
   expect(values.organization_id).toBe(ORGANIZATION_ID);
   expect(values.creator_id).toBe(USER_ID);
@@ -214,7 +218,7 @@ test('createRegexGuardrail takes the organization and creator from the caller', 
 });
 
 test('createRegexGuardrail rejects when the insert returns no row', async () => {
-  database.script(rows());
+  database.respondTo('insert', 'guardrails', rows());
 
   await expect(
     asCaller(() =>
@@ -229,7 +233,7 @@ test('createRegexGuardrail rejects when the insert returns no row', async () => 
 });
 
 test('listGuardrails stays a plain promise', async () => {
-  database.script(rows(guardrailRow()));
+  database.respondTo('select', 'guardrails', rows(guardrailRow()));
 
   const page = await asCaller(() => Services.listGuardrails({ limit: 50 }));
 

@@ -2,7 +2,7 @@ import { beforeEach, expect, mock, test } from 'bun:test';
 import type { Caller } from '@repo/hono';
 import {
   apiKeyRow,
-  audit,
+  auditWrites,
   database,
   failsWith,
   installModuleMocks,
@@ -94,7 +94,7 @@ beforeEach(() => {
 });
 
 test('GET /api-keys/:id answers 200', async () => {
-  database.script(rows(apiKeyRow()));
+  database.respondTo('select', 'api_keys', rows(apiKeyRow()));
 
   const response = await request(`/api-keys/${KEY_ID}`);
 
@@ -103,7 +103,7 @@ test('GET /api-keys/:id answers 200', async () => {
 });
 
 test('GET /api-keys/:id answers 404 for a key that is not there', async () => {
-  database.script(rows());
+  database.respondTo('select', 'api_keys', rows());
 
   const response = await request(`/api-keys/${KEY_ID}`);
 
@@ -114,13 +114,13 @@ test('GET /api-keys/:id answers 404 for a key that is not there', async () => {
 });
 
 test('GET /api-keys/:id/stats answers 404 for a key that is not there', async () => {
-  database.script(rows());
+  database.respondTo('select', 'api_keys', rows());
 
   expect((await request(`/api-keys/${KEY_ID}/stats`)).status).toBe(404);
 });
 
 test('GET /api-keys answers 200', async () => {
-  database.script(rows(apiKeyRow()));
+  database.respondTo('select', 'api_keys', rows(apiKeyRow()));
 
   const response = await request('/api-keys');
 
@@ -130,7 +130,7 @@ test('GET /api-keys answers 200', async () => {
 
 test('an API key caller may still read API keys', async () => {
   caller.actor = apiKeyActor;
-  database.script(rows(apiKeyRow()));
+  database.respondTo('select', 'api_keys', rows(apiKeyRow()));
 
   expect((await request(`/api-keys/${KEY_ID}`)).status).toBe(200);
 });
@@ -148,12 +148,12 @@ for (const [operation, makeRequest] of apiKeyManagementRequests) {
     const response = await makeRequest();
 
     expect(response.status).toBe(403);
-    expect(database.calls).toHaveLength(0);
+    expect(database.queries).toHaveLength(0);
   });
 }
 
 test('POST /api-keys answers 201 with the plaintext key', async () => {
-  database.script(rows(apiKeyRow()));
+  database.respondTo('insert', 'api_keys', rows(apiKeyRow()));
 
   const response = await post({ name: 'ci' });
 
@@ -169,7 +169,8 @@ test('POST /api-keys answers 403 for scopes the caller does not hold', async () 
 });
 
 test('PATCH /api-keys/:id answers 200', async () => {
-  database.script(rows(apiKeyRow()), rows(apiKeyRow({ name: 'renamed' })));
+  database.respondTo('select', 'api_keys', rows(apiKeyRow()));
+  database.respondTo('update', 'api_keys', rows(apiKeyRow({ name: 'renamed' })));
 
   const response = await patch({ name: 'renamed' });
 
@@ -178,13 +179,13 @@ test('PATCH /api-keys/:id answers 200', async () => {
 });
 
 test('PATCH /api-keys/:id answers 404 for a key that is not there', async () => {
-  database.script(rows());
+  database.respondTo('select', 'api_keys', rows());
 
   expect((await patch({ name: 'renamed' })).status).toBe(404);
 });
 
 test('PATCH /api-keys/:id answers 409 for a revoked key', async () => {
-  database.script(rows(apiKeyRow({ revoked_at: new Date('2026-02-01T00:00:00.000Z') })));
+  database.respondTo('select', 'api_keys', rows(apiKeyRow({ revoked_at: new Date('2026-02-01T00:00:00.000Z') })));
 
   const response = await patch({ name: 'renamed' });
 
@@ -202,7 +203,7 @@ test('PATCH /api-keys/:id answers 403 for scopes the caller does not hold', asyn
 });
 
 test('PATCH /api-keys/:id answers 400 when a request limit would have no window', async () => {
-  database.script(rows(apiKeyRow()));
+  database.respondTo('select', 'api_keys', rows(apiKeyRow()));
 
   const response = await patch({ rate_limit_requests: 10 });
 
@@ -213,7 +214,7 @@ test('PATCH /api-keys/:id answers 400 when a request limit would have no window'
 });
 
 test('DELETE /api-keys/:id answers an empty 204', async () => {
-  database.script(rows(apiKeyRow({ revoked_at: new Date(), revoked_by: USER_ID })));
+  database.respondTo('update', 'api_keys', rows(apiKeyRow({ revoked_at: new Date(), revoked_by: USER_ID })));
 
   const response = await request(`/api-keys/${KEY_ID}`, { method: 'DELETE' });
 
@@ -222,22 +223,24 @@ test('DELETE /api-keys/:id answers an empty 204', async () => {
 });
 
 test('DELETE /api-keys/:id answers 204 again for an already revoked key', async () => {
-  database.script(rows(), rows({ id: KEY_ID }));
+  database.respondTo('update', 'api_keys', rows());
+  database.respondTo('select', 'api_keys', rows({ id: KEY_ID }));
 
   expect((await request(`/api-keys/${KEY_ID}`, { method: 'DELETE' })).status).toBe(204);
-  expect(audit.calls).toHaveLength(0);
+  expect(auditWrites.calls).toHaveLength(0);
 });
 
 test('DELETE /api-keys/:id answers 404 for a key that is not there', async () => {
-  database.script(rows(), rows());
+  database.respondTo('update', 'api_keys', rows());
+  database.respondTo('select', 'api_keys', rows());
 
   expect((await request(`/api-keys/${KEY_ID}`, { method: 'DELETE' })).status).toBe(404);
 });
 
-// --- the unexpected channel --------------------------------------------------
+// The unexpected channel
 
 test('a rejected service promise reaches the global handler as a sanitized 500', async () => {
-  database.script(failsWith(new Error('connection terminated')));
+  database.respondTo('select', 'api_keys', failsWith(new Error('connection terminated')));
 
   const response = await request(`/api-keys/${KEY_ID}`);
 
@@ -252,14 +255,14 @@ test('a rejected service promise reaches the global handler as a sanitized 500',
 });
 
 test('an unexpected failure is logged as an error', async () => {
-  database.script(failsWith(new Error('connection terminated')));
+  database.respondTo('select', 'api_keys', failsWith(new Error('connection terminated')));
 
   await request(`/api-keys/${KEY_ID}`);
 
   expect(log.error).toHaveBeenCalled();
 });
 
-// --- the generated document --------------------------------------------------
+// The generated document
 
 test('every status the handlers answer with is documented', () => {
   // Throwing an HTTPException at runtime puts nothing in the OpenAPI document,
@@ -285,7 +288,7 @@ test('every status the handlers answer with is documented', () => {
 });
 
 test('an expected refusal is logged as a warning, not an error', async () => {
-  database.script(rows());
+  database.respondTo('select', 'api_keys', rows());
 
   await request(`/api-keys/${KEY_ID}`);
 

@@ -8,42 +8,68 @@
  * dependency graph.
  */
 
-/** One scripted answer to one database round trip. */
-export type Step = { rows: unknown[] } | { error: Error };
+/** One arranged answer to one database round trip. */
+export type DatabaseResponse = { rows: unknown[] } | { error: Error };
+
+export type DatabaseOperation = 'select' | 'insert' | 'update' | 'delete' | 'execute';
+
+export interface DatabaseQueryCall {
+  method: string;
+  args: unknown[];
+}
+
+/**
+ * One complete query observed at the database boundary.
+ *
+ * This keeps a fluent Drizzle chain together and records whether it ran inside
+ * a transaction. Tests can ask what was written to one table without
+ * reconstructing query order globally.
+ */
+export interface DatabaseQuery {
+  operation: DatabaseOperation;
+  table: string | null;
+  calls: DatabaseQueryCall[];
+  transaction: number | null;
+}
+
+export type DatabaseResponder = DatabaseResponse | ((query: DatabaseQuery) => DatabaseResponse);
 
 /** A query that answers with these rows. Pass nothing for an empty result. */
-export function rows(...values: unknown[]): Step {
+export function rows(...values: unknown[]): DatabaseResponse {
   return { rows: values };
 }
 
 /** A query that rejects - the channel every unexpected failure travels down. */
-export function failsWith(error: Error): Step {
+export function failsWith(error: Error): DatabaseResponse {
   return { error };
 }
 
 export interface DatabaseDouble {
-  steps: Step[];
-  consumed: number;
-
   /** One entry per transaction opened, in order, recording how it ended. */
   transactions: { committed: boolean; rolledBack: boolean }[];
 
-  /**
-   * Every builder method the services called, with its arguments.
-   *
-   * What a query was ASKED to do, as opposed to what it was told in reply -
-   * the only way to assert on the values a write actually carried.
-   */
-  calls: { method: string; args: unknown[] }[];
+  /** Complete fluent queries, grouped and classified by operation and table. */
+  queries: DatabaseQuery[];
+
+  /** Returns the observed queries at one database route, in execution order. */
+  queriesFor(operation: DatabaseOperation, table: string | null): DatabaseQuery[];
 
   /**
-   * The answers this test's queries get, in the order they are issued.
+   * Answers queries by intent instead of global execution order.
    *
-   * A query beyond the end of the script rejects rather than returning nothing:
-   * an unscripted call is the test being wrong, and an empty result would read
-   * as a deliberate "no rows" and quietly pass.
+   * Multiple responders form a queue only for this operation/table pair. A
+   * second query cannot accidentally consume another table's answer.
    */
-  script(...steps: Step[]): void;
+  respondTo(operation: DatabaseOperation, table: string | null, ...responders: DatabaseResponder[]): void;
+
+  /**
+   * Provides a reusable response after any explicit responders for this route.
+   * Shared harnesses use this for incidental boundary work such as audit rows.
+   */
+  defaultResponse(operation: DatabaseOperation, table: string | null, responder: DatabaseResponder): void;
+
+  /** Throws when a configured one-shot response was never exercised. */
+  assertResponsesConsumed(): void;
 
   reset(): void;
 }
@@ -69,30 +95,76 @@ export interface DatabaseDoubleHandle {
  * never quietly shares mutable state between two suites.
  */
 export function createDatabaseDouble(): DatabaseDoubleHandle {
-  const database: DatabaseDouble = {
-    steps: [],
-    consumed: 0,
-    transactions: [],
-    calls: [],
+  interface ResponseRoute {
+    operation: DatabaseOperation;
+    table: string | null;
+    responders: DatabaseResponder[];
+    consumed: number;
+    fallback?: DatabaseResponder;
+  }
 
-    script(...steps: Step[]) {
-      database.steps = steps;
-      database.consumed = 0;
-      database.transactions = [];
-      database.calls = [];
+  const routes = new Map<string, ResponseRoute>();
+
+  function routeKey(operation: DatabaseOperation, table: string | null): string {
+    return `${operation}:${table ?? '<raw>'}`;
+  }
+
+  const database: DatabaseDouble = {
+    transactions: [],
+    queries: [],
+
+    queriesFor(operation, table) {
+      return database.queries.filter((query) => query.operation === operation && query.table === table);
+    },
+
+    respondTo(operation, table, ...responders) {
+      if (responders.length === 0) {
+        throw new Error(`No database responses configured for ${routeKey(operation, table)}`);
+      }
+
+      const key = routeKey(operation, table);
+      const existing = routes.get(key);
+      routes.set(key, {
+        operation,
+        table,
+        responders: existing ? [...existing.responders, ...responders] : responders,
+        consumed: existing?.consumed ?? 0,
+        fallback: existing?.fallback,
+      });
+    },
+
+    defaultResponse(operation, table, responder) {
+      const key = routeKey(operation, table);
+      const existing = routes.get(key);
+      routes.set(key, {
+        operation,
+        table,
+        responders: existing?.responders ?? [],
+        consumed: existing?.consumed ?? 0,
+        fallback: responder,
+      });
+    },
+
+    assertResponsesConsumed() {
+      const pending = [...routes.values()].flatMap((route) => {
+        const remaining = route.responders.length - route.consumed;
+        return remaining > 0 ? [`${routeKey(route.operation, route.table)} (${remaining})`] : [];
+      });
+
+      if (pending.length > 0) {
+        throw new Error(`Unused database responses: ${pending.join(', ')}`);
+      }
     },
 
     reset() {
-      database.script();
+      routes.clear();
+      database.transactions = [];
+      database.queries = [];
     },
   };
 
-  function nextRows(): Promise<unknown[]> {
-    const step = database.steps[database.consumed++];
-
-    if (!step) {
-      return Promise.reject(new Error(`Unscripted database call (query ${database.consumed})`));
-    }
+  function resolveResponder(responder: DatabaseResponder, query: DatabaseQuery): Promise<unknown[]> {
+    const step = typeof responder === 'function' ? responder(query) : responder;
 
     if ('error' in step) {
       return Promise.reject(step.error);
@@ -101,21 +173,62 @@ export function createDatabaseDouble(): DatabaseDoubleHandle {
     return Promise.resolve(step.rows);
   }
 
+  function answer(query: DatabaseQuery): Promise<unknown[]> {
+    database.queries.push(query);
+
+    const route = routes.get(routeKey(query.operation, query.table));
+    if (!route) {
+      return Promise.reject(new Error(`Unconfigured database route ${routeKey(query.operation, query.table)}`));
+    }
+
+    const responder = route.responders[route.consumed];
+    if (responder !== undefined) {
+      route.consumed += 1;
+      return resolveResponder(responder, query);
+    }
+
+    if (route.fallback !== undefined) {
+      return resolveResponder(route.fallback, query);
+    }
+
+    return Promise.reject(new Error(`Database responses exhausted for ${routeKey(query.operation, query.table)}`));
+  }
+
+  const TABLE_NAME = Symbol.for('drizzle:Name');
+
+  function tableName(value: unknown): string | null {
+    if (typeof value !== 'object' || value === null) {
+      return null;
+    }
+
+    const name = (value as Record<symbol, unknown>)[TABLE_NAME];
+    return typeof name === 'string' ? name : null;
+  }
+
+  let activeTransaction: number | null = null;
+
   /**
-   * A query builder that accepts any chain and resolves to the next scripted
-   * answer.
+   * A query builder that accepts any chain and resolves through the response
+   * arranged for its operation and table.
    *
    * Every method returns the builder itself, so .select().from().where() and
    * .update().set().where().returning() both work without naming them.
    */
-  function queryBuilder(): unknown {
+  function queryBuilder(operation: Exclude<DatabaseOperation, 'execute'>, rootArgs: unknown[]): unknown {
+    const query: DatabaseQuery = {
+      operation,
+      table: operation === 'select' ? null : tableName(rootArgs[0]),
+      calls: [{ method: operation, args: rootArgs }],
+      transaction: activeTransaction,
+    };
+
     const builder: unknown = new Proxy(
       {},
       {
         get(_target, property) {
           if (property === 'then') {
             return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) =>
-              nextRows().then(resolve, reject);
+              answer(query).then(resolve, reject);
           }
 
           // Symbols are the runtime asking questions (Symbol.toStringTag and
@@ -125,7 +238,10 @@ export function createDatabaseDouble(): DatabaseDoubleHandle {
           }
 
           return (...args: unknown[]) => {
-            database.calls.push({ method: property, args });
+            query.calls.push({ method: property, args });
+            if (property === 'from') {
+              query.table = tableName(args[0]);
+            }
             return builder;
           };
         },
@@ -135,11 +251,8 @@ export function createDatabaseDouble(): DatabaseDoubleHandle {
     return builder;
   }
 
-  // The entry point is recorded like any other link in the chain, so a test can
-  // assert that a select happened at all and not only what was chained onto it.
-  function startQuery(method: string, args: unknown[]): unknown {
-    database.calls.push({ method, args });
-    return queryBuilder();
+  function startQuery(operation: Exclude<DatabaseOperation, 'execute'>, args: unknown[]): unknown {
+    return queryBuilder(operation, args);
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: a stand-in for drizzle's builder, which is not worth reproducing in types
@@ -149,16 +262,22 @@ export function createDatabaseDouble(): DatabaseDoubleHandle {
     update: (...args: unknown[]) => startQuery('update', args),
     delete: (...args: unknown[]) => startQuery('delete', args),
 
-    // Not chained - `execute` is the escape hatch for raw SQL, so it consumes a
-    // scripted answer itself rather than returning a builder.
+    // Not chained - `execute` is the escape hatch for raw SQL, so it consumes an
+    // arranged answer itself rather than returning a builder.
     execute: (...args: unknown[]) => {
-      database.calls.push({ method: 'execute', args });
-      return nextRows();
+      return answer({
+        operation: 'execute',
+        table: null,
+        calls: [{ method: 'execute', args }],
+        transaction: activeTransaction,
+      });
     },
 
     async transaction(callback: (tx: unknown) => Promise<unknown>) {
       const record = { committed: false, rolledBack: false };
       database.transactions.push(record);
+      const previousTransaction = activeTransaction;
+      activeTransaction = database.transactions.length - 1;
 
       try {
         const value = await callback(db);
@@ -167,6 +286,8 @@ export function createDatabaseDouble(): DatabaseDoubleHandle {
       } catch (error) {
         record.rolledBack = true;
         throw error;
+      } finally {
+        activeTransaction = previousTransaction;
       }
     },
   };

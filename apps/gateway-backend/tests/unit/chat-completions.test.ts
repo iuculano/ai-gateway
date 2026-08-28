@@ -1,20 +1,20 @@
 import { beforeEach, expect, mock, test } from 'bun:test';
 import { APICallError, InvalidArgumentError, InvalidMessageRoleError, InvalidPromptError, RetryError } from 'ai';
-import { err, ok, type Result } from 'neverthrow';
 import type {
   ChatCompletionBody,
   ChatCompletionChunk,
   ChatCompletionHeaders,
 } from '../../src/api/chat-completions/chat-completions.schemas';
-import type { GetModelResponse } from '../../src/api/models/models.schemas';
 import type { ResolvePromptFailure } from '../../src/api/prompts/prompts.services';
 import {
   callerFixture,
   database,
+  fixedWindow,
   installModuleMocks,
   LOG_ID,
-  logCapture,
-  MODEL_ID,
+  logWrites,
+  modelRow,
+  objects,
   resetDoubles,
   rows,
   USER_ID,
@@ -161,114 +161,13 @@ async function completionFailure(...args: Parameters<typeof ResultServices.creat
   return expectErr(await ResultServices.createChatCompletion(...args));
 }
 
-const redisModule = await import('@repo/redis');
-const rateLimitState = {
-  result: {
-    limit: 2,
-    isLimited: false,
-    remainingQuota: 1,
-    retryAfterSeconds: null as number | null,
-    delaySeconds: null,
-  },
-};
-
-mock.module('@repo/redis', () => ({
-  ...redisModule,
-  consumeFixedWindowCounter: async () => rateLimitState.result,
-}));
-
-/**
- * What resolvePrompt answers with.
- *
- * Stood in rather than driven through the database double because the handler
- * only cares about the Result it gets back: every failure code maps to its own
- * status, and reaching all five through prompt rows and version rows would be
- * testing prompts.services a second time.
- */
-const promptState = {
-  calls: [] as unknown[],
-  result: null as Result<{ version: number; prompt: string }, ResolvePromptFailure> | null,
-
-  reset() {
-    promptState.calls = [];
-    promptState.result = null;
-  },
-};
-
-const actualPromptServices = { ...(await import('../../src/api/prompts/prompts.services')).default };
-mock.module('../../src/api/prompts/prompts.services', () => ({
-  default: {
-    ...actualPromptServices,
-    async resolvePrompt(reference: unknown) {
-      promptState.calls.push(reference);
-      return promptState.result ?? ok({ version: 3, prompt: 'You are terse.' });
-    },
-  },
-}));
-
-function catalogModel(slug: string): GetModelResponse {
-  const [provider, name] = slug.split('/');
-
-  return {
-    id: MODEL_ID,
-    source: 'builtin',
-    name: name ?? slug,
-    provider: provider ?? 'openai',
-    display_name: null,
-    status: 'available',
-    cost_input: null,
-    cost_output: null,
-    cost_cache_read: null,
-    context_limit: null,
-    attachment: false,
-    reasoning: false,
-    tool_call: false,
-    structured_output: false,
-    config: {},
-    tags: {},
-    delisted_at: null,
-    synced_at: null,
-    created_at: '2026-01-01T00:00:00.000Z',
-    updated_at: '2026-01-01T00:00:00.000Z',
-  };
-}
-
-const modelLookupState = {
-  calls: [] as string[],
-  known: true,
-  override: null as Partial<GetModelResponse> | null,
-
-  reset() {
-    modelLookupState.calls = [];
-    modelLookupState.known = true;
-    modelLookupState.override = null;
-  },
-};
-
-const actualModelServices = { ...(await import('../../src/api/models/models.services')).default };
-mock.module('../../src/api/models/models.services', () => ({
-  default: {
-    ...actualModelServices,
-    async getModelBySlug(slug: string) {
-      modelLookupState.calls.push(slug);
-
-      const parts = slug.split('/');
-      if (!modelLookupState.known || parts.length !== 2 || parts.some((part) => part.length === 0)) {
-        return err({ code: 'MODEL_NOT_FOUND', slug });
-      }
-
-      return ok({ ...catalogModel(slug), ...modelLookupState.override });
-    },
-  },
-}));
-
 const { OpenAPIHono } = await import('@hono/zod-openapi');
 const { callerContext, errorHandler } = await import('@repo/hono');
 const { default: handlers } = await import('../../src/api/chat-completions/chat-completions.handlers');
 
 const httpCaller = {
   ...callerFixture,
-  permissions: { scopes: ['chat-completions:write'] },
+  permissions: { scopes: ['chat-completions:write', 'prompts:read'] },
 };
 const app = new OpenAPIHono();
 app.onError(errorHandler());
@@ -293,6 +192,27 @@ function body(overrides: Partial<ChatCompletionBody> = {}): ChatCompletionBody {
   };
 }
 
+const PROMPT_ID = '01912d3f-9b4a-7c3d-8e2f-00000000000c';
+
+function promptRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: PROMPT_ID,
+    organization_id: callerFixture.organization.id,
+    name: 'support',
+    description: null,
+    active_version: 3,
+    tags: {},
+    creator_id: USER_ID,
+    created_at: new Date('2026-01-01T00:00:00.000Z'),
+    updated_at: new Date('2026-01-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function catalogRow(overrides: Record<string, unknown> = {}) {
+  return modelRow({ provider: 'openai', name: 'test-model', ...overrides });
+}
+
 /**
  * A logger that swallows.
  *
@@ -309,22 +229,22 @@ function withCaller<T>(work: () => T): T {
   return runWithCaller(callerFixture, work, { logger: quiet });
 }
 
+function installChatDatabaseDefaults() {
+  database.defaultResponse('select', 'models', rows(catalogRow()));
+  database.defaultResponse('select', 'webhooks', rows());
+  logWrites.installDefaults();
+}
+
 beforeEach(() => {
   resetDoubles();
+  // Keep the real model registry and webhook fan-out in the path. Individual
+  // scenarios override these route defaults when their outcome matters.
+  installChatDatabaseDefaults();
   aiState.reset();
   providerFactory.reset();
-  promptState.reset();
-  modelLookupState.reset();
-  // This suite watches the log lifecycle rather than running it. Every other
-  // suite leaves passthrough on and gets the real module.
-  logCapture.passthrough = false;
-  rateLimitState.result = {
-    limit: 2,
-    isLimited: false,
-    remainingQuota: 1,
-    retryAfterSeconds: null,
-    delaySeconds: null,
-  };
+  httpCaller.permissions = { scopes: ['chat-completions:write', 'prompts:read'] };
+  callerFixture.permissions = { scopes: ['chat-completions:write', 'prompts:read'] };
+  fixedWindow.result = [1, 1, 60_000];
 });
 
 test('a non-streaming completion maps provider output and closes its inference log', async () => {
@@ -367,7 +287,7 @@ test('a non-streaming completion maps provider output and closes its inference l
     stopSequences: ['END'],
     maxRetries: 0,
   });
-  expect(logCapture.started).toEqual([
+  expect(logWrites.started).toEqual([
     {
       organizationId: callerFixture.organization.id,
       entry: {
@@ -381,7 +301,7 @@ test('a non-streaming completion maps provider output and closes its inference l
       },
     },
   ]);
-  expect(logCapture.completed[0]).toMatchObject({
+  expect(logWrites.completed[0]).toMatchObject({
     organizationId: callerFixture.organization.id,
     id: LOG_ID,
     entry: {
@@ -391,7 +311,7 @@ test('a non-streaming completion maps provider output and closes its inference l
       response: { id: responseMetadata.id },
     },
   });
-  expect(logCapture.failed).toHaveLength(0);
+  expect(logWrites.failed).toHaveLength(0);
 });
 
 test('the omit headers keep the row and its accounting, and store neither payload', async () => {
@@ -403,7 +323,7 @@ test('the omit headers keep the row and its accounting, and store neither payloa
     Services.createChatCompletion(headers({ 'ai-log-omit-request': true, 'ai-log-omit-response': true }), body()),
   );
 
-  expect(logCapture.started).toEqual([
+  expect(logWrites.started).toEqual([
     {
       organizationId: callerFixture.organization.id,
       entry: {
@@ -416,31 +336,31 @@ test('the omit headers keep the row and its accounting, and store neither payloa
     },
   ]);
 
-  expect(logCapture.completed[0]).toMatchObject({
+  expect(logWrites.completed[0]).toMatchObject({
     id: LOG_ID,
     entry: {
       // Still accounted for.
       input_tokens: 7,
       output_tokens: 4,
-      // Both sides suppressed.
-      omitRequest: true,
-      omitResponse: true,
+      // Both sides suppressed at the persistence boundary.
+      request_object_reference: null,
+      response_object_reference: null,
     },
   });
+  expect(objects.stored).toEqual({});
 });
 
 test('catalogue pricing is applied to non-streaming logs, including cached input tokens', async () => {
-  modelLookupState.override = {
-    cost_input: 2,
-    cost_output: 8,
-    cost_cache_read: 0.5,
-  };
+  database.respondTo(
+    'select',
+    'models',
+    rows(catalogRow({ cost_input: '2', cost_output: '8', cost_cache_read: '0.5' })),
+  );
 
   await withCaller(() => Services.createChatCompletion(headers(), body()));
 
-  expect(modelLookupState.calls).toEqual(['openai/test-model']);
-  expect(logCapture.completed[0]?.entry.input_cost).toBeCloseTo(0.000011, 15);
-  expect(logCapture.completed[0]?.entry.output_cost).toBeCloseTo(0.000032, 15);
+  expect(logWrites.completed[0]?.entry.input_cost).toBeCloseTo(0.000011, 15);
+  expect(logWrites.completed[0]?.entry.output_cost).toBeCloseTo(0.000032, 15);
 });
 
 test('ai-log-omit-request suppresses the request payload on the failure path too', async () => {
@@ -452,8 +372,10 @@ test('ai-log-omit-request suppresses the request payload on the failure path too
 
   // A failed call still leaves an attributed row - that is the one somebody
   // reading an error rate needs - with nothing stored from it.
-  expect(logCapture.started).toHaveLength(1);
-  expect(logCapture.failed[0]).toMatchObject({ id: LOG_ID, entry: { omitRequest: true } });
+  expect(logWrites.started).toHaveLength(1);
+  expect(logWrites.failed[0]).toMatchObject({ id: LOG_ID, entry: { status: 'failed' } });
+  expect(logWrites.failed[0]?.entry).not.toHaveProperty('request_object_reference');
+  expect(objects.stored).toEqual({});
 });
 
 test('a provider timeout returns a typed failure and marks the open log failed', async () => {
@@ -463,8 +385,8 @@ test('a provider timeout returns a typed failure and marks the open log failed',
 
   expect(failure).toMatchObject({ code: 'PROVIDER_TIMEOUT' });
 
-  expect(logCapture.completed).toHaveLength(0);
-  expect(logCapture.failed[0]).toMatchObject({
+  expect(logWrites.completed).toHaveLength(0);
+  expect(logWrites.failed[0]).toMatchObject({
     organizationId: callerFixture.organization.id,
     id: LOG_ID,
     entry: { request: { model: 'openai/test-model' } },
@@ -479,15 +401,15 @@ test('an unsupported response format is rejected before provider or logging work
   expect(failure).toMatchObject({ code: 'UNSUPPORTED_RESPONSE_FORMAT' });
 
   expect(aiState.generateCalls).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('a stream emits OpenAI chunks and stores the assembled completion after it drains', async () => {
-  modelLookupState.override = {
-    cost_input: 2,
-    cost_output: 8,
-    cost_cache_read: null,
-  };
+  database.respondTo(
+    'select',
+    'models',
+    rows(catalogRow({ cost_input: '2', cost_output: '8', cost_cache_read: null })),
+  );
 
   aiState.streamParts = [
     { type: 'text-delta', text: 'Hello ' },
@@ -516,13 +438,13 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
   expect(chunks[3]).toMatchObject({ choices: [{ delta: {}, finish_reason: 'length' }] });
   expect(chunks[4]).toMatchObject({ choices: [], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } });
 
-  expect(logCapture.completed[0]?.entry.response).toMatchObject({
+  expect(logWrites.completed[0]?.entry.response).toMatchObject({
     choices: [{ message: { content: 'Hello stream' }, finish_reason: 'length' }],
     usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
   });
-  expect(logCapture.completed[0]?.entry.input_cost).toBeCloseTo(0.000006, 15);
-  expect(logCapture.completed[0]?.entry.output_cost).toBeCloseTo(0.000016, 15);
-  expect(logCapture.failed).toHaveLength(0);
+  expect(logWrites.completed[0]?.entry.input_cost).toBeCloseTo(0.000006, 15);
+  expect(logWrites.completed[0]?.entry.output_cost).toBeCloseTo(0.000016, 15);
+  expect(logWrites.failed).toHaveLength(0);
 });
 
 test('the HTTP handler exposes successful fixed-window quota headers', async () => {
@@ -544,13 +466,7 @@ test('the HTTP handler exposes successful fixed-window quota headers', async () 
 });
 
 test('the HTTP handler returns quota and retry headers on its own 429 response', async () => {
-  rateLimitState.result = {
-    limit: 2,
-    isLimited: true,
-    remainingQuota: 0,
-    retryAfterSeconds: 47,
-    delaySeconds: null,
-  };
+  fixedWindow.result = [3, 0, 47_000];
 
   const response = await app.request('/v1/chat/completions', {
     method: 'POST',
@@ -570,14 +486,16 @@ test('the HTTP handler returns quota and retry headers on its own 429 response',
   expect(aiState.generateCalls).toHaveLength(0);
 });
 
-// --- model resolution --------------------------------------------------------
+// Model resolution
 
 test('a provider-prefixed model resolves to that provider and forwards the bare id', async () => {
+  database.respondTo('select', 'models', rows(catalogRow({ provider: 'azure', name: 'my-deployment' })));
+
   await withCaller(() => Services.createChatCompletion(headers(), body({ model: 'azure/my-deployment' })));
 
   expect(providerFactory.azure).toHaveLength(1);
   expect(providerFactory.openai).toHaveLength(0);
-  expect(logCapture.started[0]).toMatchObject({
+  expect(logWrites.started[0]).toMatchObject({
     entry: { provider: 'azure', model: 'my-deployment' },
   });
 });
@@ -587,22 +505,21 @@ test('a bare model id is rejected because it is not a catalogue slug', async () 
 
   expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'gpt-bare' });
   expect(providerFactory.openai).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('an unregistered model is rejected before provider or logging work starts', async () => {
-  modelLookupState.known = false;
+  database.respondTo('select', 'models', rows());
 
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/gpt-unknown' })));
 
   expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'openai/gpt-unknown' });
-  expect(modelLookupState.calls).toEqual(['openai/gpt-unknown']);
   expect(providerFactory.openai).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('a registered but unsupported provider is rejected before provider or logging work starts', async () => {
-  modelLookupState.override = { provider: 'anthropic', name: 'claude-sonnet' };
+  database.respondTo('select', 'models', rows(catalogRow({ provider: 'anthropic', name: 'claude-sonnet' })));
 
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'anthropic/claude-sonnet' })));
 
@@ -613,18 +530,22 @@ test('a registered but unsupported provider is rejected before provider or loggi
   });
   expect(providerFactory.openai).toHaveLength(0);
   expect(providerFactory.azure).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('a model identifier with a provider and no model is a typed refusal', async () => {
+  database.respondTo('select', 'models', rows());
+
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/' })));
 
   expect(failure).toMatchObject({ code: 'MODEL_NOT_FOUND', model: 'openai/' });
 
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('the base url override reaches the provider client', async () => {
+  database.respondTo('select', 'models', rows(catalogRow({ name: 'gpt-proxied' })));
+
   await withCaller(() =>
     Services.createChatCompletion(
       headers({ 'ai-base-url': 'https://proxy.test/v1' }),
@@ -639,6 +560,8 @@ test('the base url override reaches the provider client', async () => {
 });
 
 test('a second call on the same credential reuses the cached provider client', async () => {
+  database.defaultResponse('select', 'models', rows(catalogRow({ name: 'gpt-cached' })));
+
   const request = () =>
     withCaller(() => Services.createChatCompletion(headers(), body({ model: 'openai/gpt-cached' })));
 
@@ -659,7 +582,7 @@ test('a second call on the same credential reuses the cached provider client', a
   expect(providerFactory.openai).toHaveLength(2);
 });
 
-// --- message translation -----------------------------------------------------
+// Message translation
 
 test('every OpenAI message role is translated into the SDK message model', async () => {
   await withCaller(() =>
@@ -777,7 +700,7 @@ test('a tool result no assistant turn asked for is a typed refusal', async () =>
   expect(aiState.generateCalls).toHaveLength(0);
 });
 
-// --- request parameters ------------------------------------------------------
+// Request parameters
 
 test('top_logprobs without logprobs is refused rather than quietly dropped', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ top_logprobs: 3 })));
@@ -785,7 +708,7 @@ test('top_logprobs without logprobs is refused rather than quietly dropped', asy
   expect(failure).toMatchObject({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
 
   expect(aiState.generateCalls).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('response_format text is accepted, since it is what the gateway already does', async () => {
@@ -941,7 +864,7 @@ test('tool_choice is ignored when the request declared no tools', async () => {
   expect(aiState.generateCalls[0]).not.toHaveProperty('toolChoice');
 });
 
-// --- response mapping --------------------------------------------------------
+// Response mapping
 
 test('a tool-call turn reports null content and JSON-string arguments', async () => {
   aiState.generateResult = {
@@ -1002,7 +925,7 @@ test('usage the provider left incomplete becomes zeroes and a computed total', a
   expect(completion.usage).not.toHaveProperty('completion_tokens_details');
 });
 
-// --- provider failures -------------------------------------------------------
+// Provider failures
 
 test('provider 4xx and 5xx failures retain enough detail for the handler to map them', async () => {
   const apiError = (statusCode: number) =>
@@ -1073,7 +996,7 @@ test('a request the provider considers malformed is a 400, not an upstream failu
     new InvalidArgumentError({ parameter: 'temperature', value: 5, message: 'temperature must be <= 2' }),
   ]) {
     resetDoubles();
-    logCapture.passthrough = false;
+    installChatDatabaseDefaults();
     aiState.generateError = error;
 
     expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
@@ -1094,10 +1017,10 @@ test('an abort surfaces as a 504 and anything unrecognised as a 502', async () =
   });
 });
 
-// --- log lifecycle -----------------------------------------------------------
+// Log lifecycle
 
 test('a log store that cannot be reached degrades the record, not the completion', async () => {
-  logCapture.startFailure = new Error('logs unreachable');
+  logWrites.failNextStart(new Error('logs unreachable'));
   let echoedLogId: string | undefined;
 
   const completion = await withCaller(() =>
@@ -1110,58 +1033,54 @@ test('a log store that cannot be reached degrades the record, not the completion
   // Nothing to echo and nothing to close - the header is omitted rather than
   // pointing at a row that was never written.
   expect(echoedLogId).toBeUndefined();
-  expect(logCapture.completed).toHaveLength(0);
+  expect(logWrites.completed).toHaveLength(0);
 });
 
 test('a log store that fails on the way out still returns the completion', async () => {
-  logCapture.completeFailure = new Error('object store unreachable');
+  logWrites.failNextFinish(new Error('log update unreachable'));
 
   const completion = await withCaller(() => Services.createChatCompletion(headers(), body()));
 
   // Generated and paid for; losing the record of it beats losing the answer.
   expect(completion.choices[0]?.message.content).toBe('Hello from the provider');
-  expect(logCapture.completed).toHaveLength(1);
+  expect(logWrites.completed).toHaveLength(1);
 });
 
 test('a failure to mark the log failed does not replace the error the caller needs', async () => {
   aiState.generateError = new Error('socket hang up');
-  logCapture.failFailure = new Error('logs unreachable');
+  logWrites.failNextFinish(new Error('logs unreachable'));
 
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
     code: 'PROVIDER_FAILED',
   });
 
-  expect(logCapture.failed).toHaveLength(1);
+  expect(logWrites.failed).toHaveLength(1);
 });
 
 test('log tags are parsed onto the row', async () => {
   await withCaller(() => Services.createChatCompletion(headers({ 'ai-log-tags': 'env:prod,team:core' }), body()));
 
-  expect(logCapture.started[0]).toMatchObject({
+  expect(logWrites.started[0]).toMatchObject({
     entry: { tags: { env: 'prod', team: 'core' } },
   });
 });
 
-// --- webhooks ----------------------------------------------------------------
+// Webhooks
 
 test('ai-webhook-id queues a delivery before the provider is called', async () => {
-  database.script(
-    // enqueueDelivery: the webhook lookup, scoped to the caller's organization.
-    rows({ id: WEBHOOK_ID }),
-    // enqueueDelivery: the outbox insert.
-    rows(),
-    // closeLog's fan-out: no webhook matched, so nothing more is written.
-    rows(),
-  );
+  // The named lookup consumes this one-shot response; the default empty
+  // webhooks response handles closeLog's later fan-out.
+  database.respondTo('select', 'webhooks', rows({ id: WEBHOOK_ID }));
+  database.respondTo('insert', 'webhook_outbox', rows());
 
   await withCaller(() => Services.createChatCompletion(headers({ 'ai-webhook-id': WEBHOOK_ID }), body()));
 
   expect(aiState.generateCalls).toHaveLength(1);
-  expect(logCapture.completed).toHaveLength(1);
+  expect(logWrites.completed).toHaveLength(1);
 });
 
 test('a webhook that is not the caller-s is a typed refusal, and costs nothing upstream', async () => {
-  database.script(rows());
+  database.respondTo('select', 'webhooks', rows());
 
   const failure = await withCaller(() => completionFailure(headers({ 'ai-webhook-id': WEBHOOK_ID }), body()));
 
@@ -1173,7 +1092,7 @@ test('a webhook that is not the caller-s is a typed refusal, and costs nothing u
 });
 
 test('a webhook cannot be queued against a log that could not be opened', async () => {
-  logCapture.startFailure = new Error('logs unreachable');
+  logWrites.failNextStart(new Error('logs unreachable'));
 
   const failure = await withCaller(() => completionFailure(headers({ 'ai-webhook-id': WEBHOOK_ID }), body()));
 
@@ -1182,7 +1101,7 @@ test('a webhook cannot be queued against a log that could not be opened', async 
   expect(aiState.generateCalls).toHaveLength(0);
 });
 
-// --- streaming ---------------------------------------------------------------
+// Streaming
 
 test('a streamed tool call is framed by index and reassembled for the log', async () => {
   aiState.streamParts = [
@@ -1227,7 +1146,7 @@ test('a streamed tool call is framed by index and reassembled for the log', asyn
 
   // Stored as the same chat.completion a non-streaming call would produce, so
   // a reader never has to know which path wrote the row.
-  expect(logCapture.completed[0]?.entry.response).toMatchObject({
+  expect(logWrites.completed[0]?.entry.response).toMatchObject({
     object: 'chat.completion',
     choices: [
       {
@@ -1261,7 +1180,7 @@ test('a provider that streams nothing still produces a well-formed pair of frame
   expect(chunks[1]).toMatchObject({ choices: [{ delta: {}, finish_reason: 'stop' }] });
 
   // Zeroes rather than a missing block, so the stored shape is the same either way.
-  expect(logCapture.completed[0]?.entry.response).toMatchObject({
+  expect(logWrites.completed[0]?.entry.response).toMatchObject({
     usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   });
 });
@@ -1315,8 +1234,8 @@ test('an error frame mid-stream aborts the iteration and marks the log failed', 
   // Returned as Err rather than ending quietly, which would look to the caller
   // like a completion that simply stopped early.
   expect(chunks).toHaveLength(2);
-  expect(logCapture.failed[0]).toMatchObject({ id: LOG_ID });
-  expect(logCapture.completed).toHaveLength(0);
+  expect(logWrites.failed[0]).toMatchObject({ id: LOG_ID });
+  expect(logWrites.completed).toHaveLength(0);
 });
 
 test('a failure reported only through onError is returned once the stream drains', async () => {
@@ -1339,8 +1258,8 @@ test('a failure reported only through onError is returned once the stream drains
 
   expect(failure).toMatchObject({ code: 'PROVIDER_REJECTED_REQUEST', status: 401 });
 
-  expect(logCapture.failed[0]).toMatchObject({ id: LOG_ID });
-  expect(logCapture.completed).toHaveLength(0);
+  expect(logWrites.failed[0]).toMatchObject({ id: LOG_ID });
+  expect(logWrites.completed).toHaveLength(0);
 });
 
 test('the streaming path refuses an unsupported parameter before opening a log', async () => {
@@ -1359,7 +1278,7 @@ test('the streaming path refuses an unsupported parameter before opening a log',
   expect(failure).toMatchObject({ code: 'UNSUPPORTED_RESPONSE_FORMAT' });
 
   expect(aiState.streamCalls).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
 });
 
 test('the streaming path forwards the same settings the whole request does', async () => {
@@ -1388,7 +1307,7 @@ test('the streaming path forwards the same settings the whole request does', asy
   });
 });
 
-// --- handler: prompt expansion -----------------------------------------------
+// Handler prompt expansion
 
 async function post(requestBody: unknown, extraHeaders: Record<string, string> = {}) {
   return app.request('/v1/chat/completions', {
@@ -1403,21 +1322,23 @@ async function post(requestBody: unknown, extraHeaders: Record<string, string> =
 }
 
 test('a named prompt is expanded into a leading system message and the version is echoed', async () => {
+  database.respondTo('select', 'prompts', rows(promptRow()));
+  database.respondTo('select', 'prompt_versions', rows({ template: 'You are {{ tone }}.' }));
+
   const response = await post(body({ prompt: { name: 'support', variables: { tone: 'warm' } } }));
 
   expect(response.status).toBe(200);
   // Without this, "what did we actually send" is unanswerable once the active
   // version moves.
   expect(response.headers.get('ai-prompt-version')).toBe('3');
-  expect(promptState.calls[0]).toEqual({ name: 'support', variables: { tone: 'warm' } });
 
   const { messages } = aiState.generateCalls[0] as { messages: { role: string; content: string }[] };
-  expect(messages[0]).toEqual({ role: 'system', content: 'You are terse.' });
+  expect(messages[0]).toEqual({ role: 'system', content: 'You are warm.' });
   expect(messages[1]).toMatchObject({ role: 'user' });
 
   // `prompt` is the gateway's own field and is dropped on the way through, so
   // the log records the request that was actually sent.
-  expect(logCapture.completed[0]?.entry.request).not.toHaveProperty('prompt');
+  expect(logWrites.completed[0]?.entry.request).not.toHaveProperty('prompt');
 });
 
 test('a request that names no prompt sets no version header and never asks', async () => {
@@ -1425,48 +1346,78 @@ test('a request that names no prompt sets no version header and never asks', asy
 
   expect(response.status).toBe(200);
   expect(response.headers.get('ai-prompt-version')).toBeNull();
-  expect(promptState.calls).toHaveLength(0);
 });
 
 /**
  * One case per code in the failure union.
  *
- * Typed as ResolvePromptFailure rather than inferred, so adding a variant
- * without a case here is a type error rather than a silently untested status.
+ * `satisfies Record` makes adding a failure variant a type error until its HTTP
+ * example is added here too.
  */
-const promptFailures: [ResolvePromptFailure['code'], ResolvePromptFailure, number][] = [
-  ['PROMPT_FORBIDDEN', { code: 'PROMPT_FORBIDDEN', required: 'prompts:read' }, 403],
-  ['PROMPT_NOT_FOUND', { code: 'PROMPT_NOT_FOUND', name: 'support' }, 404],
-  ['PROMPT_NO_ACTIVE_VERSION', { code: 'PROMPT_NO_ACTIVE_VERSION', name: 'support' }, 422],
-  ['PROMPT_VERSION_NOT_FOUND', { code: 'PROMPT_VERSION_NOT_FOUND', name: 'support', version: 9 }, 404],
-  [
-    'PROMPT_VARIABLES_MISSING',
-    { code: 'PROMPT_VARIABLES_MISSING', name: 'support', version: 3, missing: ['tone'] },
-    422,
-  ],
-];
+const promptFailures = {
+  PROMPT_FORBIDDEN: {
+    status: 403,
+    arrange: () => {
+      httpCaller.permissions = { scopes: ['chat-completions:write'] };
+      callerFixture.permissions = { scopes: ['chat-completions:write'] };
+    },
+    reference: { name: 'support' },
+  },
+  PROMPT_NOT_FOUND: {
+    status: 404,
+    arrange: () => database.respondTo('select', 'prompts', rows()),
+    reference: { name: 'support' },
+  },
+  PROMPT_NO_ACTIVE_VERSION: {
+    status: 422,
+    arrange: () => database.respondTo('select', 'prompts', rows(promptRow({ active_version: null }))),
+    reference: { name: 'support' },
+  },
+  PROMPT_VERSION_NOT_FOUND: {
+    status: 404,
+    arrange: () => {
+      database.respondTo('select', 'prompts', rows(promptRow()));
+      database.respondTo('select', 'prompt_versions', rows());
+    },
+    reference: { name: 'support', version: 9 },
+  },
+  PROMPT_VARIABLES_MISSING: {
+    status: 422,
+    arrange: () => {
+      database.respondTo('select', 'prompts', rows(promptRow()));
+      database.respondTo('select', 'prompt_versions', rows({ template: 'You are {{ tone }}.' }));
+    },
+    reference: { name: 'support' },
+  },
+} satisfies Record<
+  ResolvePromptFailure['code'],
+  { status: number; arrange: () => void; reference: NonNullable<ChatCompletionBody['prompt']> }
+>;
 
-test.each(promptFailures)('a prompt that will not expand is a %s response', async (_code, failure, status) => {
-  promptState.result = err(failure);
+for (const [code, scenario] of Object.entries(promptFailures)) {
+  test(`a prompt that will not expand is a ${code} response`, async () => {
+    scenario.arrange();
 
-  const response = await post(body({ prompt: { name: 'support' } }));
+    const response = await post(body({ prompt: scenario.reference }));
 
-  expect(response.status).toBe(status);
-  // Refused before anything reaches the provider and before a stream could
-  // commit a 200 that can no longer be taken back.
-  expect(aiState.generateCalls).toHaveLength(0);
-  expect(logCapture.started).toHaveLength(0);
-});
+    expect(response.status).toBe(scenario.status);
+    // Refused before anything reaches the provider and before a stream could
+    // commit a 200 that can no longer be taken back.
+    expect(aiState.generateCalls).toHaveLength(0);
+    expect(logWrites.started).toHaveLength(0);
+  });
+}
 
 test('a forbidden prompt challenges for the scope it needs rather than failing the endpoint', async () => {
-  promptState.result = err({ code: 'PROMPT_FORBIDDEN', required: 'prompts:read' });
+  httpCaller.permissions = { scopes: ['chat-completions:write'] };
+  callerFixture.permissions = { scopes: ['chat-completions:write'] };
 
   const response = await post(body({ prompt: { name: 'support' } }));
 
   expect(response.headers.get('WWW-Authenticate')).toBe('Bearer error="insufficient_scope", scope="prompts:read"');
 });
 
-// --- handler: streaming ------------------------------------------------------
+// Handler streaming
 
 test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', async () => {
   aiState.streamParts = [
@@ -1491,7 +1442,7 @@ test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', as
   expect(frames.at(-1)).toBe('[DONE]');
   expect(frames).toHaveLength(5);
   expect(JSON.parse(frames[1] ?? '')).toMatchObject({ choices: [{ delta: { content: 'Hello ' } }] });
-  expect(logCapture.completed[0]?.entry.response).toMatchObject({
+  expect(logWrites.completed[0]?.entry.response).toMatchObject({
     choices: [{ message: { content: 'Hello stream' } }],
   });
 });

@@ -33,7 +33,7 @@ async function rejectedHttpException(promise: Promise<unknown>): Promise<HTTPExc
 
 describe('organizations', () => {
   test('gets a local organization without applying authentication status policy', async () => {
-    database.script(rows(organizationRow({ status: 'suspended' })), rows());
+    database.respondTo('select', 'organizations', rows(organizationRow({ status: 'suspended' })), rows());
 
     await expect(getOrganization(ORGANIZATION_ID)).resolves.toEqual({
       id: ORGANIZATION_ID,
@@ -44,7 +44,7 @@ describe('organizations', () => {
   });
 
   test('resolves an existing active external organization', async () => {
-    database.script(rows(organizationRow()));
+    database.respondTo('select', 'organizations', rows(organizationRow()));
 
     await expect(resolveOrganization('https://issuer.example', 'tenant-1', 'Ignored New Name')).resolves.toEqual({
       id: ORGANIZATION_ID,
@@ -54,7 +54,7 @@ describe('organizations', () => {
   });
 
   test('refuses a suspended external organization', async () => {
-    database.script(rows(organizationRow({ status: 'suspended' })));
+    database.respondTo('select', 'organizations', rows(organizationRow({ status: 'suspended' })));
 
     const error = await rejectedHttpException(resolveOrganization('https://issuer.example', 'tenant-1'));
 
@@ -63,8 +63,10 @@ describe('organizations', () => {
   });
 
   test('provisions a missing organization with a deterministic collision-resistant slug', async () => {
-    database.script(
-      rows(),
+    database.respondTo('select', 'organizations', rows());
+    database.respondTo(
+      'insert',
+      'organizations',
       rows(
         organizationRow({
           external_id: 'Tenant #42',
@@ -79,8 +81,9 @@ describe('organizations', () => {
       name: 'ACME / Dev',
     });
 
-    const values = database.calls.find((call) => call.method === 'values');
-    expect(values?.args[0]).toEqual({
+    const insert = database.queriesFor('insert', 'organizations')[0];
+    const values = insert?.calls.find((call) => call.method === 'values')?.args[0];
+    expect(values).toEqual({
       external_idp: 'https://issuer.example',
       external_id: 'Tenant #42',
       name: 'ACME / Dev',
@@ -90,34 +93,36 @@ describe('organizations', () => {
 
   test('recovers when another request wins concurrent organization provisioning', async () => {
     const conflict = new Error('unique constraint');
-    database.script(rows(), failsWith(conflict), rows(organizationRow()));
+    database.respondTo('select', 'organizations', rows(), rows(organizationRow()));
+    database.respondTo('insert', 'organizations', failsWith(conflict));
 
     await expect(resolveOrganization('https://issuer.example', 'tenant-1')).resolves.toMatchObject({
       id: ORGANIZATION_ID,
     });
-    expect(database.consumed).toBe(3);
+    expect(database.queries).toHaveLength(3);
   });
 
   test('surfaces organization provisioning failures when no concurrent row appeared', async () => {
-    database.script(rows(), rows(), rows());
+    database.respondTo('select', 'organizations', rows(), rows());
+    database.respondTo('insert', 'organizations', rows());
 
     await expect(resolveOrganization('https://issuer.example', 'tenant-1')).rejects.toThrow(
       'Failed to provision organization',
     );
-    expect(database.consumed).toBe(3);
+    expect(database.queries).toHaveLength(3);
   });
 });
 
 describe('users', () => {
   test('gets a local user or returns null', async () => {
-    database.script(rows(userRow()), rows());
+    database.respondTo('select', 'users', rows(userRow()), rows());
 
     await expect(getUserById(USER_ID)).resolves.toMatchObject({ id: USER_ID, username: 'alex' });
     await expect(getUserById('missing')).resolves.toBeNull();
   });
 
   test('resolves an existing active issuer-qualified identity', async () => {
-    database.script(rows({ id: USER_ID, status: 'active' }));
+    database.respondTo('select', 'user_identities', rows({ id: USER_ID, status: 'active' }));
 
     await expect(
       resolveUser('https://issuer.example', 'subject-1', {
@@ -129,7 +134,7 @@ describe('users', () => {
   });
 
   test('refuses a deleted external identity', async () => {
-    database.script(rows({ id: USER_ID, status: 'deleted' }));
+    database.respondTo('select', 'user_identities', rows({ id: USER_ID, status: 'deleted' }));
 
     const error = await rejectedHttpException(
       resolveUser('https://issuer.example', 'subject-1', {
@@ -144,7 +149,9 @@ describe('users', () => {
   });
 
   test('provisions the user and identity atomically on first sight', async () => {
-    database.script(rows(), rows({ id: USER_ID }), rows());
+    database.respondTo('select', 'user_identities', rows());
+    database.respondTo('insert', 'users', rows({ id: USER_ID }));
+    database.respondTo('insert', 'user_identities', rows());
 
     await expect(
       resolveUser('https://issuer.example', 'subject-1', {
@@ -155,7 +162,9 @@ describe('users', () => {
     ).resolves.toBe(USER_ID);
 
     expect(database.transactions).toEqual([{ committed: true, rolledBack: false }]);
-    const values = database.calls.filter((call) => call.method === 'values').map((call) => call.args[0]);
+    const values = [...database.queriesFor('insert', 'users'), ...database.queriesFor('insert', 'user_identities')].map(
+      (query) => query.calls.find((call) => call.method === 'values')?.args[0],
+    );
     expect(values).toEqual([
       { username: 'alex', email: 'alex@example.test', name: 'Alex Example' },
       { user_id: USER_ID, external_idp: 'https://issuer.example', external_id: 'subject-1' },
@@ -163,12 +172,9 @@ describe('users', () => {
   });
 
   test('rolls back and resolves the winner of concurrent identity provisioning', async () => {
-    database.script(
-      rows(),
-      rows({ id: USER_ID }),
-      failsWith(new Error('unique identity constraint')),
-      rows({ id: USER_ID, status: 'active' }),
-    );
+    database.respondTo('select', 'user_identities', rows(), rows({ id: USER_ID, status: 'active' }));
+    database.respondTo('insert', 'users', rows({ id: USER_ID }));
+    database.respondTo('insert', 'user_identities', failsWith(new Error('unique identity constraint')));
 
     await expect(
       resolveUser('https://issuer.example', 'subject-1', {
@@ -181,7 +187,8 @@ describe('users', () => {
   });
 
   test('surfaces provisioning failures when no concurrent identity appeared', async () => {
-    database.script(rows(), rows(), rows());
+    database.respondTo('select', 'user_identities', rows(), rows());
+    database.respondTo('insert', 'users', rows());
 
     await expect(
       resolveUser('https://issuer.example', 'subject-1', {

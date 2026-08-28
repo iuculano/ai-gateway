@@ -1,14 +1,15 @@
-import { mock } from 'bun:test';
-import { createDatabaseDouble, failsWith, KEY_ID, ORGANIZATION_ID, rows, type Step, USER_ID } from '@repo/test-helpers';
-
-/** This suite's spelling of the shared step type. */
-export type DatabaseStep = Step;
+import { afterEach, mock } from 'bun:test';
+import { createDatabaseDouble, failsWith, KEY_ID, ORGANIZATION_ID, rows, USER_ID } from '@repo/test-helpers';
 
 export { failsWith, rows };
 
 const { database, db } = createDatabaseDouble();
 
 export { database };
+
+afterEach(() => {
+  database.assertResponsesConsumed();
+});
 
 export const quota = {
   calls: [] as { key: string; policy: { limit: number; windowSeconds: number; incrementBy?: number } }[],
@@ -131,7 +132,7 @@ export async function installAuthMocks(): Promise<void> {
 }
 
 export function resetDoubles(): void {
-  database.script();
+  database.reset();
   quota.reset();
   usage.reset();
   authCache.reset();

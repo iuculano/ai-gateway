@@ -1,8 +1,9 @@
-import { beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { createDatabaseDouble, failsWith, rows } from '@repo/test-helpers';
 import type { SelectedOffering } from '../../src/worker/catalog-sync';
 
 process.env.POSTGRES_CONNECTION_STRING = 'postgresql://test:test@localhost/worker_unit_test';
+process.env.LOG_LEVEL = 'error';
 
 const { database, db } = createDatabaseDouble();
 const actualDrizzle = await import('@repo/drizzle');
@@ -36,17 +37,23 @@ beforeEach(() => {
   database.reset();
 });
 
+afterEach(() => {
+  database.assertResponsesConsumed();
+});
+
 test('an empty snapshot is a no-op rather than a mass delist', async () => {
   expect(await upsertCatalog([])).toEqual({ written: 0, delisted: 0, confirmed: 0 });
   expect(database.transactions).toHaveLength(0);
 });
 
 test('maps upstream fields, preserves unknown prices as null, and reports each phase', async () => {
-  database.script(rows({ id: 'written' }), rows({ id: 'delisted' }), rows({ id: 'one' }, { id: 'two' }));
+  database.respondTo('insert', 'models', rows({ id: 'written' }));
+  database.respondTo('update', 'models', rows({ id: 'delisted' }), rows({ id: 'one' }, { id: 'two' }));
 
   expect(await upsertCatalog(selected)).toEqual({ written: 1, delisted: 1, confirmed: 2 });
 
-  const values = database.calls.find((call) => call.method === 'values')?.args[0] as Record<string, unknown>[];
+  const insert = database.queriesFor('insert', 'models')[0];
+  const values = insert?.calls.find((call) => call.method === 'values')?.args[0] as Record<string, unknown>[];
   expect(values[0]).toMatchObject({
     source: 'builtin',
     organization_id: null,
@@ -84,7 +91,7 @@ test('maps upstream fields, preserves unknown prices as null, and reports each p
 });
 
 test('rolls the whole catalog update back when a statement fails', async () => {
-  database.script(failsWith(new Error('deadlock detected')));
+  database.respondTo('insert', 'models', failsWith(new Error('deadlock detected')));
 
   await expect(upsertCatalog(selected)).rejects.toThrow('deadlock detected');
   expect(database.transactions).toEqual([{ committed: false, rolledBack: true }]);

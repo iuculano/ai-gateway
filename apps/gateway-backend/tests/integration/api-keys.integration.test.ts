@@ -44,7 +44,7 @@ async function createKey(tenant: Tenant, name = 'ci') {
   return result.value;
 }
 
-// --- tenant isolation --------------------------------------------------------
+// Tenant isolation
 //
 // These run against Postgres so the organization predicates are tested as
 // emitted SQL rather than against a double that accepts every condition.
@@ -101,7 +101,7 @@ test('another organization cannot revoke the key', async () => {
   expect((await readApiKeyRow(created.id))?.revoked_at).toBeNull();
 });
 
-// --- transactions ------------------------------------------------------------
+// Transactions
 
 test('creation commits the key and its audit entry together', async () => {
   const created = await createKey(acme);
@@ -164,7 +164,7 @@ test('revoking twice is idempotent and audits once', async () => {
   expect(await readAuditRows(created.id)).toHaveLength(2); // created + one revoke
 });
 
-// --- the SQL itself ----------------------------------------------------------
+// The SQL itself
 
 test('updating a revoked key is refused', async () => {
   const created = await createKey(acme);

@@ -1,8 +1,9 @@
-import { beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { createDatabaseDouble, rows } from '@repo/test-helpers';
 
 process.env.POSTGRES_CONNECTION_STRING = 'postgresql://test:test@localhost/worker_unit_test';
 process.env.ROLLUP_CHUNK_HOURS = '2';
+process.env.LOG_LEVEL = 'error';
 
 const { database, db } = createDatabaseDouble();
 const actualDrizzle = await import('@repo/drizzle');
@@ -18,21 +19,27 @@ beforeEach(() => {
   database.reset();
 });
 
+afterEach(() => {
+  database.assertResponsesConsumed();
+});
+
 test('stays idle when there is no logged history to refresh', async () => {
-  database.script(rows({ hour: TO }), rows({ start: null }));
+  database.respondTo('execute', null, rows({ hour: TO }), rows({ start: null }));
 
   expect(await tickAnalyticsRollup()).toEqual({ status: 'idle', chunks: 0, rows: 0 });
   expect(database.transactions).toHaveLength(0);
 });
 
 test('stays idle when the watermark has reached the current hour', async () => {
-  database.script(rows({ hour: TO }), rows({ start: TO }));
+  database.respondTo('execute', null, rows({ hour: TO }), rows({ start: TO }));
 
   expect(await tickAnalyticsRollup()).toEqual({ status: 'idle', chunks: 0, rows: 0 });
 });
 
 test('refreshes an old range in configured chunks and totals the rows written', async () => {
-  database.script(
+  database.respondTo(
+    'execute',
+    null,
     rows({ hour: TO }),
     rows({ start: FROM }),
     rows({ acquired: true }),
@@ -61,7 +68,9 @@ test('refreshes an old range in configured chunks and totals the rows written', 
 });
 
 test('stops at a locked chunk so the next tick can resume from the real watermark', async () => {
-  database.script(
+  database.respondTo(
+    'execute',
+    null,
     rows({ hour: TO }),
     rows({ start: FROM }),
     rows({ acquired: true }),
@@ -81,7 +90,9 @@ test('stops at a locked chunk so the next tick can resume from the real watermar
 
 test('rolls a failed replacement transaction back to its previous contents', async () => {
   const failure = new Error('insert failed');
-  database.script(rows({ hour: TO }), rows({ start: FROM }), rows({ acquired: true }), rows(), { error: failure });
+  database.respondTo('execute', null, rows({ hour: TO }), rows({ start: FROM }), rows({ acquired: true }), rows(), {
+    error: failure,
+  });
 
   await expect(tickAnalyticsRollup()).rejects.toThrow('insert failed');
   expect(database.transactions).toEqual([{ committed: false, rolledBack: true }]);

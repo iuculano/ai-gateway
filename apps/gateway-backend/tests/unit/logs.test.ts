@@ -1,12 +1,22 @@
 import { beforeEach, expect, test } from 'bun:test';
 import type { GetLogPayloadResponse } from '../../src/api/logs/logs.schemas';
 import type { GetLogPayloadFailure } from '../../src/api/logs/logs.services';
-import { database, failsWith, installModuleMocks, LOG_ID, logRow, objects, resetDoubles, rows } from './doubles';
+import {
+  database,
+  failsWith,
+  forCaller,
+  installModuleMocks,
+  LOG_ID,
+  logRow,
+  objects,
+  resetDoubles,
+  rows,
+} from './doubles';
 import { expectErr, expectOk, type FailureCase } from './result';
 
 await installModuleMocks();
 
-const { default: Services } = await import('../../src/api/logs/logs.services');
+const Services = forCaller((await import('../../src/api/logs/logs.services')).default);
 
 const REQUEST_KEY = `logs/org/${LOG_ID}/request.json.zst`;
 const RESPONSE_KEY = `logs/org/${LOG_ID}/response.json.zst`;
@@ -15,24 +25,24 @@ beforeEach(() => {
   resetDoubles();
 });
 
-// --- the single-code failures ------------------------------------------------
+// The single-code failures
 //
 // No matrix for these two: the assertNever in each handler mapper is what makes
 // a new variant fail to compile, and a plain test says the rest.
 
 test('getLog returns LOG_NOT_FOUND as a value', async () => {
-  database.script(rows());
+  database.respondTo('select', 'logs', rows());
 
   expect(expectErr(await Services.getLog(LOG_ID))).toEqual({ code: 'LOG_NOT_FOUND', id: LOG_ID });
 });
 
 test('deleteLog returns LOG_NOT_FOUND as a value', async () => {
-  database.script(rows());
+  database.respondTo('delete', 'logs', rows());
 
   expect(expectErr(await Services.deleteLog(LOG_ID))).toEqual({ code: 'LOG_NOT_FOUND', id: LOG_ID });
 });
 
-// --- getLogPayload: one scenario per declared code ---------------------------
+// getLogPayload failure cases
 //
 // Three members, and forgetting a scenario for one is easy - so this union does
 // get the matrix. Adding a variant without a case is a type error here.
@@ -40,7 +50,7 @@ test('deleteLog returns LOG_NOT_FOUND as a value', async () => {
 const payloadFailureCases = {
   LOG_NOT_FOUND: {
     run: () => {
-      database.script(rows()); // no such log for this tenant
+      database.respondTo('select', 'logs', rows());
 
       return Services.getLogPayload(LOG_ID, 'request');
     },
@@ -50,7 +60,7 @@ const payloadFailureCases = {
     run: () => {
       // The log exists, but nothing was ever written on that side - the caller
       // sent ai-log-omit-request, or the call failed before there was output.
-      database.script(rows(logRow({ request_object_reference: null })));
+      database.respondTo('select', 'logs', rows(logRow({ request_object_reference: null })));
 
       return Services.getLogPayload(LOG_ID, 'request');
     },
@@ -59,7 +69,7 @@ const payloadFailureCases = {
   PAYLOAD_UNAVAILABLE: {
     run: () => {
       // The row still advertises an object that is no longer in the bucket.
-      database.script(rows(logRow({ request_object_reference: REQUEST_KEY })));
+      database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
 
       return Services.getLogPayload(LOG_ID, 'request');
     },
@@ -74,10 +84,14 @@ for (const [code, scenario] of Object.entries(payloadFailureCases)) {
   });
 }
 
-// --- getLog ------------------------------------------------------------------
+// getLog
 
 test('getLog returns Ok with the derived payload flags', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: null })));
+  database.respondTo(
+    'select',
+    'logs',
+    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: null })),
+  );
 
   const log = expectOk(await Services.getLog(LOG_ID));
 
@@ -92,15 +106,15 @@ test('getLog returns Ok with the derived payload flags', async () => {
 });
 
 test('getLog rejects when the query fails', async () => {
-  database.script(failsWith(new Error('connection terminated')));
+  database.respondTo('select', 'logs', failsWith(new Error('connection terminated')));
 
   await expect(Services.getLog(LOG_ID)).rejects.toThrow('connection terminated');
 });
 
-// --- getLogPayload -----------------------------------------------------------
+// getLogPayload
 
 test('getLogPayload returns the stored payload', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY })));
+  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
   objects.stored[REQUEST_KEY] = { messages: [{ role: 'user', content: 'hello' }] };
 
   const payload = expectOk(await Services.getLogPayload(LOG_ID, 'request'));
@@ -109,7 +123,11 @@ test('getLogPayload returns the stored payload', async () => {
 });
 
 test('getLogPayload reads the side it was asked for', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: RESPONSE_KEY })));
+  database.respondTo(
+    'select',
+    'logs',
+    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: RESPONSE_KEY })),
+  );
   objects.stored[REQUEST_KEY] = 'the request';
   objects.stored[RESPONSE_KEY] = 'the response';
 
@@ -117,7 +135,7 @@ test('getLogPayload reads the side it was asked for', async () => {
 });
 
 test('the two empty-payload failures carry the side, because the message names it', async () => {
-  database.script(rows(logRow({ response_object_reference: null })));
+  database.respondTo('select', 'logs', rows(logRow({ response_object_reference: null })));
 
   const failure = expectErr(await Services.getLogPayload(LOG_ID, 'response'));
 
@@ -125,7 +143,7 @@ test('the two empty-payload failures carry the side, because the message names i
 });
 
 test('getLogPayload rejects when object storage fails rather than reporting absence', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY })));
+  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
 
   // A bucket that is unreachable is a malfunction. Reporting it as "no payload"
   // would tell the caller something false about their own data.
@@ -135,7 +153,7 @@ test('getLogPayload rejects when object storage fails rather than reporting abse
 });
 
 test('a payload stored as null reads back as unavailable', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY })));
+  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
   objects.stored[REQUEST_KEY] = null;
 
   const result = await Services.getLogPayload(LOG_ID, 'request');
@@ -148,10 +166,14 @@ test('a payload stored as null reads back as unavailable', async () => {
   expect(expectErr(result).code).toBe('PAYLOAD_UNAVAILABLE');
 });
 
-// --- deleteLog ---------------------------------------------------------------
+// deleteLog
 
 test('deleteLog removes both payloads', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: RESPONSE_KEY })));
+  database.respondTo(
+    'delete',
+    'logs',
+    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: RESPONSE_KEY })),
+  );
   objects.stored[REQUEST_KEY] = 'a';
   objects.stored[RESPONSE_KEY] = 'b';
 
@@ -162,7 +184,11 @@ test('deleteLog removes both payloads', async () => {
 });
 
 test('deleteLog skips the sides that were never stored', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: null })));
+  database.respondTo(
+    'delete',
+    'logs',
+    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: null })),
+  );
 
   expect((await Services.deleteLog(LOG_ID)).isOk()).toBe(true);
 
@@ -171,7 +197,7 @@ test('deleteLog skips the sides that were never stored', async () => {
 });
 
 test('deleteLog rejects when object deletion fails, after the row is already gone', async () => {
-  database.script(rows(logRow({ request_object_reference: REQUEST_KEY })));
+  database.respondTo('delete', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
   objects.failure = new Error('bucket unavailable');
 
   // Deliberate: the row is deleted first, so a failure here leaves orphaned
@@ -179,12 +205,14 @@ test('deleteLog rejects when object deletion fails, after the row is already gon
   await expect(Services.deleteLog(LOG_ID)).rejects.toThrow('bucket unavailable');
 });
 
-// --- the operations that stay plain promises ---------------------------------
+// The operations that stay plain promises
 
 test('getLogPayloadBatch reports absence in the success value, not as a failure', async () => {
   const otherId = '01912d3f-9b4a-7c3d-8e2f-000000000008';
 
-  database.script(
+  database.respondTo(
+    'select',
+    'logs',
     rows(
       { id: LOG_ID, request_object_reference: REQUEST_KEY, response_object_reference: null },
       { id: otherId, request_object_reference: null, response_object_reference: null },
@@ -206,7 +234,7 @@ test('getLogPayloadBatch never turns an unseen id into an object key', async () 
 
   // The scoped query returns nothing for the foreign id, so it never reaches
   // object storage - which has no idea who is asking and would happily serve it.
-  database.script(rows());
+  database.respondTo('select', 'logs', rows());
   objects.failure = new Error('object storage must not be called');
 
   const batch = await Services.getLogPayloadBatch([foreignId], 'request');
@@ -216,7 +244,7 @@ test('getLogPayloadBatch never turns an unseen id into an object key', async () 
 });
 
 test('listLogs stays a plain promise', async () => {
-  database.script(rows(logRow()));
+  database.respondTo('select', 'logs', rows(logRow()));
 
   const page = await Services.listLogs({ limit: 50 });
 
@@ -227,7 +255,7 @@ test('listLogs stays a plain promise', async () => {
 
 test('startLog rejects rather than returning a failure', async () => {
   // Ingestion, not a handler - there is no HTTP caller to hand a refusal to.
-  database.script(rows());
+  database.respondTo('insert', 'logs', rows());
 
   await expect(
     Services.startLog('org', { model: 'gpt-4-turbo', provider: 'openai', actor_type: 'api_key', actor_id: 'key-1' }),
@@ -235,7 +263,7 @@ test('startLog rejects rather than returning a failure', async () => {
 });
 
 test('completeLog stores both payloads before publishing their references', async () => {
-  database.script(rows());
+  database.respondTo('update', 'logs', rows());
 
   await Services.completeLog('org', LOG_ID, {
     request: { messages: ['hello'] },
@@ -248,7 +276,8 @@ test('completeLog stores both payloads before publishing their references', asyn
     [REQUEST_KEY]: { messages: ['hello'] },
     [RESPONSE_KEY]: { answer: 'hi' },
   });
-  expect(database.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
+  const update = database.queriesFor('update', 'logs')[0];
+  expect(update?.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
     status: 'complete',
     request_object_reference: REQUEST_KEY,
     response_object_reference: RESPONSE_KEY,
@@ -264,16 +293,17 @@ test('completeLog does not publish object references when storage fails', async 
     'bucket unavailable',
   );
 
-  expect(database.calls).toHaveLength(0);
+  expect(database.queries).toHaveLength(0);
 });
 
 test('failLog stores the request and marks the row failed', async () => {
-  database.script(rows());
+  database.respondTo('update', 'logs', rows());
 
   await Services.failLog('org', LOG_ID, { request: { messages: ['hello'] } });
 
   expect(objects.stored[REQUEST_KEY]).toEqual({ messages: ['hello'] });
-  expect(database.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
+  const update = database.queriesFor('update', 'logs')[0];
+  expect(update?.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
     status: 'failed',
     request_object_reference: REQUEST_KEY,
   });

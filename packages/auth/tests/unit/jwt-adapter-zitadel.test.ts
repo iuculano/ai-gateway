@@ -82,6 +82,11 @@ async function adapter(
   });
 }
 
+function arrangeActiveIdentity(): void {
+  database.respondTo('select', 'user_identities', rows({ id: USER_ID, status: 'active' }));
+  database.respondTo('select', 'organizations', rows(organizationRow()));
+}
+
 async function rejectedHttpException(promise: Promise<unknown>): Promise<HTTPException> {
   try {
     await promise;
@@ -112,7 +117,7 @@ describe('createZitadelAdapter', () => {
       family_name: 'Example',
       [ROLES_CLAIM]: ['viewer'],
     });
-    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+    arrangeActiveIdentity();
 
     const authenticate = await adapter();
     const caller = await authenticate({ token, request: {} });
@@ -132,7 +137,7 @@ describe('createZitadelAdapter', () => {
       },
       permissions: { scopes: ['logs:write', 'logs:read'] },
     });
-    expect(database.consumed).toBe(2);
+    expect(database.queries).toHaveLength(2);
   });
 
   test('falls back to userinfo roles when the access token carries none', async () => {
@@ -145,7 +150,7 @@ describe('createZitadelAdapter', () => {
       preferred_username: 'alex',
       [ROLES_CLAIM]: ['viewer'],
     });
-    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+    arrangeActiveIdentity();
 
     const authenticate = await adapter();
     const caller = await authenticate({ token, request: {} });
@@ -169,7 +174,7 @@ describe('createZitadelAdapter', () => {
       sub: 'external-user-1',
       preferred_username: 'alex',
     });
-    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+    arrangeActiveIdentity();
 
     const authenticate = await adapter();
     const caller = await authenticate({ token, request: {} });
@@ -190,7 +195,7 @@ describe('createZitadelAdapter', () => {
       sub: 'external-user-1',
       preferred_username: 'alex',
     });
-    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+    arrangeActiveIdentity();
 
     const authenticate = await adapter();
     const caller = await authenticate({ token, request: {} });
@@ -208,7 +213,7 @@ describe('createZitadelAdapter', () => {
       sub: 'external-user-1',
       preferred_username: 'alex',
     });
-    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+    arrangeActiveIdentity();
 
     const authenticate = await adapter({});
     const caller = await authenticate({ token, request: {} });
@@ -229,7 +234,7 @@ describe('createZitadelAdapter', () => {
       expect(error.status).toBe(401);
       expect(error.cause).toBe('Invalid token: missing required claims');
     }
-    expect(database.consumed).toBe(0);
+    expect(database.queries).toHaveLength(0);
   });
 
   test('rejects userinfo belonging to a different subject', async () => {
@@ -244,7 +249,7 @@ describe('createZitadelAdapter', () => {
 
     expect(error.status).toBe(401);
     expect(error.cause).toBe('Invalid token: userinfo subject does not match token subject');
-    expect(database.consumed).toBe(0);
+    expect(database.queries).toHaveLength(0);
   });
 
   test('rejects userinfo without a string username and safely falls back from invalid optional profile fields', async () => {
@@ -267,7 +272,7 @@ describe('createZitadelAdapter', () => {
       given_name: {},
       family_name: [],
     });
-    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+    arrangeActiveIdentity();
     const caller = await authenticate({ token: fallbackToken, request: {} });
     expect(caller.actor).toMatchObject({
       user: {
@@ -290,6 +295,6 @@ describe('createZitadelAdapter', () => {
 
     expect(error.status).toBe(401);
     expect(String(error.cause)).toContain('Invalid token:');
-    expect(database.consumed).toBe(0);
+    expect(database.queries).toHaveLength(0);
   });
 });

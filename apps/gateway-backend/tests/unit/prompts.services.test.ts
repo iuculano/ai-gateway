@@ -54,7 +54,7 @@ function promptRow(overrides: Record<string, unknown> = {}) {
  * The version query's PROJECTION, not the row.
  *
  * resolvePrompt selects `{ template: promptVersions.prompt }`, and the database
- * double hands back whatever it was scripted with untouched - it does not apply
+ * double hands back whatever response was arranged untouched - it does not apply
  * drizzle's field mapping. So the fixture has to be shaped like the projection
  * or the service reads undefined.
  */
@@ -62,7 +62,7 @@ function versionRow(template: string) {
   return { template };
 }
 
-// --- the failure matrix ------------------------------------------------------
+// The failure matrix
 //
 // Five codes, so this earns the `satisfies` table: adding a variant to
 // ResolvePromptFailure without a scenario here stops compiling.
@@ -77,28 +77,30 @@ const scenarios = {
 
   PROMPT_NOT_FOUND: {
     run: () => {
-      database.script(rows()); // no prompt by that name in this organization
+      database.respondTo('select', 'prompts', rows());
       return asCaller(() => Services.resolvePrompt({ name: 'support-triage' }));
     },
   },
 
   PROMPT_NO_ACTIVE_VERSION: {
     run: () => {
-      database.script(rows(promptRow({ active_version: null })));
+      database.respondTo('select', 'prompts', rows(promptRow({ active_version: null })));
       return asCaller(() => Services.resolvePrompt({ name: 'support-triage' }));
     },
   },
 
   PROMPT_VERSION_NOT_FOUND: {
     run: () => {
-      database.script(rows(promptRow()), rows()); // the prompt exists, v9 does not
+      database.respondTo('select', 'prompts', rows(promptRow()));
+      database.respondTo('select', 'prompt_versions', rows());
       return asCaller(() => Services.resolvePrompt({ name: 'support-triage', version: 9 }));
     },
   },
 
   PROMPT_VARIABLES_MISSING: {
     run: () => {
-      database.script(rows(promptRow()), rows(versionRow('Hello {{ customer_name }}')));
+      database.respondTo('select', 'prompts', rows(promptRow()));
+      database.respondTo('select', 'prompt_versions', rows(versionRow('Hello {{ customer_name }}')));
       return asCaller(() => Services.resolvePrompt({ name: 'support-triage' }));
     },
   },
@@ -147,8 +149,10 @@ test('resolvePrompt refuses rather than sending an unfilled tag to the model', a
 });
 
 test('resolvePrompt renders the active version, built-ins included', async () => {
-  database.script(
-    rows(promptRow()),
+  database.respondTo('select', 'prompts', rows(promptRow()));
+  database.respondTo(
+    'select',
+    'prompt_versions',
     rows(versionRow('{{ aig.prompt_name }} v{{ aig.prompt_version }} for {{ aig.organization_name }}: {{ topic }}')),
   );
 
@@ -163,7 +167,8 @@ test('resolvePrompt renders the active version, built-ins included', async () =>
 });
 
 test('resolvePrompt honours a pinned version over the active one', async () => {
-  database.script(rows(promptRow({ active_version: 3 })), rows(versionRow('pinned')));
+  database.respondTo('select', 'prompts', rows(promptRow({ active_version: 3 })));
+  database.respondTo('select', 'prompt_versions', rows(versionRow('pinned')));
 
   const resolved = expectOk(await asCaller(() => Services.resolvePrompt({ name: 'support-triage', version: 1 })));
 
@@ -175,7 +180,8 @@ test('resolvePrompt honours a pinned version over the active one', async () => {
 // An input whose value looks like a tag must not be rescanned - the property
 // that stops a caller reaching a built-in through a variable.
 test('resolvePrompt does not rescan substituted values', async () => {
-  database.script(rows(promptRow()), rows(versionRow('{{ topic }}')));
+  database.respondTo('select', 'prompts', rows(promptRow()));
+  database.respondTo('select', 'prompt_versions', rows(versionRow('{{ topic }}')));
 
   const resolved = expectOk(
     await asCaller(() =>

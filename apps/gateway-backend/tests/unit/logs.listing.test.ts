@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { database, installModuleMocks, logRow, resetDoubles, rows } from './doubles';
+import { database, forCaller, installModuleMocks, logRow, resetDoubles, rows } from './doubles';
 
 /**
  * listLogs, which pages in both directions.
@@ -14,7 +14,7 @@ import { database, installModuleMocks, logRow, resetDoubles, rows } from './doub
 
 await installModuleMocks();
 
-const { default: Services } = await import('../../src/api/logs/logs.services');
+const Services = forCaller((await import('../../src/api/logs/logs.services')).default);
 
 // Descending ids, so "newest first" is legible in the fixtures.
 const ID_20 = '01912d3f-0000-7000-8000-000000000020';
@@ -30,7 +30,7 @@ describe('paging forwards', () => {
   test('returns newest first and trims the probe row', async () => {
     // Three rows for a limit of two: the third exists only so more_data can be
     // answered without a second count query.
-    database.script(rows(logRow({ id: ID_20 }), logRow({ id: ID_19 }), logRow({ id: ID_18 })));
+    database.respondTo('select', 'logs', rows(logRow({ id: ID_20 }), logRow({ id: ID_19 }), logRow({ id: ID_18 })));
 
     const page = await Services.listLogs({ limit: 2 });
 
@@ -39,7 +39,7 @@ describe('paging forwards', () => {
   });
 
   test('reports both ends of the page, because this endpoint pages both ways', async () => {
-    database.script(rows(logRow({ id: ID_20 }), logRow({ id: ID_19 })));
+    database.respondTo('select', 'logs', rows(logRow({ id: ID_20 }), logRow({ id: ID_19 })));
 
     const page = await Services.listLogs({ limit: 2 });
 
@@ -48,7 +48,7 @@ describe('paging forwards', () => {
   });
 
   test('an empty result carries null cursors rather than undefined', async () => {
-    database.script(rows());
+    database.respondTo('select', 'logs', rows());
 
     const page = await Services.listLogs({ limit: 20 });
 
@@ -61,7 +61,7 @@ describe('paging backwards', () => {
   test('undoes the ascending scan so the page reads newest-first again', async () => {
     // before_id scans ASC to reach the adjacent rows, so the driver hands them
     // back oldest-first. The response must not.
-    database.script(rows(logRow({ id: ID_18 }), logRow({ id: ID_19 }), logRow({ id: ID_20 })));
+    database.respondTo('select', 'logs', rows(logRow({ id: ID_18 }), logRow({ id: ID_19 }), logRow({ id: ID_20 })));
 
     const page = await Services.listLogs({ limit: 3, before_id: ID_17 });
 
@@ -73,7 +73,9 @@ describe('paging backwards', () => {
     // order - the furthest from the cursor - so trimming first keeps 18,19,20
     // contiguous. Reversing first would drop 18 and leave a gap next to the
     // cursor, which is the bug the source comment works through.
-    database.script(
+    database.respondTo(
+      'select',
+      'logs',
       rows(
         logRow({ id: ID_18 }),
         logRow({ id: ID_19 }),
@@ -89,7 +91,7 @@ describe('paging backwards', () => {
   });
 
   test('cursors describe the reversed page, not the scan order', async () => {
-    database.script(rows(logRow({ id: ID_18 }), logRow({ id: ID_19 })));
+    database.respondTo('select', 'logs', rows(logRow({ id: ID_18 }), logRow({ id: ID_19 })));
 
     const page = await Services.listLogs({ limit: 2, before_id: ID_17 });
 
@@ -102,7 +104,7 @@ describe('paging backwards', () => {
 
 describe('filters', () => {
   test('accepts every filter at once without disturbing the shape', async () => {
-    database.script(rows(logRow({ id: ID_20 })));
+    database.respondTo('select', 'logs', rows(logRow({ id: ID_20 })));
 
     const page = await Services.listLogs({
       limit: 20,
@@ -120,7 +122,9 @@ describe('filters', () => {
   test('rows come back in the derived shape, not raw', async () => {
     // has_request / has_response are derived from the key columns, and the key
     // columns themselves must not reach the caller.
-    database.script(
+    database.respondTo(
+      'select',
+      'logs',
       rows(logRow({ id: ID_20, request_object_reference: 'logs/x/request.json.zst', response_object_reference: null })),
     );
 

@@ -1,7 +1,16 @@
-import { mock } from 'bun:test';
+import { afterEach, mock } from 'bun:test';
 import type { apiKeys, logs, models, webhooks } from '@repo/drizzle/schemas';
 import type { Caller } from '@repo/hono';
-import { createDatabaseDouble, failsWith, KEY_ID, ORGANIZATION_ID, rows, type Step, USER_ID } from '@repo/test-helpers';
+import {
+  createDatabaseDouble,
+  type DatabaseQuery,
+  type DatabaseResponse,
+  failsWith,
+  KEY_ID,
+  ORGANIZATION_ID,
+  rows,
+  USER_ID,
+} from '@repo/test-helpers';
 
 /**
  * The stand-ins the unit tier runs against.
@@ -11,9 +20,7 @@ import { createDatabaseDouble, failsWith, KEY_ID, ORGANIZATION_ID, rows, type St
  * postgres or redis for real.
  */
 
-// --- database ----------------------------------------------------------------
-
-export type { Step };
+// Database
 
 export { failsWith, rows };
 
@@ -21,7 +28,38 @@ const { database, db: scopedDb } = createDatabaseDouble();
 
 export { database };
 
-// --- redis -------------------------------------------------------------------
+afterEach(() => {
+  database.assertResponsesConsumed();
+});
+
+let runWithRealCaller: typeof import('@repo/hono').runWithCaller | undefined;
+
+/**
+ * Binds a public service object to the real request context implementation.
+ *
+ * Service tests can stay terse without replacing our own `@repo/hono` module.
+ * Every method still executes through AsyncLocalStorage exactly as it does from
+ * a handler, while only the process boundaries below are faked.
+ */
+export function forCaller<T extends object>(services: T, caller: Caller = callerFixture): T {
+  const run = runWithRealCaller;
+  if (!run) {
+    throw new Error('installModuleMocks() must run before binding caller-scoped services');
+  }
+
+  return new Proxy(services, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') {
+        return value;
+      }
+
+      return (...args: unknown[]) => run(caller, () => Reflect.apply(value, target, args));
+    },
+  });
+}
+
+// Redis
 
 export const cache = {
   /** Keyed by api key id: the usage hash as redis would hand it back. */
@@ -44,12 +82,32 @@ export const cache = {
   },
 };
 
+/** The Redis EVAL boundary used by the real fixed-window rate limiter. */
+export const fixedWindow = {
+  result: [1, 1, 60_000] as [count: number, remaining: number, pttl: number],
+  calls: [] as { keys: string[]; arguments: string[] }[],
+
+  reset() {
+    fixedWindow.result = [1, 1, 60_000];
+    fixedWindow.calls = [];
+  },
+};
+
 /** `api-keys:usage:<id>` and `api-keys:quota:<id>` both end in the id. */
 function idFromKey(key: string): string {
   return key.split(':').at(-1) ?? '';
 }
 
 const redis = {
+  async eval(_script: string, options: { keys: string[]; arguments: string[] }) {
+    if (cache.failure) {
+      throw cache.failure;
+    }
+
+    fixedWindow.calls.push(options);
+    return fixedWindow.result;
+  },
+
   multi() {
     const keys: string[] = [];
 
@@ -102,160 +160,122 @@ const redis = {
   },
 };
 
-// --- audit logs --------------------------------------------------------------
+// Owned services observed at their database boundary
 
-export const audit = {
-  // biome-ignore lint/suspicious/noExplicitAny: the audit body shape is the service's to know, not this file's
-  calls: [] as { body: any; transactional: boolean }[],
+function queryCall(query: DatabaseQuery, method: string): unknown[] | undefined {
+  return query.calls.find((call) => call.method === method)?.args;
+}
 
-  /** Set to make every write reject. */
-  failure: null as Error | null,
+function writesTo(table: string, operation: 'insert' | 'update'): DatabaseQuery[] {
+  return database.queriesFor(operation, table);
+}
 
-  /**
-   * Send writes to the real service instead of recording them.
-   *
-   * For audit-logs' own suite. mock.module replaces a module for the whole
-   * process and cannot be undone by a later file, so which behaviour is wanted
-   * has to be decided per test rather than per installation - bun loads the
-   * test files in an order no single file controls.
-   */
-  passthrough: false,
+/**
+ * Observations of the REAL audit service's inserts.
+ *
+ * This intentionally resembles the old capture API so assertions stay terse,
+ * but nothing here replaces an owned module. `createAuditLog` runs normally;
+ * these values come from the Drizzle boundary it reached.
+ */
+export const auditWrites = {
+  get calls(): { body: Record<string, unknown>; transactional: boolean }[] {
+    return writesTo('audit_logs', 'insert').map((query) => ({
+      body: (queryCall(query, 'values')?.[0] ?? {}) as Record<string, unknown>,
+      transactional: query.transaction !== null,
+    }));
+  },
 
-  reset() {
-    audit.calls = [];
-    audit.failure = null;
-    audit.passthrough = false;
+  failNext(error: Error) {
+    database.respondTo('insert', 'audit_logs', failsWith(error));
   },
 };
 
-/**
- * Builds the audit stand-in around a copy of the real service.
- *
- * A shallow copy rather than a reference to the module: mock.module rebinds the
- * module's exports for everyone holding them, so reading
- * `actualModule.default.createAuditLog` at call time would find this file's own
- * stand-in and recurse until the stack gave out. Copying while the originals
- * are still the originals is what avoids that.
- */
-function buildAuditLogServices(real: RealAuditLogServices) {
-  return {
-    // The reads stay real - only the write is worth standing in for, and a
-    // suite testing this module needs the rest of it intact.
-    ...real,
-
-    async createAuditLog(body: unknown, executor?: unknown) {
-      if (audit.passthrough) {
-        // biome-ignore lint/suspicious/noExplicitAny: handing the real signature straight back through
-        return real.createAuditLog(body as any, executor as any);
-      }
-
-      audit.calls.push({ body, transactional: executor !== undefined });
-
-      if (audit.failure) {
-        throw audit.failure;
-      }
-
-      return body;
-    },
-  };
+function persistedAuditRow(query: DatabaseQuery): DatabaseResponse {
+  const values = (queryCall(query, 'values')?.[0] ?? {}) as Record<string, unknown>;
+  return rows({
+    id: AUDIT_ID,
+    ...values,
+    actor_id: values.actor_id ?? null,
+    target_type: values.target_type ?? null,
+    target_id: values.target_id ?? null,
+    difference: values.difference ?? null,
+    metadata: values.metadata ?? null,
+    request_id: values.request_id ?? null,
+    ip: values.ip ?? null,
+    user_agent: values.user_agent ?? null,
+    occurred_at: values.occurred_at ?? new Date('2026-01-01T00:00:00.000Z'),
+    created_at: new Date('2026-01-01T00:00:00.000Z'),
+  });
 }
 
-type RealAuditLogServices = typeof import('../../src/api/audit-logs/audit-logs.services')['default'];
-
-// --- log lifecycle -----------------------------------------------------------
-
 /**
- * The inference path's writes to logs.services, captured instead of performed.
+ * Observations of the REAL log lifecycle service's database writes.
  *
- * Passthrough by default, unlike `audit`. Most suites - logs.test.ts above all -
- * want the real functions, and only the chat-completions suite wants to watch
- * them without running them. Standing them in unconditionally is what forced
- * this package onto --isolate: mock.module is process-wide, so one suite's
- * three-function stand-in became every suite's entire logs module.
+ * The chat suite installs the defaults explicitly. Other log-service tests are
+ * free to configure their own insert/update outcomes.
  */
-export const logCapture = {
-  started: [] as { organizationId: string; entry: unknown }[],
-  completed: [] as { organizationId: string; id: string; entry: Record<string, unknown> }[],
-  failed: [] as { organizationId: string; id: string; entry: Record<string, unknown> }[],
+export const logWrites = {
+  installDefaults() {
+    database.defaultResponse('insert', 'logs', rows({ id: LOG_ID }));
+    database.defaultResponse('update', 'logs', rows());
+  },
 
-  /** True runs the real implementation; false records the call and returns. */
-  passthrough: true,
+  failNextStart(error: Error) {
+    database.respondTo('insert', 'logs', failsWith(error));
+  },
 
-  /**
-   * Set one to make that entry point reject, which is what an unreachable log
-   * store looks like from the inference path.
-   *
-   * Every caller there swallows the failure on purpose - a completion that has
-   * been generated and paid for should not be withheld because its record
-   * could not be written - so these are the only way to reach those branches.
-   * Ignored while `passthrough` is on.
-   */
-  startFailure: null as Error | null,
-  completeFailure: null as Error | null,
-  failFailure: null as Error | null,
+  failNextFinish(error: Error) {
+    database.respondTo('update', 'logs', failsWith(error));
+  },
 
-  reset() {
-    logCapture.started = [];
-    logCapture.completed = [];
-    logCapture.failed = [];
-    logCapture.passthrough = true;
-    logCapture.startFailure = null;
-    logCapture.completeFailure = null;
-    logCapture.failFailure = null;
+  get started(): { organizationId: string; entry: Record<string, unknown> }[] {
+    return writesTo('logs', 'insert').map((query) => {
+      const values = { ...((queryCall(query, 'values')?.[0] ?? {}) as Record<string, unknown>) };
+      const organizationId = String(values.organization_id);
+      delete values.organization_id;
+      delete values.status;
+      return { organizationId, entry: values };
+    });
+  },
+
+  get completed(): { organizationId: string; id: string; entry: Record<string, unknown> }[] {
+    return writesTo('logs', 'update').flatMap((query) => {
+      const values = { ...((queryCall(query, 'set')?.[0] ?? {}) as Record<string, unknown>) };
+      if (values.status !== 'complete') {
+        return [];
+      }
+
+      const requestReference = values.request_object_reference;
+      const responseReference = values.response_object_reference;
+      if (typeof requestReference === 'string') {
+        values.request = objects.stored[requestReference];
+      }
+      if (typeof responseReference === 'string') {
+        values.response = objects.stored[responseReference];
+      }
+
+      return [{ organizationId: ORGANIZATION_ID, id: LOG_ID, entry: values }];
+    });
+  },
+
+  get failed(): { organizationId: string; id: string; entry: Record<string, unknown> }[] {
+    return writesTo('logs', 'update').flatMap((query) => {
+      const values = { ...((queryCall(query, 'set')?.[0] ?? {}) as Record<string, unknown>) };
+      if (values.status !== 'failed') {
+        return [];
+      }
+
+      const requestReference = values.request_object_reference;
+      if (typeof requestReference === 'string') {
+        values.request = objects.stored[requestReference];
+      }
+
+      return [{ organizationId: ORGANIZATION_ID, id: LOG_ID, entry: values }];
+    });
   },
 };
 
-type RealLogServices = typeof import('../../src/api/logs/logs.services')['default'];
-
-/** Same copy-then-wrap shape as buildAuditLogServices, for the same reason. */
-function buildLogServices(real: RealLogServices) {
-  return {
-    ...real,
-
-    async startLog(organizationId: string, entry: never) {
-      if (logCapture.passthrough) {
-        return real.startLog(organizationId, entry);
-      }
-
-      logCapture.started.push({ organizationId, entry });
-
-      if (logCapture.startFailure) {
-        throw logCapture.startFailure;
-      }
-
-      // Read here rather than in the object literal above: LOG_ID is declared
-      // further down this file, so an initializer would hit the temporal dead
-      // zone. A function body is evaluated at call time and does not.
-      return LOG_ID;
-    },
-
-    async completeLog(organizationId: string, id: string, entry: never) {
-      if (logCapture.passthrough) {
-        return real.completeLog(organizationId, id, entry);
-      }
-
-      logCapture.completed.push({ organizationId, id, entry });
-
-      if (logCapture.completeFailure) {
-        throw logCapture.completeFailure;
-      }
-    },
-
-    async failLog(organizationId: string, id: string, entry: never) {
-      if (logCapture.passthrough) {
-        return real.failLog(organizationId, id, entry);
-      }
-
-      logCapture.failed.push({ organizationId, id, entry });
-
-      if (logCapture.failFailure) {
-        throw logCapture.failFailure;
-      }
-    },
-  };
-}
-
-// --- object storage ----------------------------------------------------------
+// Object storage
 
 export const objects = {
   /** Stored payloads, keyed by object key. An absent key reads back as null. */
@@ -324,7 +344,7 @@ const objectStorage = {
   },
 };
 
-// --- installation ------------------------------------------------------------
+// Installation
 
 /**
  * Replaces the modules that talk to something outside this process.
@@ -338,10 +358,9 @@ const objectStorage = {
  * Must run before the module under test is imported, which is why the test
  * files import their subject with a dynamic import after awaiting this.
  *
- * The audit specifier is resolved relative to THIS file, not to the service
- * that imports it - so moving this file changes what gets mocked, silently and
- * with no error. That is why it is spelled out from tests/unit rather than as
- * the '../audit-logs/audit-logs.services' the service itself writes.
+ * Application services stay real. Only process boundaries are replaced here,
+ * so refactoring a service import cannot silently bypass the behavior a test
+ * means to exercise.
  */
 export async function installModuleMocks() {
   // Imported for real so the mocks below can be partial ones. mock.module()
@@ -352,37 +371,17 @@ export async function installModuleMocks() {
   // happened to load it after this ran.
   //
   // Safe to import: drizzle's client is a lazy Proxy that connects on first
-  // use, and the audit service only reaches for it when called.
+  // use.
   const actualDrizzle = await import('@repo/drizzle');
   const actualHono = await import('@repo/hono');
-  const realAuditLogServices = { ...(await import('../../src/api/audit-logs/audit-logs.services')).default };
-  const auditLogServices = buildAuditLogServices(realAuditLogServices);
-  const realLogServices = { ...(await import('../../src/api/logs/logs.services')).default };
-  const logServices = buildLogServices(realLogServices);
-
+  runWithRealCaller = actualHono.runWithCaller;
   mock.module('@repo/drizzle', () => ({
     // Everything real by default - the condition builders included, since
-    // nothing here inspects what they return. Only the four entry points that
-    // would open a connection are replaced.
+    // nothing here inspects what they return. Only the client object that
+    // would open a connection is replaced.
     ...actualDrizzle,
 
     db: scopedDb,
-  }));
-
-  // Read-only service tests historically did not need an ambient caller because
-  // the database supplied the organization filter. They do now.
-  // Preserve an explicitly bound caller when a test provides one and otherwise
-  // use the standard fixture so those tests remain focused on their result
-  // handling rather than AsyncLocalStorage setup.
-  mock.module('@repo/hono', () => ({
-    ...actualHono,
-    getCaller: () => {
-      try {
-        return actualHono.getCaller();
-      } catch {
-        return callerFixture;
-      }
-    },
   }));
 
   // Spread like drizzle now that importing @repo/redis no longer connects.
@@ -407,9 +406,6 @@ export async function installModuleMocks() {
     objectStorage,
     createObjectStorage: notStubbed('createObjectStorage'),
   }));
-
-  mock.module('../../src/api/audit-logs/audit-logs.services', () => ({ default: auditLogServices }));
-  mock.module('../../src/api/logs/logs.services', () => ({ default: logServices }));
 }
 
 function notStubbed(name: string) {
@@ -420,10 +416,10 @@ function notStubbed(name: string) {
 
 export function resetDoubles() {
   database.reset();
+  database.defaultResponse('insert', 'audit_logs', persistedAuditRow);
   cache.reset();
-  audit.reset();
+  fixedWindow.reset();
   objects.reset();
-  logCapture.reset();
 
   // The caller is a shared mutable object and suites reassign its scopes to
   // exercise refusals. Without restoring it, a grant made by one file is still
@@ -432,7 +428,7 @@ export function resetDoubles() {
   callerFixture.permissions = { scopes: [...BASE_CALLER_SCOPES] };
 }
 
-// --- fixtures ----------------------------------------------------------------
+// Fixtures
 
 /**
  * Overrides for a row fixture: the table's own column names, any value.
@@ -451,6 +447,7 @@ export { KEY_ID, ORGANIZATION_ID, USER_ID };
 export const WEBHOOK_ID = '01912d3f-9b4a-7c3d-8e2f-000000000005';
 export const MODEL_ID = '01912d3f-9b4a-7c3d-8e2f-000000000006';
 export const LOG_ID = '01912d3f-9b4a-7c3d-8e2f-000000000007';
+export const AUDIT_ID = '01912d3f-9b4a-7c3d-8e2f-00000000000a';
 
 /** A stored row, as a select would hand it back. */
 export function apiKeyRow(overrides: RowOverrides<typeof apiKeys.$inferSelect> = {}) {
