@@ -97,12 +97,17 @@ function resolveScopes(
   userInfo: ZitadelUserInfo,
   roleScopesMap: Record<string, string[]>,
 ): string[] {
+  // If there's no role mapping, try to grab the scopes from the token itself.
+  if (Object.keys(roleScopesMap).length === 0) {
+    return normalizeScopes(payload.scope);
+  }
+
+  // Try to grab them from the access token first, then fall back to the
+  // userinfo response. Zitadel needs an option set to put them on the token.
   const tokenRoles = normalizeRoles(payload[CLAIMS.roles]);
   const roles = tokenRoles.length > 0 ? tokenRoles : normalizeRoles(userInfo[CLAIMS.roles]);
 
-  const scopes = new Set([...normalizeScopes(payload.scope), ...rolesToScopes(roles, roleScopesMap)]);
-
-  return [...scopes];
+  return rolesToScopes(roles, roleScopesMap);
 }
 
 /**
