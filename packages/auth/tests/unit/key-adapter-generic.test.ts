@@ -17,7 +17,7 @@ import {
 
 await installAuthMocks();
 
-const { createGenericKeyAdapter } = await import('../../src/adapters/key-adapter-generic');
+const { createGenericKeyAdapter } = await import('../../index');
 
 const VALID_KEY = `aik_${'A'.repeat(60)}`;
 

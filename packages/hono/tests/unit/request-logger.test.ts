@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { logger as rootLogger } from '@repo/core';
 import { Hono } from 'hono';
-import { errorHandler } from '../../src/middleware/error-handler';
-import { requestLogger } from '../../src/middleware/request-logger';
+import { errorHandler, requestLogger } from '../../index';
 import { createTestLogger } from './fixtures';
 
 const spies: Array<{ mockRestore(): void }> = [];

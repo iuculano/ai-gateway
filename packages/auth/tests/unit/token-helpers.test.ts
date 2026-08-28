@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { HTTPException } from 'hono/http-exception';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { fetchUserInfo, loadOpenIDProvider, verifyAccessToken } from '../../src/token-helpers';
+import { fetchUserInfo, loadOpenIDProvider, verifyAccessToken } from '../../index';
 
 const originalFetch = globalThis.fetch;
 

@@ -14,8 +14,7 @@ import {
 
 await installAuthMocks();
 
-const { getOrganization, resolveOrganization } = await import('../../src/organizations');
-const { getUserById, resolveUser } = await import('../../src/users');
+const { getOrganization, resolveOrganization, getUserById, resolveUser } = await import('../../index');
 
 beforeEach(resetDoubles);
 

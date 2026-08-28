@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { httpError } from '../../src/errors';
+import { httpError } from '../../index';
 
 describe('httpError', () => {
   test('accepts the minimal public error shape', () => {

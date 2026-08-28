@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import { z } from '@hono/zod-openapi';
-import { bearerSecurity, protectedRouteErrors, validatedProtectedRouteErrors } from '../../src/openapi/route-helpers';
-import { createSchema } from '../../src/util/schema';
+import { bearerSecurity, createSchema, protectedRouteErrors, validatedProtectedRouteErrors } from '../../index';
 
 test('createSchema preserves the exact object at runtime', () => {
   const schema = {

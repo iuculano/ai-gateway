@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
-import { traceContext } from '../../src/middleware/trace-context';
+import { traceContext } from '../../index';
 
 function traceApp() {
   const app = new Hono();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { probe, toPage } from '../../src/pagination';
+import { probe, toPage } from '../../index';
 
 describe('pagination', () => {
   test('probe requests exactly one row beyond the public limit', () => {

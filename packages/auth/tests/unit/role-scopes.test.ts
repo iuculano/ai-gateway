@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { rolesToScopes } from '../../src/role-scopes';
+import { rolesToScopes } from '../../index';
 
 describe('rolesToScopes', () => {
   test('expands known roles in role and mapping order', () => {

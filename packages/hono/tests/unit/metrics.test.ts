@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Hono } from 'hono';
-import { exposeMetrics, requestMetrics } from '../../src/middleware/metrics';
+import { exposeMetrics, requestMetrics } from '../../index';
 
 test('requestMetrics records status and normalized route labels for scraping', async () => {
   const app = new Hono();

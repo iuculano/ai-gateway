@@ -1,15 +1,15 @@
 import { expect, test } from 'bun:test';
 import { logger as rootLogger } from '@repo/core';
 import { Hono } from 'hono';
-import type { Caller } from '../../src/middleware/authenticate';
 import {
+  type Caller,
   callerContext,
   getAccountableUserId,
   getActorId,
   getCaller,
   getLogger,
   runWithCaller,
-} from '../../src/middleware/caller-context';
+} from '../../index';
 
 const common = {
   organization: { id: '01912d3f-9b4a-7c3d-8e2f-000000000001', name: 'acme' },

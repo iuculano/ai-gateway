@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseTags } from '../../src/parse-tags';
+import { parseTags } from '../../index';
 
 describe('parseTags', () => {
   test('returns undefined when no filter was supplied', () => {

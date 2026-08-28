@@ -1,8 +1,7 @@
 import { expect, test } from 'bun:test';
-import defaultLogger, { logger } from '../../src/pino';
+import { logger } from '../../index';
 
-test('exports one configured logger as both default and named values', () => {
-  expect(defaultLogger).toBe(logger);
+test('exports the configured logger through the package entry point', () => {
   expect(logger.level).toBe(process.env.LOG_LEVEL ?? 'info');
   expect(logger.bindings()).toMatchObject({
     'service.name': process.env.SERVICE_NAME ?? 'gateway-api',

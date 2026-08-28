@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from '@hono/zod-openapi';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { errorHandler, zodExceptionHook } from '../../src/middleware/error-handler';
+import { errorHandler, zodExceptionHook } from '../../index';
 import { createTestLogger } from './fixtures';
 
 function errorApp(throwError: () => never) {

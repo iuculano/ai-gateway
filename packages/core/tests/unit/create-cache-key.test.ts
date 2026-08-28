@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createCacheKey } from '../../src/create-cache-key';
+import { createCacheKey } from '../../index';
 
 describe('createCacheKey', () => {
   test('returns a deterministic prefixed SHA-256 key', () => {

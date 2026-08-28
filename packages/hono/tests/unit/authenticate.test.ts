@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import type { JWTAuthAdapter, KeyAuthAdapter } from '@repo/hono/auth-adapter';
 import { Hono } from 'hono';
 import { requestId } from 'hono/request-id';
-import { authenticate, type JWTAuthAdapter, type KeyAuthAdapter } from '../../src/middleware/authenticate';
-import { errorHandler } from '../../src/middleware/error-handler';
+import { authenticate, errorHandler } from '../../index';
 import { apiKeyIdentity, createTestLogger, userIdentity } from './fixtures';
 
 interface AdapterCalls {

@@ -5,7 +5,7 @@ import { database, installAuthMocks, ORGANIZATION_ID, organizationRow, resetDoub
 
 await installAuthMocks();
 
-const { createZitadelAdapter } = await import('../../src/adapters/jwt-adapter-zitadel');
+const { createZitadelAdapter } = await import('../../index');
 
 const ORGANIZATION_ID_CLAIM = 'urn:zitadel:iam:user:resourceowner:id';
 const ORGANIZATION_NAME_CLAIM = 'urn:zitadel:iam:user:resourceowner:name';
@@ -72,14 +72,13 @@ async function tokenFor(
   return token.sign(privateKey);
 }
 
-async function adapter() {
+async function adapter(
+  roleScopesMap: Record<string, string[]> = { admin: ['logs:write', 'logs:read'], viewer: ['logs:read'] },
+) {
   return createZitadelAdapter({
     issuer,
     audience: AUDIENCE,
-    roleScopesMap: {
-      admin: ['logs:write', 'logs:read'],
-      viewer: ['logs:read'],
-    },
+    roleScopesMap,
   });
 }
 
@@ -97,7 +96,7 @@ async function rejectedHttpException(promise: Promise<unknown>): Promise<HTTPExc
 }
 
 describe('createZitadelAdapter', () => {
-  test('verifies a real JWT and resolves a complete caller with deduplicated token-role grants', async () => {
+  test('verifies a real JWT and resolves a complete caller from its role grants', async () => {
     const token = await tokenFor({
       scope: 'openid logs:read',
       [ORGANIZATION_ID_CLAIM]: 'external-tenant-1',
@@ -131,7 +130,7 @@ describe('createZitadelAdapter', () => {
           lastName: 'Example',
         },
       },
-      permissions: { scopes: ['openid', 'logs:read', 'logs:write'] },
+      permissions: { scopes: ['logs:write', 'logs:read'] },
     });
     expect(database.consumed).toBe(2);
   });
@@ -151,10 +150,70 @@ describe('createZitadelAdapter', () => {
     const authenticate = await adapter();
     const caller = await authenticate({ token, request: {} });
 
-    expect(caller.permissions.scopes).toEqual(['openid', 'logs:read']);
+    expect(caller.permissions.scopes).toEqual(['logs:read']);
     expect(caller.actor).toMatchObject({
       user: { email: 'alex', displayName: undefined, firstName: undefined, lastName: undefined },
     });
+  });
+
+  // The regression guard for a token asserting its own permissions. The scope
+  // claim mirrors the authorization request, and the browser client is public,
+  // so a scope a role did not grant must never reach the Caller.
+  test('ignores the token scope claim entirely while a role mapping is configured', async () => {
+    const token = await tokenFor({
+      scope: 'openid api-keys:write logs:write',
+      [ORGANIZATION_ID_CLAIM]: 'external-tenant-1',
+      [ROLES_CLAIM]: { viewer: { 'external-tenant-1': issuer } },
+    });
+    userInfoByToken.set(token, {
+      sub: 'external-user-1',
+      preferred_username: 'alex',
+    });
+    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+
+    const authenticate = await adapter();
+    const caller = await authenticate({ token, request: {} });
+
+    // `viewer` grants logs:read and nothing else.
+    expect(caller.permissions.scopes).toEqual(['logs:read']);
+    expect(caller.permissions.scopes).not.toContain('api-keys:write');
+    expect(caller.permissions.scopes).not.toContain('logs:write');
+  });
+
+  test("grants nothing when a configured mapping does not cover the caller's roles", async () => {
+    const token = await tokenFor({
+      scope: 'openid logs:write',
+      [ORGANIZATION_ID_CLAIM]: 'external-tenant-1',
+      [ROLES_CLAIM]: { unmapped: { 'external-tenant-1': issuer } },
+    });
+    userInfoByToken.set(token, {
+      sub: 'external-user-1',
+      preferred_username: 'alex',
+    });
+    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+
+    const authenticate = await adapter();
+    const caller = await authenticate({ token, request: {} });
+
+    expect(caller.permissions.scopes).toEqual([]);
+  });
+
+  test('falls back to the token scope claim only when the mapping is empty', async () => {
+    const token = await tokenFor({
+      scope: 'openid logs:read',
+      [ORGANIZATION_ID_CLAIM]: 'external-tenant-1',
+      [ROLES_CLAIM]: { admin: { 'external-tenant-1': issuer } },
+    });
+    userInfoByToken.set(token, {
+      sub: 'external-user-1',
+      preferred_username: 'alex',
+    });
+    database.script(rows({ id: USER_ID, status: 'active' }), rows(organizationRow()));
+
+    const authenticate = await adapter({});
+    const caller = await authenticate({ token, request: {} });
+
+    expect(caller.permissions.scopes).toEqual(['openid', 'logs:read']);
   });
 
   test('rejects missing or mistyped tenant and subject claims before identity lookups', async () => {

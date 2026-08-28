@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeRoles, normalizeScopes } from '../../src/claim-mappings';
+import { normalizeRoles, normalizeScopes } from '../../index';
 
 describe('normalizeScopes', () => {
   test('splits a space-delimited scope claim and removes empty segments', () => {

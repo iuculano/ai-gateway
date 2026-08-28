@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type S3FileApi, S3ObjectStorageClient } from '../../src/object-storage-s3';
+import { type S3FileApi, S3ObjectStorageClient } from '../../index';
 
 /**
  * The adapter's own logic, which is almost entirely error classification.

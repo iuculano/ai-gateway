@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
-import type { Caller } from '../../src/middleware/authenticate';
-import { type AuthorizeOptions, authorize } from '../../src/middleware/authorize';
-import { errorHandler } from '../../src/middleware/error-handler';
+import { type AuthorizeOptions, authorize, type Caller, errorHandler } from '../../index';
 import { apiKeyCaller, createTestLogger, userCaller } from './fixtures';
 
 function authorizedApp(caller: Caller | undefined, options?: AuthorizeOptions) {

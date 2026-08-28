@@ -13,7 +13,7 @@ import { describe, expect, test } from 'bun:test';
  * quietly coming back for `test`.
  */
 
-const MODULE = new URL('../../src/pino.ts', import.meta.url).pathname;
+const MODULE = new URL('../../index.ts', import.meta.url).pathname;
 
 async function logFrom(nodeEnv: string): Promise<{ stdout: string; exitCode: number }> {
   const proc = Bun.spawn(

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { diffFields } from '../../src/diff';
+import { diffFields } from '../../index';
 
 interface Row extends Record<string, unknown> {
   name: string;
