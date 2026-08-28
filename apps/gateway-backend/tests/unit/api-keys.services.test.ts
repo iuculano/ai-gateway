@@ -108,7 +108,7 @@ test('updateApiKey returns Ok and audits the difference', async () => {
     target_id: KEY_ID,
     difference: { name: { old: 'ci', new: 'renamed' } },
   });
-  expect(cache.deleted).toEqual([`api-keys:auth:v1:${'a'.repeat(64)}`]);
+  expect(cache.deleted).toEqual([]);
 });
 
 test('updateApiKey returns Ok for a no-op and writes nothing', async () => {
@@ -190,7 +190,7 @@ test('updateApiKey allows a limit change on a key that already has a window', as
   const updated = expectOk(await update({ rate_limit_requests: 100 }));
 
   expect(updated.rate_limit_requests).toBe(100);
-  expect(cache.deleted).toEqual([`api-keys:quota:${KEY_ID}`, `api-keys:auth:v1:${'a'.repeat(64)}`]);
+  expect(cache.deleted).toEqual([`api-keys:quota:${KEY_ID}`]);
 });
 
 test('updateApiKey rolls the database change back when its quota reset fails', async () => {
@@ -212,7 +212,7 @@ test('updateApiKey leaves the quota window intact for unrelated changes', async 
   );
 
   expect(expectOk(await update({ name: 'renamed' })).name).toBe('renamed');
-  expect(cache.deleted).toEqual([`api-keys:auth:v1:${'a'.repeat(64)}`]);
+  expect(cache.deleted).toEqual([]);
 });
 
 test('updateApiKey leaves the quota window intact for a no-op policy patch', async () => {
@@ -269,6 +269,14 @@ test('the pair is accepted when both halves are present', () => {
 test('a key with no limit at all still needs no window', () => {
   // Unlimited is the ordinary case and must stay the easy one.
   expect(Schemas.createApiKey.body.safeParse({ name: 'ci' }).success).toBe(true);
+});
+
+test('allowed IPs are not writable until authentication enforces them', () => {
+  const createBody = Schemas.createApiKey.body.parse({ name: 'ci', allowed_ips: ['10.0.0.0/8'] });
+  const updateBody = Schemas.updateApiKey.body.parse({ allowed_ips: ['10.0.0.0/8'] });
+
+  expect(createBody).not.toHaveProperty('allowed_ips');
+  expect(updateBody).not.toHaveProperty('allowed_ips');
 });
 
 test('createApiKey returns Ok with the plaintext key exactly once', async () => {
@@ -338,7 +346,7 @@ test('revokeApiKey returns Ok and records what changed', async () => {
       revoked_by: { old: null, new: USER_ID },
     },
   });
-  expect(cache.deleted).toEqual([`api-keys:auth:v1:${'a'.repeat(64)}`]);
+  expect(cache.deleted).toEqual([]);
 });
 
 test('revokeApiKey is idempotent for an already revoked key', async () => {

@@ -24,7 +24,6 @@ const environmentSchema = z.object({
   REDIS_URL: z.url().default('redis://localhost:6379'),
   REDIS_PASSWORD: z.string().optional(),
   REDIS_USERNAME: z.string().optional(),
-  API_KEY_AUTH_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(60),
 
   IDENTITY_PROVIDER_TOKEN_ISSUER: z.url(),
   IDENTITY_PROVIDER_TOKEN_AUDIENCE: z.string().min(1),

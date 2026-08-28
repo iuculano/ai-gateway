@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
 import { HTTPException } from 'hono/http-exception';
 import {
   apiKeyRow,
-  authCache,
   database,
   installAuthMocks,
   KEY_ID,
@@ -41,29 +39,55 @@ function authenticate(key = VALID_KEY) {
 }
 
 interface KeyLookup {
-  key: Record<string, unknown> | null;
-  organization?: Record<string, unknown> | null;
-  owner?: Record<string, unknown> | null;
+  key: ReturnType<typeof apiKeyRow> | null;
+  organization?: ReturnType<typeof organizationRow> | null;
+  owner?: ReturnType<typeof userRow> | null;
 }
 
 function arrangeKeyLookup(lookup: KeyLookup): void {
-  database.respondTo('select', 'api_keys', lookup.key === null ? rows() : rows(lookup.key));
-
-  if ('organization' in lookup) {
-    database.respondTo('select', 'organizations', lookup.organization === null ? rows() : rows(lookup.organization));
+  const { key } = lookup;
+  const organization = lookup.organization === undefined ? organizationRow() : lookup.organization;
+  if (!key || !organization) {
+    database.respondTo('select', 'api_keys', rows());
+    return;
   }
 
-  if ('owner' in lookup) {
-    database.respondTo('select', 'users', lookup.owner === null ? rows() : rows(lookup.owner));
-  }
+  const owner = lookup.owner === undefined ? (key.creator_id ? userRow() : null) : lookup.owner;
+  database.respondTo(
+    'select',
+    'api_keys',
+    rows({
+      apiKey: {
+        id: key.id,
+        organizationId: key.organization_id,
+        name: key.name,
+        creatorId: key.creator_id,
+        scopes: key.scopes,
+        rateLimitRequests: key.rate_limit_requests,
+        rateLimitWindow: key.rate_limit_window,
+        expiresAt: key.expires_at,
+        revokedAt: key.revoked_at,
+      },
+      organization: {
+        id: organization.id,
+        name: organization.name,
+        status: organization.status,
+      },
+      owner:
+        owner === null
+          ? null
+          : {
+              id: owner.id,
+              username: owner.username,
+              email: owner.email,
+              displayName: owner.name,
+              status: owner.status,
+            },
+    }),
+  );
 }
 
 describe('createGenericKeyAdapter', () => {
-  test('rejects invalid cache TTLs when the adapter is created', () => {
-    expect(() => createGenericKeyAdapter({ cacheTtlSeconds: -1 })).toThrow(RangeError);
-    expect(() => createGenericKeyAdapter({ cacheTtlSeconds: 1.5 })).toThrow(RangeError);
-  });
-
   test('rejects malformed keys before hashing, storage, or rate limiting', async () => {
     const error = await rejectedHttpException(authenticate('not-an-api-key'));
 
@@ -97,7 +121,7 @@ describe('createGenericKeyAdapter', () => {
     const cases = [
       {
         lookup: { key: apiKeyRow(), organization: null },
-        cause: 'Invalid API key: organization not found',
+        cause: 'Invalid API key: not found',
       },
       {
         lookup: { key: apiKeyRow(), organization: organizationRow({ status: 'suspended' }) },
@@ -148,62 +172,21 @@ describe('createGenericKeyAdapter', () => {
       permissions: { scopes: ['logs:read', 'logs:write'] },
     });
     expect(quota.calls).toEqual([]);
+    expect(database.queries).toHaveLength(1);
+    expect(database.queries[0]?.calls.map((call) => call.method)).toEqual([
+      'select',
+      'from',
+      'innerJoin',
+      'leftJoin',
+      'where',
+      'limit',
+    ]);
     expect(usage.pipelines).toEqual([
       [
         { method: 'hIncrBy', args: [`api-keys:usage:${KEY_ID}`, 'total_requests', 1] },
         { method: 'hSet', args: [`api-keys:usage:${KEY_ID}`, 'last_used_at', expect.any(Number)] },
       ],
     ]);
-  });
-
-  test('reuses a Redis authorization snapshot and skips all database reads on a cache hit', async () => {
-    arrangeKeyLookup({ key: apiKeyRow(), organization: organizationRow(), owner: userRow() });
-    const adapter = createGenericKeyAdapter({ cacheTtlSeconds: 60 });
-    const request = { key: VALID_KEY, request: { ipAddress: '203.0.113.8' } };
-
-    const first = await adapter(request);
-    const second = await adapter(request);
-
-    const hash = createHash('sha256').update(VALID_KEY).digest('hex');
-    const cacheKey = `api-keys:auth:v1:${hash}`;
-    expect(second).toEqual(first);
-    expect(database.queries).toHaveLength(3);
-    expect(authCache.gets).toEqual([cacheKey, cacheKey]);
-    expect(authCache.sets).toEqual([
-      {
-        key: cacheKey,
-        value: expect.any(String),
-        options: { expiration: { type: 'EX', value: 60 } },
-      },
-    ]);
-    expect(usage.pipelines).toHaveLength(2);
-  });
-
-  test('does not use an authorization snapshot after the API key expiry', async () => {
-    const expiresAt = new Date(Date.now() + 60_000);
-    arrangeKeyLookup({
-      key: apiKeyRow({ expires_at: expiresAt }),
-      organization: organizationRow(),
-      owner: userRow(),
-    });
-    const adapter = createGenericKeyAdapter({ cacheTtlSeconds: 60 });
-    const request = { key: VALID_KEY, request: { ipAddress: '203.0.113.8' } };
-
-    await adapter(request);
-
-    const [cacheKey, serialized] = [...authCache.values.entries()][0] ?? [];
-    if (!cacheKey || !serialized) {
-      throw new Error('Expected the first authentication to populate Redis');
-    }
-    const expired = JSON.parse(serialized);
-    expired.key.expiresAtMs = Date.now() - 1;
-    authCache.values.set(cacheKey, JSON.stringify(expired));
-    database.respondTo('select', 'api_keys', rows(apiKeyRow({ expires_at: new Date(Date.now() - 1) })));
-
-    const error = await rejectedHttpException(adapter(request));
-    expect(error.cause).toBe('Invalid API key: expired');
-    expect(authCache.deletes).toEqual([cacheKey]);
-    expect(usage.pipelines).toHaveLength(1);
   });
 
   test('enforces a configured fixed-window quota before recording usage', async () => {

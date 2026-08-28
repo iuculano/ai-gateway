@@ -14,10 +14,6 @@ import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant 
  */
 
 const authenticate = createGenericKeyAdapter({ keyPattern: /^aik_[a-zA-Z0-9]{60}$/ });
-const authenticateWithCache = createGenericKeyAdapter({
-  keyPattern: /^aik_[a-zA-Z0-9]{60}$/,
-  cacheTtlSeconds: 60,
-});
 
 let acme: Tenant;
 
@@ -42,10 +38,6 @@ async function issueKey(overrides: { scopes?: string; rate_limit_requests?: numb
 
 function authenticateKey(key: string, ipAddress = '127.0.0.1') {
   return authenticate({ key, request: { ipAddress } });
-}
-
-function authenticateCachedKey(key: string, ipAddress = '127.0.0.1') {
-  return authenticateWithCache({ key, request: { ipAddress } });
 }
 
 test('a valid key resolves to its organization, actor, and owner', async () => {
@@ -80,14 +72,28 @@ test('a revoked key is rejected', async () => {
   await expect(authenticateKey(key.key)).rejects.toMatchObject({ status: 401 });
 });
 
-test('revocation evicts an existing Redis authorization snapshot', async () => {
+test('service revocation is authoritative on the next authentication', async () => {
   const key = await issueKey();
-  await authenticateCachedKey(key.key);
+  await authenticateKey(key.key);
 
   const revoked = await runWithCaller(callerFor(acme, ['api-keys:write']), () => Services.revokeApiKey(key.id));
   expect(revoked.isOk()).toBe(true);
 
-  await expect(authenticateCachedKey(key.key)).rejects.toMatchObject({ status: 401 });
+  await expect(authenticateKey(key.key)).rejects.toMatchObject({ status: 401 });
+});
+
+test('scope updates are authoritative on the next authentication', async () => {
+  const key = await issueKey({ scopes: 'chat-completions:write' });
+  await expect(authenticateKey(key.key)).resolves.toMatchObject({
+    permissions: { scopes: ['chat-completions:write'] },
+  });
+
+  const updated = await runWithCaller(callerFor(acme, ['api-keys:write', 'logs:read']), () =>
+    Services.updateApiKey(key.id, { scopes: 'logs:read' }),
+  );
+  expect(updated.isOk()).toBe(true);
+
+  await expect(authenticateKey(key.key)).resolves.toMatchObject({ permissions: { scopes: ['logs:read'] } });
 });
 
 test('an expired key is rejected', async () => {

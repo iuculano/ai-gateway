@@ -63,6 +63,7 @@ const createApiKey = createSchema({
       updated_at: true, // server-generated
       creator_id: true, // supplied from the caller
       key_hash: true, // server-generated
+      allowed_ips: true, // TODO: Expose only after authentication enforces it.
       revoked_by: true, // supplied from the caller
       revoked_at: true, // server-generated
     })
@@ -97,6 +98,7 @@ const updateApiKey = createSchema({
       updated_at: true, // server-generated
       creator_id: true, // supplied from the caller
       key_hash: true, // server-generated
+      allowed_ips: true, // TODO: Expose only after authentication enforces it.
       revoked_by: true, // supplied from the caller
       revoked_at: true, // server-generated
     })

@@ -85,7 +85,7 @@ async function findOrganizationByExternalIdpId(issuer: string, id: string): Prom
 
 /**
  * Retrieves an organization by local id without applying authentication policy.
- * Callers such as the key adapter must decide how a non-active row is reported.
+ * Callers must decide how a non-active row is reported.
  */
 export async function getOrganization(id: string): Promise<Organization | null> {
   // biome-ignore format: looks nicer

@@ -34,9 +34,6 @@ async function findUserByExternalIdentity(issuer: string, externalId: string): P
 
 /**
  * Retrieves a user by local id.
- *
- * Full rows are read on every key-authentication attempt so a deleted owner is
- * rejected immediately. Profile caching belongs above this authorization gate.
  */
 export async function getUserById(id: string): Promise<User | null> {
   const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
