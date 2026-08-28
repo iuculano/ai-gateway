@@ -1,14 +1,10 @@
 # @repo/core
 
-Shared dependency-free application helpers, schemas, pagination utilities, and
-logging configuration for the AI gateway workspace.
+Small shared pieces with no home of their own.
 
 ## Tests
 
-The suite is hermetic and requires no external services:
-
 ```bash
-cd packages/core
-bun run test:unit
-bun run test:unit:coverage
+bun run --cwd packages/core test:unit
+bun run --cwd packages/core test:unit:coverage
 ```

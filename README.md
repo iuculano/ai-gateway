@@ -19,14 +19,16 @@ docker compose up --detach --wait postgres valkey minio
 # Drop the little helper that creates some buckets in MinIO
 docker compose run --rm minio-init
 
-# Create the schema
-bun run db:push
+# Create the schema. drizzle-kit wants an admin connection and has no default.
+POSTGRES_ADMIN_CONNECTION_STRING=postgresql://postgres:postgres@localhost:5432/ai_gateway \
+  bun run db:push
 
 # Run
 bun run dev
 ```
 
-Each worker reads its own `apps/<worker>/.env`.
+Each app reads its own `apps/<app>/.env`, and none of them are committed - you
+create them. Each app's README lists what goes in one.
 
 | App                      | Port |
 | ------------------------ | ---- |
@@ -48,9 +50,17 @@ bun run test:unit
 ```
 
 From either the host or the repository dev container, a clean checkout only
-needs its packages installed.
+needs its packages installed. The harness starts the compose services and
+prepares the separate `_test` database itself.
 
 ```bash
 bun install
 bun run test:integration
+```
+
+Browser tests want Chromium, which is a one-time install.
+
+```bash
+bunx playwright install --with-deps chromium
+bun run test:e2e
 ```

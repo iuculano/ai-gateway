@@ -48,14 +48,17 @@
       "env": ["POSTGRES_TEST_ADMIN_CONNECTION_STRING"]
     },
     "db:generate": {
-      "cache": false
+      "cache": false,
+      "env": ["POSTGRES_ADMIN_CONNECTION_STRING"]
     },
     "db:migrate": {
       "dependsOn": ["db:generate"],
-      "cache": false
+      "cache": false,
+      "env": ["POSTGRES_ADMIN_CONNECTION_STRING"]
     },
     "db:push": {
-      "cache": false
+      "cache": false,
+      "env": ["POSTGRES_ADMIN_CONNECTION_STRING"]
     }
   }
 }

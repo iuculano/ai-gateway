@@ -16,7 +16,7 @@ bun run --cwd apps/worker-analytics-rollup dev
 
 ## Configuration
 
-The application can be configure via environment variables.
+The application can be configured via environment variables.
 
 | Variable                       | Default       | Description                            |
 | ------------------------------ | ------------- | -------------------------------------- |
@@ -28,3 +28,19 @@ The application can be configure via environment variables.
 | `WORKER_POLL_INTERVAL_MS`      | `300000`      | Time between polls                     |
 | `ROLLUP_TRAILING_WINDOW_HOURS` | `3`           | Recent hours refreshed each poll       |
 | `ROLLUP_CHUNK_HOURS`           | `24`          | Hours refreshed per query              |
+
+Each tick rewinds `ROLLUP_TRAILING_WINDOW_HOURS` behind the newest bucket and
+recomputes forward, so a log that arrived late still lands in its own hour. The
+refresh is idempotent, and the current hour is never written - it is still
+changing, and the dashboard reads it live from `logs`.
+
+## Tests
+
+```bash
+# Unit.
+bun run --cwd apps/worker-analytics-rollup test:unit
+
+# Integration. Run it from the repository root so the harness can bring
+# the services and the _test database up.
+bun run test:integration
+```

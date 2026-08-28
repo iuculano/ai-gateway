@@ -1,15 +1,10 @@
-# db
+# @repo/drizzle
 
-To install dependencies:
+The database schema, and the client every app queries through.
 
-```bash
-bun install
-```
 
-To run:
 
-```bash
-bun run index.ts
-```
 
-This project was created using `bun init` in bun v1.3.9. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+## Tests
+
+The schema is exercised by the integration tiers that run against it.
