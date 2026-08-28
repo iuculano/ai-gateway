@@ -27,8 +27,7 @@ POSTGRES_ADMIN_CONNECTION_STRING=postgresql://postgres:postgres@localhost:5432/a
 bun run dev
 ```
 
-Each app reads its own `apps/<app>/.env`, and none of them are committed - you
-create them. Each app's README lists what goes in one.
+Each app reads its own `apps/<app>/.env`.
 
 | App                      | Port |
 | ------------------------ | ---- |
