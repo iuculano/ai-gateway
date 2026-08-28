@@ -1,7 +1,6 @@
 import type { JWTAuthAdapter } from '@repo/hono/auth-adapter';
 import { HTTPException } from 'hono/http-exception';
 import type { JWTPayload } from 'jose';
-
 import { normalizeRoles, normalizeScopes } from '../claim-mappings';
 import { resolveOrganization } from '../organizations';
 import { rolesToScopes } from '../role-scopes';
@@ -32,7 +31,7 @@ type ZitadelUserInfo = {
  * Options for the Zitadel adapter.
  */
 export interface ZitadelAdapterOptions {
-  /** Mapping of roles to scopes. */
+  /** Mapping of roles to scopes. If not set, token scopes will be used instead. */
   roleScopesMap: Record<string, string[]>;
 
   /** The issuer of the access tokens. */
@@ -78,15 +77,20 @@ async function resolveTokenUser(token: string, issuer: string, userinfoUri: stri
 }
 
 /**
- * Resolves the caller's effective scopes: whatever the token carries, plus
- * what the caller's roles grant.
+ * Resolves the caller's effective scopes from an access token.
  *
- * Roles are an input here, not an output - they are expanded into scopes and
- * never reach the Caller, so nothing downstream can authorize against them.
+ * @param payload
+ * The verified access token payload.
  *
- * Prefer roles asserted on the access token itself; fall back to the userinfo
- * response - Zitadel only puts roles on the token when the project has "Assert
- * Roles on Authentication" enabled.
+ * @param userInfo
+ * The userinfo response, used as a fallback for roles if the token has none.
+ *
+ * @param roleScopesMap
+ * Mapping of roles to scopes. If empty, the token's scopes will be used
+ * instead.
+ *
+ * @returns
+ * Array of effective scopes for the caller.
  */
 function resolveScopes(
   payload: JWTPayload,

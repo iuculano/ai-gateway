@@ -4,9 +4,14 @@
  * The mapping itself is application policy and lives with the adapter that
  * calls this.
  *
- * @param roles The role names held by the caller.
+ * @param roles
+ * The role names held by the caller.
  *
- * @param roleMapping Mapping of role names to the scopes each grants.
+ * @param roleMapping
+ * Mapping of role names to the scopes each grants.
+ *
+ * @returns
+ * Array of scopes granted by the caller's roles.
  */
 export function rolesToScopes(roles: string[], roleMapping?: Record<string, string[]>): string[] {
   // Check if there's any work to do in the first place.
