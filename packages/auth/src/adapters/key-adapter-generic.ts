@@ -41,7 +41,7 @@ function hashApiKey(key: string): string {
  * to filter by until after it returns.
  */
 async function resolveApiKeyAuthorization(keyHash: string): Promise<ResolvedApiKeyAuthorization> {
-  const [record] = await db
+  const [row] = await db
     .select({
       apiKey: {
         id: apiKeys.id,
@@ -73,13 +73,13 @@ async function resolveApiKeyAuthorization(keyHash: string): Promise<ResolvedApiK
     .where(eq(apiKeys.key_hash, keyHash))
     .limit(1);
 
-  if (!record) {
+  if (!row) {
     throw new HTTPException(401, {
       cause: 'Invalid API key: not found',
     });
   }
 
-  const { apiKey, organization, owner } = record;
+  const { apiKey, organization, owner } = row;
 
   if (apiKey.revokedAt) {
     throw new HTTPException(401, {
