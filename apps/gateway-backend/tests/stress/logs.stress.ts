@@ -29,10 +29,8 @@
  */
 
 import { parseArgs } from 'node:util';
-import { createCacheKey } from '@repo/core';
 import { db, sql } from '@repo/drizzle';
 import { type Caller, runWithCaller } from '@repo/hono';
-import { connectRedis, redis } from '@repo/redis';
 import { SQL } from 'bun';
 import AnalyticsServices from '../../src/api/analytics/analytics.services';
 import LogsServices from '../../src/api/logs/logs.services';
@@ -323,10 +321,6 @@ const [unique] = await admin`
 `;
 const uniqueTraceTag: string | undefined = typeof unique?.value === 'string' ? unique.value : undefined;
 
-// Analytics reaches redis before it reaches postgres, so the connection has to
-// be open or every one of those scenarios rejects on the first call.
-await connectRedis();
-
 const common = commonestModel();
 const rare = rarestModel();
 
@@ -347,35 +341,23 @@ function list(group: ScenarioGroup, name: string, query: Parameters<typeof LogsS
   };
 }
 
-/**
- * Runs `queryAnalytics`, defeating its own cache first.
- *
- * The service caches for five minutes, so measuring it as-is would time one
- * real aggregate and then twenty-four redis GETs - a flat line that stays flat
- * no matter how many rows exist, which is the opposite of what this harness is
- * for. Deleting the key reproduces the cold path every iteration.
- *
- * Reported `rows` is total_logs, not the row count of the result set - the
- * result is always one row. A total_logs of 0 against a seeded tenant means the
- * service's explicit organization filter is wrong rather than the query being
- * unexpectedly fast.
- */
-function analytics(
-  group: ScenarioGroup,
-  name: string,
-  body: Parameters<typeof AnalyticsServices.queryAnalytics>[0],
-): GroupedScenario {
-  const cacheKey = createCacheKey('analytics:', { organization_id: organization.id, ...body });
+type AnalyticsSeriesRequest = Parameters<typeof AnalyticsServices.queryAnalyticsSeries>[0];
+
+/** Runs an ungrouped analytics series and reports its aggregated request count. */
+function analytics(group: ScenarioGroup, name: string, body: Partial<AnalyticsSeriesRequest>): GroupedScenario {
+  const request: AnalyticsSeriesRequest = {
+    interval: 'none',
+    group_by: [],
+    ...body,
+  };
 
   return {
     group: group,
     name: name,
     run: async () => {
-      await redis.del(cacheKey);
+      const result = await asTenant(() => AnalyticsServices.queryAnalyticsSeries(request));
 
-      const result = await asTenant(() => AnalyticsServices.queryAnalytics(body));
-
-      return result.total_logs;
+      return result.points.reduce((total, point) => total + point.requests, 0);
     },
   };
 }
@@ -468,18 +450,9 @@ const allScenarios: GroupedScenario[] = [
     },
   },
 
-  analytics('analytics', 'analytics (all time)', {}),
-  analytics('analytics', 'analytics (last 24h)', { start_date: dayAgo }),
-  analytics('analytics', `analytics (model=${common.model})`, { model: common.model }),
-  analytics('analytics', `analytics (tags env:${COMMON_ENV_TAG})`, { tags: `env:${COMMON_ENV_TAG}` }),
-  analytics('analytics', `analytics (tags env:${RARE_ENV_TAG})`, { tags: `env:${RARE_ENV_TAG}` }),
-  analytics('analytics', `analytics (tags env:${ABSENT_ENV_TAG})`, { tags: `env:${ABSENT_ENV_TAG}` }),
-  analytics('analytics', `analytics (tags env:${RARE_ENV_TAG},team:${lastTeam})`, {
-    tags: `env:${RARE_ENV_TAG},team:${lastTeam}`,
-  }),
-  ...(uniqueTraceTag
-    ? [analytics('analytics', 'analytics (tags trace=<unique>)', { tags: `trace:${uniqueTraceTag}` })]
-    : []),
+  analytics('analytics', 'analytics series (all time)', {}),
+  analytics('analytics', 'analytics series (last 24h)', { start_date: dayAgo }),
+  analytics('analytics', `analytics series (model=${common.model})`, { model: common.model }),
 ];
 
 const scenarios = allScenarios
@@ -546,15 +519,20 @@ if (values.explain) {
       `,
     },
     {
-      name: 'analytics aggregate',
+      name: 'analytics live-tail aggregate',
       statement: sql`
         explain (analyze, buffers)
         select
           count(*),
-          percentile_cont(0.95) within group (order by response_time_ms),
           coalesce(sum(input_cost), 0) + coalesce(sum(output_cost), 0)
         from logs
         where organization_id = ${organization.id}
+          and created_at >= coalesce(
+            (select max(bucket) + interval '1 hour'
+               from analytics_hourly
+              where organization_id = ${organization.id}),
+            date_trunc('hour', now())
+          )
       `,
     },
   ];
@@ -644,4 +622,3 @@ if (thresholdFailures.length > 0) {
 }
 
 await admin.close();
-await redis.close();

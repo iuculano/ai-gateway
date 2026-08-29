@@ -928,7 +928,6 @@ try {
         redisConnected = true;
       }
       await redis.del([
-        `api-keys:auth:v1:${createHash('sha256').update(temporaryCredential.apiKey).digest('hex')}`,
         `api-keys:usage:${temporaryCredential.apiKeyId}`,
         `api-keys:quota:${temporaryCredential.apiKeyId}`,
         `chat-completions:${temporaryCredential.organizationId}:${temporaryCredential.apiKeyId}`,
