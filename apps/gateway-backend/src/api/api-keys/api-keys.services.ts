@@ -39,10 +39,7 @@ type ApiKeyRevokedFailure = {
 export type GetApiKeyFailure = ApiKeyNotFoundFailure;
 export type GetApiKeyStatsFailure = ApiKeyNotFoundFailure;
 export type CreateApiKeyFailure = ApiKeyUngrantableScopesFailure;
-export type UpdateApiKeyFailure =
-  | ApiKeyUngrantableScopesFailure
-  | ApiKeyNotFoundFailure
-  | ApiKeyRevokedFailure;
+export type UpdateApiKeyFailure = ApiKeyUngrantableScopesFailure | ApiKeyNotFoundFailure | ApiKeyRevokedFailure;
 export type RevokeApiKeyFailure = ApiKeyNotFoundFailure;
 
 /**
@@ -164,21 +161,10 @@ async function getApiKeyStats(id: string): Promise<Result<GetApiKeyStatsResponse
  * @param ids
  * The IDs of the API keys to retrieve total_requests for.
  */
-async function getTotalRequests(
-  ids: string[],
-): Promise<Map<string, number>> {
-  const counts = await Promise.all(
-    ids.map((id) =>
-      redis.hGet(`api-keys:usage:${id}`, 'total_requests'),
-    ),
-  );
+async function getTotalRequests(ids: string[]): Promise<Map<string, number>> {
+  const counts = await Promise.all(ids.map((id) => redis.hGet(`api-keys:usage:${id}`, 'total_requests')));
 
-  return new Map(
-    ids.map((id, index) => [
-      id,
-      Number(counts[index] ?? 0),
-    ]),
-  );
+  return new Map(ids.map((id, index) => [id, Number(counts[index] ?? 0)]));
 }
 
 /**

@@ -286,12 +286,7 @@ async function deleteModel(id: string): Promise<Result<DeleteModelResponse, Dele
   return db.transaction(async (tx): Promise<Result<DeleteModelResponse, DeleteModelFailure>> => {
     const [row] = await tx
       .delete(models)
-      .where(
-        and(
-          eq(organizations.id, caller.organization.id),
-          eq(models.id, id),
-        ),
-      )
+      .where(and(eq(organizations.id, caller.organization.id), eq(models.id, id)))
       .returning();
 
     if (!row) {

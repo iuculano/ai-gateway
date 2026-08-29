@@ -33,7 +33,7 @@ export const protectedRouteErrors = {
         schema: { type: 'string' as const },
       },
 
-      'RateLimit': {
+      RateLimit: {
         description: 'Request limit, remaining requests, and reset time',
         schema: { type: 'string' as const },
       },

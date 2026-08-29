@@ -77,7 +77,7 @@ async function listWebhooks(query: ListWebhooksQuery): Promise<ListWebhooksRespo
     query.after_id ? lt(webhooks.id, query.after_id) : undefined,
   ];
 
-    // biome-ignore format: looks nicer
+  // biome-ignore format: looks nicer
   const rows = await db
     .select()
     .from(webhooks)

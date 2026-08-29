@@ -81,18 +81,13 @@ export type PromptVariablesMissingFailure = {
 export type GetPromptFailure = PromptNotFoundByIdFailure;
 export type GetPromptByNameFailure = PromptNotFoundByNameFailure;
 export type CreatePromptFailure = PromptNameTakenFailure;
-export type UpdatePromptFailure =
-  | PromptNotFoundByIdFailure
-  | PromptNameTakenFailure
-  | PromptVersionNotFoundByIdFailure;
+export type UpdatePromptFailure = PromptNotFoundByIdFailure | PromptNameTakenFailure | PromptVersionNotFoundByIdFailure;
 export type DeletePromptFailure = PromptNotFoundByIdFailure;
 export type GetPromptVersionFailure = PromptVersionNotFoundByIdFailure;
 export type ListPromptVersionsFailure = PromptNotFoundByIdFailure;
 export type CreatePromptVersionFailure = PromptNotFoundByIdFailure;
 export type UpdatePromptVersionFailure = PromptVersionNotFoundByIdFailure;
-export type DeletePromptVersionFailure =
-  | PromptVersionNotFoundByIdFailure
-  | PromptVersionActiveFailure;
+export type DeletePromptVersionFailure = PromptVersionNotFoundByIdFailure | PromptVersionActiveFailure;
 export type ResolvePromptFailure =
   | PromptForbiddenFailure
   | PromptNotFoundByNameFailure

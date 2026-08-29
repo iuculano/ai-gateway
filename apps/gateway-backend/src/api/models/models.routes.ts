@@ -1,9 +1,8 @@
 import { createRoute } from '@hono/zod-openapi';
+import { httpError } from '@repo/core';
 import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/hono';
 import { SCOPES } from '../../authorization';
 import Schemas from './models.schemas';
-import { httpError } from '@repo/core';
-
 
 const getModel = createRoute({
   method: 'get' as const,
