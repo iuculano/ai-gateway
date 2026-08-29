@@ -1,109 +1,8 @@
-import { createCacheKey, parseTags } from '@repo/core';
-import { and, db, eq, gte, lte, max, min, sql } from '@repo/drizzle';
+import { db, sql } from '@repo/drizzle';
 import { analyticsHourly, apiKeys, logs, users } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
-import { redis } from '@repo/redis';
 import type { SQL } from 'drizzle-orm';
-import Schemas, {
-  type AnalyticsBody,
-  type AnalyticsResponse,
-  type AnalyticsSeriesBody,
-  type AnalyticsSeriesResponse,
-} from './analytics.schemas';
-
-/**
- * Queries the analytics data based on the provided parameters.
- *
- * TODO ADD ROLLUPS SO THIS ISN'T AS AWFUL.
- *
- * @param request
- * The parameters for querying analytics data.
- *
- * @returns
- * The analytics response. This deliberately stays a plain Promise rather than
- * Result: an empty aggregation is a valid response, so there is no expected
- * refusal for a caller to act on. Infrastructure and schema failures reject.
- */
-async function queryAnalytics(request: AnalyticsBody): Promise<AnalyticsResponse> {
-  const organizationId = getCaller().organization.id;
-
-  // This is a relatively expensive query!
-  const cacheKey = await createCacheKey('analytics:', { organization_id: organizationId, ...request });
-  const existing = await redis.get(cacheKey);
-  if (existing) {
-    return JSON.parse(existing);
-  }
-
-  const tagsToFilter = parseTags(request.tags);
-
-  const conditions = [
-    eq(logs.organization_id, organizationId),
-    request.start_date ? gte(logs.created_at, new Date(request.start_date)) : undefined,
-    request.end_date ? lte(logs.created_at, new Date(request.end_date)) : undefined,
-    request.model ? eq(logs.model, request.model) : undefined,
-    request.provider ? eq(logs.provider, request.provider) : undefined,
-    request.status ? eq(logs.status, request.status) : undefined,
-    request.tags ? sql`${logs.tags} @> ${tagsToFilter}::jsonb` : undefined,
-  ];
-
-  const query = db
-    .select({
-      total_logs: sql<number>`COUNT(*)`.mapWith(Number),
-
-      // 'complete', not 'success'. The column's enum is
-      // incomplete | complete | failed, so the old comparison against 'success'
-      // matched nothing: successful_logs was always 0 and error_logs was always
-      // the total. The binary split is kept as it was - anything not complete
-      // counts against, which folds 'incomplete' (died in flight) in with
-      // 'failed'. Split them three ways if that lumping is wrong.
-      successful_logs: sql<number>`COUNT(*) FILTER (WHERE ${logs.status} = 'complete')`.mapWith(Number),
-      error_logs: sql<number>`COUNT(*) FILTER (WHERE ${logs.status} != 'complete')`.mapWith(Number),
-
-      total_tokens:
-        sql<number>`COALESCE(SUM(${logs.input_tokens}), 0) + COALESCE(SUM(${logs.output_tokens}), 0)`.mapWith(Number),
-      total_input_tokens: sql<number>`COALESCE(SUM(${logs.input_tokens}), 0)`.mapWith(Number),
-      total_output_tokens: sql<number>`COALESCE(SUM(${logs.output_tokens}), 0)`.mapWith(Number),
-
-      average_input_tokens: sql<number>`ROUND(AVG(${logs.input_tokens}))`.mapWith(Number),
-      average_output_tokens: sql<number>`ROUND(AVG(${logs.output_tokens}))`.mapWith(Number),
-
-      average_output_tokens_per_second:
-        sql<number>`ROUND(AVG(${logs.output_tokens}::numeric / NULLIF(${logs.response_time_ms}, 0) * 1000), 2)`.mapWith(
-          Number,
-        ),
-
-      cost_total: sql<number>`COALESCE(SUM(${logs.input_cost}), 0) + COALESCE(SUM(${logs.output_cost}), 0)`.mapWith(
-        Number,
-      ),
-      cost_input: sql<number>`COALESCE(SUM(${logs.input_cost}), 0)`.mapWith(Number),
-      cost_output: sql<number>`COALESCE(SUM(${logs.output_cost}), 0)`.mapWith(Number),
-
-      average_latency_ms: sql<number>`ROUND(AVG(${logs.response_time_ms}))`.mapWith(Number),
-      maximum_latency_ms: max(logs.response_time_ms).mapWith(Number),
-      minimum_latency_ms: min(logs.response_time_ms).mapWith(Number),
-
-      p50_latency_ms: sql<number>`PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY ${logs.response_time_ms})`.mapWith(
-        Number,
-      ),
-      p95_latency_ms: sql<number>`PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ${logs.response_time_ms})`.mapWith(
-        Number,
-      ),
-      p99_latency_ms: sql<number>`PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ${logs.response_time_ms})`.mapWith(
-        Number,
-      ),
-    })
-    .from(logs);
-
-  const data = await query.where(and(...conditions));
-
-  const parsed = Schemas.analytics.response.parse(data[0]);
-
-  await redis.set(cacheKey, JSON.stringify(parsed), {
-    expiration: { type: 'EX', value: 60 * 5 },
-  });
-
-  return parsed;
-}
+import Schemas, { type AnalyticsSeriesBody, type AnalyticsSeriesResponse } from './analytics.schemas';
 
 /**
  * The exclusive end of what the rollup covers, for this organization.
@@ -117,7 +16,7 @@ async function sealedThrough(organizationId: string): Promise<Date> {
   const [row] = await db.execute<{ sealed_through: Date }>(sql`
     select coalesce(
       (select max(${analyticsHourly.bucket}) + interval '1 hour'
-         from ${analyticsHourly}
+        from ${analyticsHourly}
         where ${analyticsHourly.organization_id} = ${organizationId}),
       date_trunc('hour', now())
     ) as sealed_through
@@ -133,22 +32,20 @@ async function sealedThrough(organizationId: string): Promise<Date> {
 /**
  * A time series and/or breakdown over the hourly rollup.
  *
- * This reads `analytics_hourly`, never `logs`. The same 30-day window costs
- * about 11 ms here against 1435 ms aggregated from raw rows, which is the whole
- * reason the rollup exists.
+ * Sealed hours come from `analytics_hourly`; only the live, unsealed tail comes
+ * from `logs`. This keeps historical query cost bounded while still returning
+ * current results when the rollup worker is behind.
  *
- * Deliberately not Redis-cached, unlike queryAnalytics above. That cache exists
- * because the query behind it is expensive; this one is not, and a cache would
- * only add a second staleness window on top of the refresh interval the rollup
- * already has.
+ * Deliberately not Redis-cached: a cache would add a second staleness window on
+ * top of the rollup refresh interval.
  *
  * @param request
  * The interval, the dimensions to pivot on, and any filters to narrow by.
  *
  * @returns
- * The points, plus the watermark they are current as of. Like queryAnalytics,
- * this has no expected refusal; an empty series is valid and dependency
- * failures reject rather than creating a Result whose error type is never.
+ * The points, plus the watermark they are current as of. This has no expected
+ * refusal; an empty series is valid and dependency failures reject rather than
+ * creating a Result whose error type is never.
  */
 async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<AnalyticsSeriesResponse> {
   const organizationId = getCaller().organization.id;
@@ -350,6 +247,5 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
 }
 
 export default {
-  queryAnalytics,
   queryAnalyticsSeries,
 };
