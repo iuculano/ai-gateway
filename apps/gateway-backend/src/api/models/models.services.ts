@@ -1,6 +1,6 @@
 import { diffFields, probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, isNull, lt, or } from '@repo/drizzle';
-import { models, organizations } from '@repo/drizzle/schemas';
+import { models } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
 import AuditLogServices from '../audit-logs/audit-logs.services';
@@ -187,8 +187,13 @@ async function listProviders(): Promise<ListProvidersResponse> {
  * The request object containing the model data to create.
  */
 async function createModel(request: CreateModelRequest): Promise<CreateModelResponse> {
+  const caller = getCaller();
+
   const result = await db.transaction(async (tx) => {
-    const [row] = await tx.insert(models).values(request).returning();
+    const [row] = await tx
+      .insert(models)
+      .values({ ...request, organization_id: caller.organization.id, source: 'custom' })
+      .returning();
 
     if (!row) {
       // Probably impossible: a returning() insert either throws or gives a row.
@@ -286,7 +291,7 @@ async function deleteModel(id: string): Promise<Result<DeleteModelResponse, Dele
   return db.transaction(async (tx): Promise<Result<DeleteModelResponse, DeleteModelFailure>> => {
     const [row] = await tx
       .delete(models)
-      .where(and(eq(organizations.id, caller.organization.id), eq(models.id, id)))
+      .where(and(eq(models.organization_id, caller.organization.id), eq(models.id, id)))
       .returning();
 
     if (!row) {
