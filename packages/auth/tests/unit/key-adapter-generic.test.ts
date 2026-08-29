@@ -179,7 +179,6 @@ describe('createGenericKeyAdapter', () => {
       'innerJoin',
       'leftJoin',
       'where',
-      'limit',
     ]);
     expect(usage.pipelines).toEqual([
       [
