@@ -3,34 +3,6 @@ import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/
 import { SCOPES } from '../../authorization';
 import Schemas from './analytics.schemas';
 
-const postAnalytics = createRoute({
-  method: 'post' as const,
-  path: '/analytics',
-  security: bearerSecurity,
-  middleware: [authorize({ scopes: [SCOPES.logsRead] })],
-  request: {
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.analytics.body,
-        },
-      },
-    },
-  },
-  responses: {
-    ...validatedProtectedRouteErrors,
-    200: {
-      description: 'Successful analytics query',
-      content: {
-        'application/json': {
-          schema: Schemas.analytics.response,
-        },
-      },
-    },
-  },
-});
-
 const postAnalyticsSeries = createRoute({
   method: 'post' as const,
   path: '/analytics/series',
@@ -60,6 +32,5 @@ const postAnalyticsSeries = createRoute({
 });
 
 export default {
-  postAnalytics,
   postAnalyticsSeries,
 };

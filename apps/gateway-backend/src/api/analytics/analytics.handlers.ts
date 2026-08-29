@@ -4,16 +4,6 @@ import Routes from './analytics.routes';
 import Services from './analytics.services';
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook })
-  /**
-   * POST /analytics
-   * Controller to handle analytics queries.
-   */
-  .openapi(Routes.postAnalytics, async (c) => {
-    const body = c.req.valid('json');
-    const analytics = await Services.queryAnalytics(body);
-
-    return c.json(analytics, 200);
-  })
 
   /**
    * POST /analytics/series
