@@ -11,33 +11,20 @@ import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from '.
 import Services, { type ChatCompletionFailure } from './chat-completions.services';
 
 /**
- * What the ai-rate-limit-policy header counts against.
+ * Returns a Redis key for rate limiting.
  *
- * The API key, when the caller presented one - that is the credential actually
- * spending the quota, and two keys belonging to the same human should not share
- * a bucket. A JWT caller has no key, so the human is the next best subject.
- *
- * Note this is no longer the client IP. It used to be, which forced a 503 when
- * the address could not be read and shared one bucket across everyone behind a
- * NAT. Both problems disappear now that every request is authenticated.
- *
- * @param caller
- * The authenticated caller for the current request.
+ * @param id
+ * The ID of the API key.
  *
  * @returns
- * A Redis key unique to the caller.
+ * The Redis key for the API key's quota counter.
  */
 function rateLimitKey(caller: Caller): string {
   return `chat-completions:${caller.organization.id}:${getActorId(caller)}`;
 }
 
 /**
- * Applies the caller's requested rate limit policy.
- *
- * The RateLimit-* headers are attached to the 429's own Response rather than
- * to c.res. An HTTPException builds its own response, and errorHandler() copies
- * headers off `err.res` - anything written to c.res beforehand is discarded, so
- * the previous implementation's headers never reached a rate-limited caller.
+ * Acts on the caller's requested rate limit policy.
  *
  * @param caller
  * The authenticated caller for the current request.

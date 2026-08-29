@@ -72,7 +72,7 @@ const createApiKey = createSchema({
       description: z.string().trim().max(250).nullish(),
       expires_at: z.coerce.date().nullable().optional(),
       rate_limit_requests: z.number().int().min(1).nullish(),
-      rate_limit_window: z.number().int().min(1).optional(),
+      rate_limit_window: z.number().int().min(1).nullish(),
     })
     .refine((body) => body.rate_limit_requests == null || body.rate_limit_window != null, {
       message: 'rate_limit_window is required when rate_limit_requests is set',

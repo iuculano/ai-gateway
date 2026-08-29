@@ -26,90 +26,80 @@ import Schemas, {
   type UpdatePromptVersionResponse,
 } from './prompts.schemas';
 
-/**
- * The outcomes a caller can act on.
- *
- * Declared per operation rather than shared, so a code added to one cannot
- * silently widen the others. Everything else here - a failed query, a row that
- * will not parse, an insert that returns nothing - is the system malfunctioning
- * rather than an answer, and rejects.
- *
- * A prompt belonging to another organization is PROMPT_NOT_FOUND rather than a
- * distinct code. The caller has no standing to learn that the id exists at all,
- * and a separate code would tell them.
- */
-export type GetPromptFailure = {
+export type PromptNotFoundByIdFailure = {
   code: 'PROMPT_NOT_FOUND';
   id: string;
 };
 
-export type GetPromptByNameFailure = {
+export type PromptNotFoundByNameFailure = {
   code: 'PROMPT_NOT_FOUND';
   name: string;
 };
 
-export type CreatePromptFailure = {
+export type PromptNameTakenFailure = {
   code: 'PROMPT_NAME_TAKEN';
   name: string;
 };
 
+export type PromptVersionNotFoundByIdFailure = {
+  code: 'PROMPT_VERSION_NOT_FOUND';
+  id: string;
+  version: number;
+};
+
+export type PromptVersionNotFoundByNameFailure = {
+  code: 'PROMPT_VERSION_NOT_FOUND';
+  name: string;
+  version: number;
+};
+
+export type PromptVersionActiveFailure = {
+  code: 'PROMPT_VERSION_ACTIVE';
+  id: string;
+  version: number;
+};
+
+export type PromptForbiddenFailure = {
+  code: 'PROMPT_FORBIDDEN';
+  required: string;
+};
+
+export type PromptNoActiveVersionFailure = {
+  code: 'PROMPT_NO_ACTIVE_VERSION';
+  name: string;
+};
+
+export type PromptVariablesMissingFailure = {
+  code: 'PROMPT_VARIABLES_MISSING';
+  name: string;
+  version: number;
+  missing: string[];
+};
+
+// Operation-specific failure types
+
+export type GetPromptFailure = PromptNotFoundByIdFailure;
+export type GetPromptByNameFailure = PromptNotFoundByNameFailure;
+export type CreatePromptFailure = PromptNameTakenFailure;
 export type UpdatePromptFailure =
-  | { code: 'PROMPT_NOT_FOUND'; id: string }
-  | { code: 'PROMPT_NAME_TAKEN'; name: string }
-  | { code: 'PROMPT_VERSION_NOT_FOUND'; id: string; version: number };
-
-export type DeletePromptFailure = {
-  code: 'PROMPT_NOT_FOUND';
-  id: string;
-};
-
-export type GetPromptVersionFailure = {
-  code: 'PROMPT_VERSION_NOT_FOUND';
-  id: string;
-  version: number;
-};
-
-export type ListPromptVersionsFailure = {
-  code: 'PROMPT_NOT_FOUND';
-  id: string;
-};
-
-export type CreatePromptVersionFailure = {
-  code: 'PROMPT_NOT_FOUND';
-  id: string;
-};
-
-export type UpdatePromptVersionFailure = {
-  code: 'PROMPT_VERSION_NOT_FOUND';
-  id: string;
-  version: number;
-};
-
+  | PromptNotFoundByIdFailure
+  | PromptNameTakenFailure
+  | PromptVersionNotFoundByIdFailure;
+export type DeletePromptFailure = PromptNotFoundByIdFailure;
+export type GetPromptVersionFailure = PromptVersionNotFoundByIdFailure;
+export type ListPromptVersionsFailure = PromptNotFoundByIdFailure;
+export type CreatePromptVersionFailure = PromptNotFoundByIdFailure;
+export type UpdatePromptVersionFailure = PromptVersionNotFoundByIdFailure;
 export type DeletePromptVersionFailure =
-  | { code: 'PROMPT_VERSION_NOT_FOUND'; id: string; version: number }
-  | { code: 'PROMPT_VERSION_ACTIVE'; id: string; version: number };
-
-/**
- * Resolving a prompt for an inference request.
- *
- * Wider than the dashboard's render failures because the caller is naming a
- * prompt rather than addressing one it has already seen: the name may not
- * exist, the prompt may have no version to serve, and - unlike the preview -
- * a template whose variables are not all supplied is a refusal rather than a
- * partially rendered answer.
- */
+  | PromptVersionNotFoundByIdFailure
+  | PromptVersionActiveFailure;
 export type ResolvePromptFailure =
-  | { code: 'PROMPT_FORBIDDEN'; required: string }
-  | { code: 'PROMPT_NOT_FOUND'; name: string }
-  | { code: 'PROMPT_NO_ACTIVE_VERSION'; name: string }
-  | { code: 'PROMPT_VERSION_NOT_FOUND'; name: string; version: number }
-  | { code: 'PROMPT_VARIABLES_MISSING'; name: string; version: number; missing: string[] };
-
-export type RenderPromptVersionFailure = {
-  code: 'PROMPT_VERSION_NOT_FOUND';
-  id: string;
-  version: number;
-};
+  | PromptForbiddenFailure
+  | PromptNotFoundByNameFailure
+  | PromptNoActiveVersionFailure
+  | PromptVersionNotFoundByNameFailure
+  | PromptVariablesMissingFailure;
+export type RenderPromptVersionFailure = PromptVersionNotFoundByIdFailure;
 
 /** The client, or a transaction inside one. Same shape audit-logs.services uses. */
 type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];

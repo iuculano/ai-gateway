@@ -42,14 +42,6 @@ const createChatCompletion = createRoute({
         },
       },
     },
-    400: {
-      description: 'Malformed request, or a parameter this gateway cannot honour',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
     401: {
       description: 'Gateway authentication failed, or the upstream provider rejected the supplied ai-api-key',
       content: {

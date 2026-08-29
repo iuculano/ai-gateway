@@ -82,11 +82,6 @@ function toUpdateApiKeyHttpException(failure: UpdateApiKeyFailure): HTTPExceptio
         message: 'Cannot update a revoked API key',
       });
 
-    case 'RATE_LIMIT_WINDOW_REQUIRED':
-      return new HTTPException(400, {
-        message: 'rate_limit_window is required when rate_limit_requests is set',
-      });
-
     default:
       return assertNever(code);
   }
@@ -106,7 +101,6 @@ function toRevokeApiKeyHttpException(failure: RevokeApiKeyFailure): HTTPExceptio
 
 /**
  * GET /api-keys/:id
- *
  * Retrieve a specific API key by id.
  */
 const getApiKey = defineOpenAPIRoute({
@@ -126,7 +120,6 @@ const getApiKey = defineOpenAPIRoute({
 
 /**
  * GET /api-keys/:id/stats
- *
  * Retrieve statistics for a specific API key by id.
  */
 const getApiKeyStats = defineOpenAPIRoute({
@@ -146,7 +139,6 @@ const getApiKeyStats = defineOpenAPIRoute({
 
 /**
  * GET /api-keys
- *
  * Retrieve a list of API keys.
  */
 const listApiKeys = defineOpenAPIRoute({
@@ -163,7 +155,6 @@ const listApiKeys = defineOpenAPIRoute({
 
 /**
  * POST /api-keys
- *
  * Create a new API key. The plaintext key is only present in this response.
  */
 const createApiKey = defineOpenAPIRoute({
@@ -184,7 +175,6 @@ const createApiKey = defineOpenAPIRoute({
 
 /**
  * PATCH /api-keys/:id
- *
  * Update an existing API key.
  */
 const updateApiKey = defineOpenAPIRoute({
@@ -206,7 +196,6 @@ const updateApiKey = defineOpenAPIRoute({
 
 /**
  * DELETE /api-keys/:id
- *
  * Revoke an API key. Keys are never hard-deleted.
  */
 const revokeApiKey = defineOpenAPIRoute({

@@ -18,68 +18,37 @@ import Schemas, {
   type UpdateApiKeyResponse,
 } from './api-keys.schemas';
 
-/**
- * A stored API key row, as the transactions below hand it back before it is
- * parsed into a response shape.
- */
-type ApiKeyRow = typeof apiKeys.$inferSelect;
-
-/**
- * The outcomes of a lookup that the caller can do something about.
- *
- * Everything else - a query that fails, a row that will not parse - is the
- * system malfunctioning rather than an answer, and rejects.
- */
-export type GetApiKeyFailure = {
+// The underlying error definitions.
+type ApiKeyNotFoundFailure = {
   code: 'API_KEY_NOT_FOUND';
   id: string;
 };
 
-/**
- * Statistics are gated on the same lookup, so they refuse for the same reason.
- */
-export type GetApiKeyStatsFailure = {
-  code: 'API_KEY_NOT_FOUND';
-  id: string;
-};
-
-/**
- * Creation refuses only for scopes: everything else about a create either
- * succeeds or is a malfunction.
- */
-export type CreateApiKeyFailure = {
+type ApiKeyUngrantableScopesFailure = {
   code: 'UNGRANTABLE_SCOPES';
   held: string[];
   ungrantable: string[];
 };
 
-export type UpdateApiKeyFailure =
-  | {
-      code: 'UNGRANTABLE_SCOPES';
-      held: string[];
-      ungrantable: string[];
-    }
-  | {
-      code: 'API_KEY_NOT_FOUND';
-      id: string;
-    }
-  | {
-      code: 'API_KEY_REVOKED';
-      id: string;
-    }
-  | {
-      code: 'RATE_LIMIT_WINDOW_REQUIRED';
-      id: string;
-    };
-
-/**
- * Revocation is idempotent, so revoking an already revoked key is a success
- * rather than a refusal. Only a key that does not exist at all is a failure.
- */
-export type RevokeApiKeyFailure = {
-  code: 'API_KEY_NOT_FOUND';
+type ApiKeyRevokedFailure = {
+  code: 'API_KEY_REVOKED';
   id: string;
 };
+
+// The public service failure unions.
+export type GetApiKeyFailure = ApiKeyNotFoundFailure;
+export type GetApiKeyStatsFailure = ApiKeyNotFoundFailure;
+export type CreateApiKeyFailure = ApiKeyUngrantableScopesFailure;
+export type UpdateApiKeyFailure =
+  | ApiKeyUngrantableScopesFailure
+  | ApiKeyNotFoundFailure
+  | ApiKeyRevokedFailure;
+export type RevokeApiKeyFailure = ApiKeyNotFoundFailure;
+
+/**
+ * A stored API key row, in the shape that a transaction returns.
+ */
+type ApiKeyRow = typeof apiKeys.$inferSelect;
 
 /**
  * SHA-256 hex digest of a plaintext key. That's it.
@@ -94,6 +63,15 @@ function hashApiKey(key: string): string {
   return createHash('sha256').update(key).digest('hex');
 }
 
+/**
+ * Returns a Redis key for an API key's quota counter.
+ *
+ * @param id
+ * The ID of the API key.
+ *
+ * @returns
+ * The Redis key for the API key's quota counter.
+ */
 function apiKeyQuotaKey(id: string): string {
   return `api-keys:quota:${id}`;
 }
@@ -131,9 +109,8 @@ async function getApiKey(id: string): Promise<Result<GetApiKeyResponse, GetApiKe
  * The ID of the API key to read stats for.
  */
 async function getApiKeyStats(id: string): Promise<Result<GetApiKeyStatsResponse, GetApiKeyStatsFailure>> {
-  // Need to try to actually grab a key first, can't just hit redis blindly
-  // because that would effectively let us return the stats for _any_ key,
-  // even if it belongs to another organization.
+  // Try to grab a key first to validate that it actually exists and belongs to
+  // the caller's organization.
   const found = await getApiKey(id);
   if (found.isErr()) {
     return err(found.error);
@@ -182,22 +159,26 @@ async function getApiKeyStats(id: string): Promise<Result<GetApiKeyStatsResponse
 }
 
 /**
- * Lifetime request counts for a set of key ids.
- *
- * Issued in one tick so node-redis pipelines them into a single round trip - a
- * full 250 row page costs one write, not 250.
- *
- * A key that has never authenticated a request has no usage hash at all, which
- * reads as 0 rather than as missing: the table renders this as a count, and
- * "never used" is a real answer, not an absent one.
+ * Retrieves the total_requests count for a list of API keys.
  *
  * @param ids
- * The API key IDs to read counts for.
+ * The IDs of the API keys to retrieve total_requests for.
  */
-async function getTotalRequests(ids: string[]): Promise<Map<string, number>> {
-  const counts = await Promise.all(ids.map((id) => redis.hGet(`api-keys:usage:${id}`, 'total_requests')));
+async function getTotalRequests(
+  ids: string[],
+): Promise<Map<string, number>> {
+  const counts = await Promise.all(
+    ids.map((id) =>
+      redis.hGet(`api-keys:usage:${id}`, 'total_requests'),
+    ),
+  );
 
-  return new Map(ids.map((id, index) => [id, Number(counts[index] ?? 0)]));
+  return new Map(
+    ids.map((id, index) => [
+      id,
+      Number(counts[index] ?? 0),
+    ]),
+  );
 }
 
 /**
@@ -205,15 +186,8 @@ async function getTotalRequests(ids: string[]): Promise<Map<string, number>> {
  *
  * Results are returned newest-first.
  *
- * Deliberately not a Result: an empty page is a page, and there is no outcome
- * here the caller could correct. A Result<_, never> would only make every call
- * site unwrap something that cannot happen.
- *
  * @param query
  * The request object containing the filter criteria.
- *
- * @returns
- * A promise that resolves to the API key data.
  */
 async function listApiKeys(query: ListApiKeysQuery): Promise<ListApiKeysResponse> {
   const caller = getCaller();
@@ -234,27 +208,22 @@ async function listApiKeys(query: ListApiKeysQuery): Promise<ListApiKeysResponse
 
   const page = toPage(rows, query.limit);
 
-  // After toPage, not before - the probe row is discarded there, and reading a
-  // count for it would be a wasted redis command every single page.
+  // Merge in the total_requests counts for each key.
   const totals = await getTotalRequests(page.data.map((row) => row.id));
-  const hydratedRows = page.data.map((row) => ({
+  const mergedRows = page.data.map((row) => ({
     ...row,
     total_requests: totals.get(row.id) ?? 0,
   }));
 
   return Schemas.listApiKeys.response.parse({
-    data: hydratedRows,
+    data: mergedRows,
     meta: page.meta,
   });
 }
 
 /**
- * Helper to figure out if we're trying to do something dumb with scopes, like
- * privilege escalation. A caller can only grant scopes it holds itself.
- *
- * A query rather than an assertion, because both callers record the refusal
- * under their own event name before returning it - an assertion would make them
- * catch an exception thrown a line earlier to do it.
+ * Helper to figure out if we're trying to do something dumb with scopes. A
+ * caller can only grant scopes it holds itself.
  *
  * @param caller
  * The authenticated caller.
@@ -282,10 +251,6 @@ function checkScopes(caller: Caller, scopes: string): { held: string[]; ungranta
  *
  * @param body
  * The request object containing the API key data to be created.
- *
- * @returns
- * A promise that resolves to the created API key data, including the
- * plaintext key.
  */
 async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKeyResponse, CreateApiKeyFailure>> {
   const caller = getCaller();
@@ -311,7 +276,7 @@ async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKey
   }
 
   // Generate a new API key, 64 characters total.
-  // Make the prefix customizable?
+  // TODO: Make the prefix customizable?
   const key = `aik_${randomBytes(30).toString('hex')}`;
 
   const result = await db.transaction(async (tx) => {
@@ -356,17 +321,11 @@ async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKey
 /**
  * Updates an existing API key.
  *
- * The field-level before/after difference is written to the audit log in
- * the same transaction.
- *
  * @param id
  * The ID of the API key to update.
  *
  * @param body
  * The update payload containing the fields to be updated.
- *
- * @returns
- * A promise that resolves to the updated API key data.
  */
 async function updateApiKey(
   id: string,
@@ -423,15 +382,6 @@ async function updateApiKey(
       return ok(existing);
     }
 
-    // Validate the merged policy because a PATCH may supply only one field.
-    // Ignore invalid legacy policies during unrelated updates.
-    const touchesRateLimit = 'rate_limit_requests' in updates || 'rate_limit_window' in updates;
-    const merged = { ...existing, ...updates };
-
-    if (touchesRateLimit && merged.rate_limit_requests != null && merged.rate_limit_window == null) {
-      return err({ code: 'RATE_LIMIT_WINDOW_REQUIRED', id });
-    }
-
     // biome-ignore format: looks nicer
     const [row] = await tx
       .update(apiKeys)
@@ -477,10 +427,6 @@ async function updateApiKey(
 
 /**
  * Revokes an existing API key.
- *
- * Keys are not hard-deleted. Revocation preserves the row for the audit
- * trail and for introspection of historical usage. Revoking an already
- * revoked key is a no-op.
  *
  * @param id
  * The ID of the API key to revoke.

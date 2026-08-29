@@ -1,33 +1,9 @@
 import { createRoute } from '@hono/zod-openapi';
-import { httpError } from '@repo/core';
 import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/hono';
 import { SCOPES } from '../../authorization';
 import Schemas from './models.schemas';
+import { httpError } from '@repo/core';
 
-/**
- * Every deliberate failure the handlers can answer with is declared here.
- *
- * Throwing an HTTPException at runtime puts nothing in the generated document,
- * so these have to be kept in step with the mappers in models.handlers.ts by
- * hand - tests/unit/models.test.ts is what checks that they are.
- */
-const notFound = {
-  description: 'Model not found',
-  content: {
-    'application/json': {
-      schema: httpError,
-    },
-  },
-};
-
-const internalServerError = {
-  description: 'Internal server error',
-  content: {
-    'application/json': {
-      schema: httpError,
-    },
-  },
-};
 
 const getModel = createRoute({
   method: 'get' as const,
@@ -47,8 +23,14 @@ const getModel = createRoute({
         },
       },
     },
-    404: notFound,
-    500: internalServerError,
+    404: {
+      description: 'Model not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -70,21 +52,11 @@ const listModels = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
 const listProviders = createRoute({
   method: 'get' as const,
-  // '/providers' rather than '/models/catalog'. The latter collides with
-  // '/models/{id}', and which one wins is decided purely by the order the two
-  // are passed to openapiRoutes() - register the parameterised one first and
-  // every request for the catalogue is rejected as a malformed uuid instead.
-  // Nothing in the type system or the tests catches that, so the collision is
-  // removed rather than ordered around.
-  //
-  // It is also the better name: the response is a list of providers, each
-  // carrying its models. The scope stays models:read - this is the same data.
   path: '/providers',
   security: bearerSecurity,
   middleware: [authorize({ scopes: [SCOPES.modelsRead] })],
@@ -98,15 +70,9 @@ const listProviders = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
-// Write is separated from read deliberately: `models` is one global catalogue
-// with no organization_id, so unlike every other write in this API a change
-// here is not confined to the caller's tenant - and the costs it carries are
-// the billing inputs. See ROLE_SCOPES_MAP, which grants read to `user` and
-// write only to `admin`.
 const createModel = createRoute({
   method: 'post' as const,
   path: '/models',
@@ -132,7 +98,6 @@ const createModel = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -162,8 +127,14 @@ const updateModel = createRoute({
         },
       },
     },
-    404: notFound,
-    500: internalServerError,
+    404: {
+      description: 'Model not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -180,8 +151,14 @@ const deleteModel = createRoute({
     204: {
       description: 'Model deleted successfully',
     },
-    404: notFound,
-    500: internalServerError,
+    404: {
+      description: 'Model not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 

@@ -140,14 +140,6 @@ const createApiKey = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -177,14 +169,6 @@ const updateApiKey = createRoute({
         },
       },
     },
-    400: {
-      description: 'Request validation failed, or a rate-limit request count was supplied without a window',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
     403: {
       description: 'Only user callers may update keys, and they may grant only scopes they hold themselves',
       content: {
@@ -209,14 +193,6 @@ const updateApiKey = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -235,24 +211,8 @@ const revokeApiKey = createRoute({
       // this too, rather than a conflict.
       description: 'API key revoked successfully',
     },
-    403: {
-      description: 'Only user callers may revoke keys',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
     404: {
       description: 'API key not found',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
       content: {
         'application/json': {
           schema: httpError,

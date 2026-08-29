@@ -6,11 +6,6 @@ import Routes from './health.routes';
 import Services from './health.services';
 
 // Tables that must exist for the service to be considered healthy.
-//
-// Read off the schema objects rather than spelled as strings: the comment here
-// used to claim they were derived while the list was hard-coded, so renaming a
-// table in drizzle would have left the health check green while asserting the
-// presence of a table that no longer existed.
 const requiredTables = [apiKeys, auditLogs, organizations, userIdentities, users].map(getTableName);
 
 /**

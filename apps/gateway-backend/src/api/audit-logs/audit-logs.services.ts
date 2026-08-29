@@ -11,19 +11,17 @@ import Schemas, {
   type ListAuditLogsResponse,
 } from './audit-logs.schemas';
 
-/**
- * The only outcome a caller can act on here.
- *
- * Audit rows are append-only and written by other services, so there is nothing
- * to refuse on the way in - only a read that finds nothing.
- */
-export type GetAuditLogFailure = {
+// The underlying error definitions.
+type AuditLogFailure = {
   code: 'AUDIT_LOG_NOT_FOUND';
   id: string;
 };
 
+// The public service failure unions.
+export type GetAuditLogFailure = AuditLogFailure;
+
 /**
- * A database client to execute writes with: either the shared client or a
+ * A database client to execute writes with either the shared client or a
  * transaction obtained from db.transaction().
  *
  * Used so that audit log writes can execute in an existing transaction can be
@@ -43,18 +41,11 @@ const ACTOR_USER_ID = sql`coalesce(${apiKeys.creator_id}, ${auditLogs.actor_id})
 /**
  * Writes an audit log entry.
  *
- * Internal-only: this is not exposed as an endpoint, it exists for other
- * services to record events when they mutate something worth auditing.
- *
  * @param body
- * The audit event to record. occurred_at defaults to now when omitted.
+ * The audit event to record.
  *
  * @param executor
- * The database client to write with. Pass the surrounding transaction when the
- * audit entry must commit atomically with the change it describes.
- *
- * @returns
- * A promise that resolves to the inserted audit log row.
+ * The database client/context to write with.
  */
 async function createAuditLog(body: CreateAuditLogBody, executor: DbExecutor = db): Promise<CreateAuditLogResponse> {
   const caller = getCaller();
@@ -87,9 +78,6 @@ async function createAuditLog(body: CreateAuditLogBody, executor: DbExecutor = d
  *
  * @param id
  * The ID of the audit log entry to retrieve.
- *
- * @returns
- * A promise that resolves to the audit log entry corresponding to the given ID.
  */
 async function getAuditLog(id: string): Promise<Result<GetAuditLogResponse, GetAuditLogFailure>> {
   const caller = getCaller();
@@ -124,15 +112,10 @@ async function getAuditLog(id: string): Promise<Result<GetAuditLogResponse, GetA
 /**
  * Retrieves a list of audit log entries, filtered by the given criteria.
  *
- * Results are returned newest-first in creation order: ids are uuidv7, so id
- * order is creation order and the after_id cursor is directly comparable -
- * keyset pagination with no anchor lookup.
+ * Results are returned newest-first.
  *
  * @param query
  * The request object containing the filter criteria.
- *
- * @returns
- * A promise that resolves to the audit log data.
  */
 async function listAuditLogs(query: ListAuditLogsQuery): Promise<ListAuditLogsResponse> {
   const caller = getCaller();
@@ -168,13 +151,15 @@ async function listAuditLogs(query: ListAuditLogsQuery): Promise<ListAuditLogsRe
   // The id is projected into log by the select above, not at the top level.
   const page = toPage(rows, query.limit, (row) => row.log.id);
 
+  const mergedRows = page.data.map((row) => ({
+    ...row.log,
+    actor_name: row.actor_name ?? row.actor_username,
+    actor_email: row.actor_email,
+    actor_api_key_name: row.actor_api_key_name,
+  }));
+
   const parsed = Schemas.listAuditLogs.response.parse({
-    data: page.data.map((row) => ({
-      ...row.log,
-      actor_name: row.actor_name ?? row.actor_username,
-      actor_email: row.actor_email,
-      actor_api_key_name: row.actor_api_key_name,
-    })),
+    data: mergedRows,
     meta: page.meta,
   });
 

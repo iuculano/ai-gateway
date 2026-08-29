@@ -30,14 +30,6 @@ const getAuditLog = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -56,14 +48,6 @@ const listAuditLogs = createRoute({
       content: {
         'application/json': {
           schema: Schemas.listAuditLogs.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },

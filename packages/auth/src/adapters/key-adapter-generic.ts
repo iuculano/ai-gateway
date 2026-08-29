@@ -70,8 +70,7 @@ async function resolveApiKeyAuthorization(keyHash: string): Promise<ResolvedApiK
     .from(apiKeys)
     .innerJoin(organizations, eq(apiKeys.organization_id, organizations.id))
     .leftJoin(users, eq(apiKeys.creator_id, users.id))
-    .where(eq(apiKeys.key_hash, keyHash))
-    .limit(1);
+    .where(eq(apiKeys.key_hash, keyHash));
 
   if (!row) {
     throw new HTTPException(401, {

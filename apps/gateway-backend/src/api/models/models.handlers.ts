@@ -71,8 +71,6 @@ const listModels = defineOpenAPIRoute({
   route: Routes.listModels,
   handler: async (c) => {
     const query = c.req.valid('query');
-
-    // Plain promise: listing has no outcome the caller could correct.
     const result = await Services.listModels(query);
 
     return c.json(result, 200);
@@ -86,7 +84,6 @@ const listModels = defineOpenAPIRoute({
 const listProviders = defineOpenAPIRoute({
   route: Routes.listProviders,
   handler: async (c) => {
-    // Plain promise, same as listModels: nothing here is refusable.
     const result = await Services.listProviders();
 
     return c.json(result, 200);
@@ -101,8 +98,6 @@ const createModel = defineOpenAPIRoute({
   route: Routes.createModel,
   handler: async (c) => {
     const json = c.req.valid('json');
-
-    // Also a plain promise: there is nothing about a create to refuse.
     const result = await Services.createModel(json);
 
     return c.json(result, 201);
@@ -138,7 +133,6 @@ const deleteModel = defineOpenAPIRoute({
   route: Routes.deleteModel,
   handler: async (c) => {
     const params = c.req.valid('param');
-
     const result = await Services.deleteModel(params.id);
 
     return result.match(

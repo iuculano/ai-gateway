@@ -8,15 +8,6 @@ const nullableTimestamp = z
   .nullable()
   .transform((date) => date?.toISOString() ?? null);
 
-/**
- * A catalogue price, in US dollars per million tokens.
- *
- * Coerced because `numeric` comes back from the driver as a string, and
- * nullable because an unpublished price is not a price of zero. The order
- * matters: `.nullable()` wraps the coercion rather than feeding it, so null
- * passes straight through instead of becoming `Number(null)` - which is 0, and
- * which is exactly the silent mispricing the nullable columns exist to prevent.
- */
 const price = z.coerce.number().nonnegative().nullable();
 
 const modelShape = z.object({
@@ -105,9 +96,6 @@ const listProviders = createSchema({
 });
 
 const createModel = createSchema({
-  // Everything but name and provider is optional, and the columns carry the
-  // defaults. The alternative - a body that demands every capability flag and
-  // price - would make the simplest possible create the longest one to write.
   body: modelShape
     .omit({
       id: true,
@@ -127,15 +115,12 @@ const updateModel = createSchema({
     id: z.uuidv7(),
   }),
 
-  // delisted_at and synced_at are absent on purpose: both are the sync's to
-  // write, and a caller setting them would be claiming something about a fetch
-  // that never happened.
   body: modelShape.partial().omit({
-    id: true,
-    created_at: true,
-    updated_at: true,
-    delisted_at: true,
-    synced_at: true,
+    id: true, // server-generated
+    created_at: true, // server-generated
+    updated_at: true, // server-generated
+    delisted_at: true, // server-generated
+    synced_at: true, // server-generated
   }),
 
   response: modelShape,

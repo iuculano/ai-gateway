@@ -67,8 +67,7 @@ async function findOrganizationByExternalIdpId(issuer: string, id: string): Prom
   const [row] = await db
     .select()
     .from(organizations)
-    .where(and(eq(organizations.external_idp, issuer), eq(organizations.external_id, id)))
-    .limit(1);
+    .where(and(eq(organizations.external_idp, issuer), eq(organizations.external_id, id)));
 
   if (!row) {
     return null;
@@ -92,8 +91,7 @@ export async function getOrganization(id: string): Promise<Organization | null> 
   const [row] = await db
     .select()
     .from(organizations)
-    .where(eq(organizations.id, id))
-    .limit(1);
+    .where(eq(organizations.id, id));
 
   return row ? toOrganization(row) : null;
 }

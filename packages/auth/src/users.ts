@@ -16,8 +16,7 @@ async function findUserByExternalIdentity(issuer: string, externalId: string): P
     .select({ id: users.id, status: users.status })
     .from(userIdentities)
     .innerJoin(users, eq(userIdentities.user_id, users.id))
-    .where(and(eq(userIdentities.external_idp, issuer), eq(userIdentities.external_id, externalId)))
-    .limit(1);
+    .where(and(eq(userIdentities.external_idp, issuer), eq(userIdentities.external_id, externalId)));
 
   if (!row) {
     return null;
@@ -36,7 +35,11 @@ async function findUserByExternalIdentity(issuer: string, externalId: string): P
  * Retrieves a user by local id.
  */
 export async function getUserById(id: string): Promise<User | null> {
-  const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  // biome-ignore format: looks nicer
+  const [row] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id));
 
   return row ?? null;
 }

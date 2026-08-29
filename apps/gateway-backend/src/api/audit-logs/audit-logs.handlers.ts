@@ -22,14 +22,12 @@ function toGetAuditLogHttpException(failure: GetAuditLogFailure): HTTPException 
 
 /**
  * GET /audit-logs/:id
- *
  * Retrieve a specific audit log by id.
  */
 const getAuditLog = defineOpenAPIRoute({
   route: Routes.getAuditLog,
   handler: async (c) => {
     const params = c.req.valid('param');
-
     const result = await Services.getAuditLog(params.id);
 
     return result.match(
@@ -43,14 +41,12 @@ const getAuditLog = defineOpenAPIRoute({
 
 /**
  * GET /audit-logs
- *
  * Retrieve a list of audit logs.
  */
 const listAuditLogs = defineOpenAPIRoute({
   route: Routes.listAuditLogs,
   handler: async (c) => {
     const query = c.req.valid('query');
-
     const result = await Services.listAuditLogs(query);
 
     return c.json(result, 200);

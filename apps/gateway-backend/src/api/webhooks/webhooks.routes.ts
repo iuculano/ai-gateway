@@ -30,14 +30,6 @@ const getWebhook = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -56,14 +48,6 @@ const listWebhooks = createRoute({
       content: {
         'application/json': {
           schema: Schemas.listWebhooks.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },
@@ -92,14 +76,6 @@ const createWebhook = createRoute({
       content: {
         'application/json': {
           schema: Schemas.createWebhook.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },

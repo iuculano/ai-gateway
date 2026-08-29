@@ -1,6 +1,6 @@
 import { diffFields, probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, isNull, lt, or } from '@repo/drizzle';
-import { models } from '@repo/drizzle/schemas';
+import { models, organizations } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
 import AuditLogServices from '../audit-logs/audit-logs.services';
@@ -88,8 +88,7 @@ async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, Ge
   const [result] = await db
     .select()
     .from(models)
-    .where(and(eq(models.provider, split[0] as string), eq(models.name, split[1] as string)))
-    .limit(1);
+    .where(and(eq(models.provider, split[0] as string), eq(models.name, split[1] as string)));
 
   if (!result) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
@@ -282,8 +281,18 @@ async function updateModel(
  * The ID of the model to delete.
  */
 async function deleteModel(id: string): Promise<Result<DeleteModelResponse, DeleteModelFailure>> {
+  const caller = getCaller();
+
   return db.transaction(async (tx): Promise<Result<DeleteModelResponse, DeleteModelFailure>> => {
-    const [row] = await tx.delete(models).where(eq(models.id, id)).returning();
+    const [row] = await tx
+      .delete(models)
+      .where(
+        and(
+          eq(organizations.id, caller.organization.id),
+          eq(models.id, id),
+        ),
+      )
+      .returning();
 
     if (!row) {
       return err({ code: 'MODEL_NOT_FOUND', id });
