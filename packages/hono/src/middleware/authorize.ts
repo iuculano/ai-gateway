@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { Caller } from './authenticate';
 
 export interface AuthorizeOptions {
+  /** Scopes required to reach the route. Omit to allow every scope. */
   scopes?: readonly string[];
 
   /** Caller actor types allowed to reach the route. Omit to allow every type. */

@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi';
 
+/**
+ * Standardized error response for HTTP APIs.
+ *
+ * All errors returned by the API should conform to this schema.
+ */
 export const httpError = z
   .object({
     error: z

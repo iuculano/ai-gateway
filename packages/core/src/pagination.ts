@@ -10,11 +10,7 @@ export interface Page<TRow> {
 }
 
 /**
- * Rows to actually request for a page of `limit`.
- *
- * The extra row is never returned to the caller - it exists only so that
- * toPage() can tell "exactly a full page" from "a full page and then some"
- * without a second count query.
+ * Used to check if there are more rows than the caller requested.
  */
 export function probe(limit: number): number {
   return limit + 1;
@@ -26,8 +22,7 @@ export function probe(limit: number): number {
 export function toPage<TRow extends { id: string }>(rows: TRow[], limit: number): Page<TRow>;
 
 // TRow is unconstrained, so getId is required to say where the cursor value
-// comes from. Needed when the id isn't at the top level like a join projecting
-// the table into a named key or when cursoring on some other field entirely.
+// comes from. Needed when the id isn't at the top level.
 export function toPage<TRow>(rows: TRow[], limit: number, getId: (row: TRow) => string): Page<TRow>;
 
 /**
@@ -46,7 +41,6 @@ export function toPage<TRow>(rows: TRow[], limit: number, getId: (row: TRow) => 
  * @returns
  * The trimmed rows plus cursor metadata.
  */
-
 export function toPage<TRow>(rows: TRow[], limit: number, getId?: (row: TRow) => string): Page<TRow> {
   const moreData = rows.length > limit;
 

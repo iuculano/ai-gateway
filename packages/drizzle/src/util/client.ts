@@ -19,15 +19,6 @@ let client: DrizzleClient | undefined;
 
 /**
  * The shared client, constructed on first use rather than at import time.
- *
- * Eager construction meant that merely importing this module - which every
- * consumer does, if only for the `eq`/`and` helpers re-exported below - threw
- * when POSTGRES_CONNECTION_STRING was unset. That fired during module
- * evaluation, so it beat the app's own environment validation and surfaced as
- * a bare error from inside this package instead of a named missing variable.
- *
- * Methods are bound to the real client so `this` is never the proxy; drizzle
- * leans on private fields internally and those throw when read off a Proxy.
  */
 export const db: DrizzleClient = new Proxy({} as DrizzleClient, {
   get(_target, property) {

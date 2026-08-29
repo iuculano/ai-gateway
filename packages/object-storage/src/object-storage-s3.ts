@@ -99,6 +99,9 @@ export class S3ObjectStorageClient implements ObjectStorageClient {
 
 /**
  * Helper to try and figure out if an error actually means "not found."
+ *
+ * @param error
+ * The error to check/adapt.
  */
 function isNotFound(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) {
