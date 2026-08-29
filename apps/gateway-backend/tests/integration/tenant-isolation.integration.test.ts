@@ -91,7 +91,7 @@ test('log reads, payload batches, and deletes cannot cross organizations', async
   expect(row?.id).toBe(id);
 });
 
-test('log statistics and analytics are isolated, including the analytics cache', async () => {
+test('log statistics and analytics are isolated', async () => {
   await seedLog(acme, 'acme-one');
   await seedLog(acme, 'acme-two');
   await seedLog(globex, 'globex-one');
@@ -101,10 +101,11 @@ test('log statistics and analytics are isolated, including the analytics cache',
   expect(acmeStats.total).toBe(2);
   expect(globexStats.total).toBe(1);
 
-  // Same request body, deliberately. If the organization is omitted from
-  // either the SQL or cache key, the second caller receives Acme's aggregate.
-  const acmeAnalytics = await asTenant(acme, () => AnalyticsServices.queryAnalytics({}));
-  const globexAnalytics = await asTenant(globex, () => AnalyticsServices.queryAnalytics({}));
-  expect(acmeAnalytics.total_logs).toBe(2);
-  expect(globexAnalytics.total_logs).toBe(1);
+  // Same request body, deliberately. If the organization is omitted from the
+  // analytics SQL, both callers receive the combined aggregate.
+  const request = { interval: 'none' as const, group_by: [] };
+  const acmeAnalytics = await asTenant(acme, () => AnalyticsServices.queryAnalyticsSeries(request));
+  const globexAnalytics = await asTenant(globex, () => AnalyticsServices.queryAnalyticsSeries(request));
+  expect(acmeAnalytics.points[0]?.requests).toBe(2);
+  expect(globexAnalytics.points[0]?.requests).toBe(1);
 });

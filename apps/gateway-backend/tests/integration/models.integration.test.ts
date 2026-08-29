@@ -8,12 +8,12 @@ import { admin, callerFor, prepareSuite, readAuditRows, resetDatabase, seedTenan
 /**
  * The model catalogue, against a real database.
  *
- * There is no tenancy to test here - `models` has no organization_id and is
- * global by design - so this covers the other thing a double cannot: whether
- * the rows postgres actually returns survive the response schema. `cost_input`
- * and `cost_output` are `numeric`, which the driver hands back as strings, and
- * `config`/`tags` are jsonb with defaults. Getting either wrong is a 500 on
- * every read, which is exactly the shape of the bug the webhooks suite found.
+ * Built-in models are global, while API-created custom models belong to their
+ * caller's organization. These tests also cover whether the rows PostgreSQL
+ * actually returns survive the response schema. `cost_input` and `cost_output`
+ * are `numeric`, which the driver hands back as strings, and `config`/`tags`
+ * are jsonb with defaults. Getting either wrong is a 500 on every read, which
+ * is exactly the shape of the bug the webhooks suite found.
  */
 
 beforeAll(prepareSuite);

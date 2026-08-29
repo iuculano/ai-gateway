@@ -202,17 +202,6 @@ test('PATCH /api-keys/:id answers 403 for scopes the caller does not hold', asyn
   expect(response.headers.get('WWW-Authenticate')).toBe('Bearer error="insufficient_scope", scope="admin:everything"');
 });
 
-test('PATCH /api-keys/:id answers 400 when a request limit would have no window', async () => {
-  database.respondTo('select', 'api_keys', rows(apiKeyRow()));
-
-  const response = await patch({ rate_limit_requests: 10 });
-
-  expect(response.status).toBe(400);
-  expect(await response.json()).toMatchObject({
-    error: { message: 'rate_limit_window is required when rate_limit_requests is set' },
-  });
-});
-
 test('DELETE /api-keys/:id answers an empty 204', async () => {
   database.respondTo('update', 'api_keys', rows(apiKeyRow({ revoked_at: new Date(), revoked_by: USER_ID })));
 

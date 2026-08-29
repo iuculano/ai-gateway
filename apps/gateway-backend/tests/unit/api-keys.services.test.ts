@@ -66,18 +66,10 @@ function runRevokedKeyScenario() {
   return update({ name: 'renamed' });
 }
 
-function runRateLimitWindowRequiredScenario() {
-  // A key with neither set, patched to add a limit and nothing else.
-  database.respondTo('select', 'api_keys', rows(apiKeyRow({ rate_limit_requests: null, rate_limit_window: null })));
-
-  return update({ rate_limit_requests: 100 });
-}
-
 const updateFailureCases = {
   UNGRANTABLE_SCOPES: { run: runUngrantableScopesScenario },
   API_KEY_NOT_FOUND: { run: runMissingKeyScenario },
   API_KEY_REVOKED: { run: runRevokedKeyScenario },
-  RATE_LIMIT_WINDOW_REQUIRED: { run: runRateLimitWindowRequiredScenario },
 } satisfies Record<UpdateApiKeyFailure['code'], FailureCase<UpdateApiKeyResponse, UpdateApiKeyFailure>>;
 
 for (const [code, scenario] of Object.entries(updateFailureCases)) {
@@ -223,9 +215,8 @@ test('updateApiKey leaves the quota window intact for a no-op policy patch', asy
 });
 
 test('an unrelated patch on a key already missing its window is not blocked', async () => {
-  // Rows stored before the API refused the combination still authenticate -
-  // enforceKeyQuota defaults the missing window - so renaming one should not
-  // fail as collateral. Only a patch that touches the rate limit is refused.
+  // Legacy rows can still be changed without making the unrelated patch repair
+  // their rate-limit policy at the same time.
   database.respondTo('select', 'api_keys', rows(apiKeyRow({ rate_limit_requests: 100, rate_limit_window: null })));
   database.respondTo(
     'update',

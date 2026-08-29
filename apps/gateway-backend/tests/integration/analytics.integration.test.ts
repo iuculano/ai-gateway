@@ -14,8 +14,16 @@ beforeEach(async () => {
 
 afterEach(resetDatabase);
 
-function query(request: Parameters<typeof AnalyticsServices.queryAnalytics>[0] = {}) {
-  return runWithCaller(callerFor(acme), () => AnalyticsServices.queryAnalytics(request));
+type SeriesRequest = Parameters<typeof AnalyticsServices.queryAnalyticsSeries>[0];
+
+function query(request: Partial<SeriesRequest> = {}) {
+  const body: SeriesRequest = {
+    interval: 'none',
+    group_by: [],
+    ...request,
+  };
+
+  return runWithCaller(callerFor(acme), () => AnalyticsServices.queryAnalyticsSeries(body));
 }
 
 async function seedLog(entry: {
@@ -64,32 +72,38 @@ async function seedLog(entry: {
   `;
 }
 
-test('an organization with no logs receives a complete zero-valued analytics response', async () => {
+test('an organization with no logs receives a zero-valued analytics series', async () => {
   const analytics = await query();
 
   expect(analytics).toEqual({
-    total_logs: 0,
-    successful_logs: 0,
-    error_logs: 0,
-    total_tokens: 0,
-    total_input_tokens: 0,
-    total_output_tokens: 0,
-    average_input_tokens: null,
-    average_output_tokens: null,
-    average_output_tokens_per_second: null,
-    cost_total: 0,
-    cost_input: 0,
-    cost_output: 0,
-    average_latency_ms: null,
-    maximum_latency_ms: null,
-    minimum_latency_ms: null,
-    p50_latency_ms: null,
-    p95_latency_ms: null,
-    p99_latency_ms: null,
+    interval: 'none',
+    group_by: [],
+    sealed_through: expect.any(String),
+    points: [
+      {
+        bucket: null,
+        model: null,
+        provider: null,
+        status: null,
+        actor_type: null,
+        actor_id: null,
+        actor_label: null,
+        requests: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        cost_input: 0,
+        cost_output: 0,
+        cost_total: 0,
+        average_latency_ms: null,
+        minimum_latency_ms: null,
+        maximum_latency_ms: null,
+      },
+    ],
   });
 });
 
-test('analytics aggregates statuses, usage, cost, and filters against real PostgreSQL types', async () => {
+test('analytics series aggregates usage and cost and filters against real PostgreSQL types', async () => {
   await seedLog({
     model: 'gpt-test',
     provider: 'openai',
@@ -125,24 +139,25 @@ test('analytics aggregates statuses, usage, cost, and filters against real Postg
   });
 
   const all = await query();
-  expect(all).toMatchObject({
-    total_logs: 3,
-    successful_logs: 1,
-    error_logs: 2,
+  expect(all.points[0]).toMatchObject({
+    requests: 3,
     total_tokens: 18,
-    total_input_tokens: 13,
-    total_output_tokens: 5,
-    cost_total: 0.33,
+    input_tokens: 13,
+    output_tokens: 5,
     cost_input: 0.13,
     cost_output: 0.2,
+    average_latency_ms: 100,
+    minimum_latency_ms: 0,
+    maximum_latency_ms: 200,
   });
+  expect(all.points[0]?.cost_total).toBeCloseTo(0.33);
 
-  const filtered = await query({ model: 'gpt-test', status: 'complete', tags: 'team:blue' });
-  expect(filtered).toMatchObject({
-    total_logs: 1,
-    successful_logs: 1,
-    error_logs: 0,
+  const filtered = await query({ model: 'gpt-test', status: 'complete' });
+  expect(filtered.points[0]).toMatchObject({
+    requests: 1,
     total_tokens: 15,
-    cost_total: 0.3,
+    input_tokens: 10,
+    output_tokens: 5,
   });
+  expect(filtered.points[0]?.cost_total).toBeCloseTo(0.3);
 });
