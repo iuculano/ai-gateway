@@ -44,8 +44,8 @@ app.use(
   authenticate({
     jwtAdapter: await createZitadelAdapter({
       roleScopesMap: ROLE_SCOPES_MAP,
-      issuer: environment.IDENTITY_PROVIDER_TOKEN_ISSUER,
-      audience: environment.IDENTITY_PROVIDER_TOKEN_AUDIENCE,
+      issuer: environment.AUTH_TOKEN_ISSUER,
+      audience: environment.AUTH_TOKEN_AUDIENCE,
     }),
 
     keyAdapter: createGenericKeyAdapter({

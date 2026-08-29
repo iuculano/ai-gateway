@@ -25,8 +25,8 @@ const environmentSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_USERNAME: z.string().optional(),
 
-  IDENTITY_PROVIDER_TOKEN_ISSUER: z.url(),
-  IDENTITY_PROVIDER_TOKEN_AUDIENCE: z.string().min(1),
+  AUTH_TOKEN_ISSUER: z.url(),
+  AUTH_TOKEN_AUDIENCE: z.string().min(1),
 });
 
 export const environment = environmentSchema.parse(process.env);
