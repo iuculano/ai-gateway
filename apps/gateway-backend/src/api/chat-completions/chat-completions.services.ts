@@ -131,12 +131,6 @@ type ProviderTimeoutFailure = {
   cause: unknown;
 };
 
-type ProviderFailure =
-  | ProviderInvalidRequestFailure
-  | ProviderRejectedRequestFailure
-  | ProviderFailedFailure
-  | ProviderTimeoutFailure;
-
 // The public service failure unions.
 export type CreateChatCompletionFailure =
   | ModelNotFoundFailure
@@ -146,11 +140,20 @@ export type CreateChatCompletionFailure =
   | TopLogprobsRequiresLogprobsFailure
   | WebhookLogUnavailableFailure
   | WebhookNotFoundFailure
-  | ProviderFailure;
+  | ProviderInvalidRequestFailure
+  | ProviderRejectedRequestFailure
+  | ProviderFailedFailure
+  | ProviderTimeoutFailure;
 
 // Streaming is another transport for the same operation and has the same
 // caller-actionable outcomes.
 export type StreamChatCompletionFailure = CreateChatCompletionFailure;
+
+type ProviderFailure =
+  | ProviderInvalidRequestFailure
+  | ProviderRejectedRequestFailure
+  | ProviderFailedFailure
+  | ProviderTimeoutFailure;
 
 /**
  * Resolves a request's `model` to something callable.

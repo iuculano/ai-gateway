@@ -26,58 +26,58 @@ import Schemas, {
   type UpdatePromptVersionResponse,
 } from './prompts.schemas';
 
-export type PromptNotFoundByIdFailure = {
+// The underlying error definitions.
+type PromptNotFoundByIdFailure = {
   code: 'PROMPT_NOT_FOUND';
   id: string;
 };
 
-export type PromptNotFoundByNameFailure = {
+type PromptNotFoundByNameFailure = {
   code: 'PROMPT_NOT_FOUND';
   name: string;
 };
 
-export type PromptNameTakenFailure = {
+type PromptNameTakenFailure = {
   code: 'PROMPT_NAME_TAKEN';
   name: string;
 };
 
-export type PromptVersionNotFoundByIdFailure = {
+type PromptVersionNotFoundByIdFailure = {
   code: 'PROMPT_VERSION_NOT_FOUND';
   id: string;
   version: number;
 };
 
-export type PromptVersionNotFoundByNameFailure = {
+type PromptVersionNotFoundByNameFailure = {
   code: 'PROMPT_VERSION_NOT_FOUND';
   name: string;
   version: number;
 };
 
-export type PromptVersionActiveFailure = {
+type PromptVersionActiveFailure = {
   code: 'PROMPT_VERSION_ACTIVE';
   id: string;
   version: number;
 };
 
-export type PromptForbiddenFailure = {
+type PromptForbiddenFailure = {
   code: 'PROMPT_FORBIDDEN';
   required: string;
 };
 
-export type PromptNoActiveVersionFailure = {
+type PromptNoActiveVersionFailure = {
   code: 'PROMPT_NO_ACTIVE_VERSION';
   name: string;
 };
 
-export type PromptVariablesMissingFailure = {
+type PromptVariablesMissingFailure = {
   code: 'PROMPT_VARIABLES_MISSING';
   name: string;
   version: number;
   missing: string[];
 };
 
-// Operation-specific failure types
-
+// The public service failure unions.
 export type GetPromptFailure = PromptNotFoundByIdFailure;
 export type GetPromptByNameFailure = PromptNotFoundByNameFailure;
 export type CreatePromptFailure = PromptNameTakenFailure;

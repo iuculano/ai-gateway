@@ -20,28 +20,16 @@ import Schemas, {
   type UpdateRegexGuardrailResponse,
 } from './guardrails.schemas';
 
-/**
- * The outcomes a caller can act on.
- *
- * Declared per operation rather than shared, so a code added to one cannot
- * silently widen the others. Everything else here - a failed query, a row that
- * will not parse, an insert that returns nothing - is the system malfunctioning
- * rather than an answer, and rejects.
- */
-export type GetGuardrailFailure = {
+// The underlying error definitions.
+type GuardrailNotFoundFailure = {
   code: 'GUARDRAIL_NOT_FOUND';
   id: string;
 };
 
-export type UpdateRegexGuardrailFailure = {
-  code: 'GUARDRAIL_NOT_FOUND';
-  id: string;
-};
-
-export type DeleteGuardrailFailure = {
-  code: 'GUARDRAIL_NOT_FOUND';
-  id: string;
-};
+// The public service failure unions.
+export type GetGuardrailFailure = GuardrailNotFoundFailure;
+export type UpdateRegexGuardrailFailure = GuardrailNotFoundFailure;
+export type DeleteGuardrailFailure = GuardrailNotFoundFailure;
 
 /**
  * Runs one guardrail against one side.

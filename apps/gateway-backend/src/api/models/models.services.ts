@@ -16,19 +16,8 @@ import Schemas, {
   type UpdateModelResponse,
 } from './models.schemas';
 
-/**
- * The outcomes a caller can act on.
- *
- * Declared per operation rather than shared, so a code added to one cannot
- * silently widen the others. Note that models are a global catalogue - the
- * table has no organization_id - so none of these can be a tenancy refusal the
- * way the api-key and webhook ones are.
- *
- * Everything else here - a failed query, a row that will not parse, an insert
- * that returns nothing - is the system malfunctioning rather than an answer,
- * and rejects.
- */
-export type GetModelFailure = {
+// The underlying error definitions.
+type ModelNotFoundFailure = {
   code: 'MODEL_NOT_FOUND';
   id: string;
 };
@@ -37,20 +26,16 @@ export type GetModelFailure = {
  * Carries the slug rather than an id, because that is what the caller asked
  * with and an id would be an answer this operation never found.
  */
-export type GetModelBySlugFailure = {
+type ModelNotFoundBySlugFailure = {
   code: 'MODEL_NOT_FOUND';
   slug: string;
 };
 
-export type UpdateModelFailure = {
-  code: 'MODEL_NOT_FOUND';
-  id: string;
-};
-
-export type DeleteModelFailure = {
-  code: 'MODEL_NOT_FOUND';
-  id: string;
-};
+// The public service failure unions.
+export type GetModelFailure = ModelNotFoundFailure;
+export type GetModelBySlugFailure = ModelNotFoundBySlugFailure;
+export type UpdateModelFailure = ModelNotFoundFailure;
+export type DeleteModelFailure = ModelNotFoundFailure;
 
 /**
  * Retrieves a single model by its ID.

@@ -19,17 +19,13 @@ import Schemas, {
   type UpdateWebhookResponse,
 } from './webhooks.schemas';
 
-/**
- * The underlying error definitions.
- */
+// The underlying error definitions.
 type WebhookNotFoundFailure = {
   code: 'WEBHOOK_NOT_FOUND';
   id: string;
 };
 
-/**
- * The public service failure unions.
- */
+// The public service failure unions.
 export type EnqueueDeliveryFailure = WebhookNotFoundFailure;
 export type GetWebhookFailure = WebhookNotFoundFailure;
 export type UpdateWebhookFailure = WebhookNotFoundFailure;

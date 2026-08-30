@@ -18,7 +18,8 @@ import Schemas, {
 /** Which of the two payloads an operation is about. */
 export type PayloadSide = 'request' | 'response';
 
-export type GetLogFailure = {
+// The underlying error definitions.
+type LogNotFoundFailure = {
   code: 'LOG_NOT_FOUND';
   id: string;
 };
@@ -35,26 +36,22 @@ export type GetLogFailure = {
  * `side` travels with the failure because the message names it, and the handler
  * has no other way to know which of the two endpoints it is answering for.
  */
-export type GetLogPayloadFailure =
-  | {
-      code: 'LOG_NOT_FOUND';
-      id: string;
-    }
-  | {
-      code: 'PAYLOAD_NOT_STORED';
-      id: string;
-      side: PayloadSide;
-    }
-  | {
-      code: 'PAYLOAD_UNAVAILABLE';
-      id: string;
-      side: PayloadSide;
-    };
-
-export type DeleteLogFailure = {
-  code: 'LOG_NOT_FOUND';
+type PayloadNotStoredFailure = {
+  code: 'PAYLOAD_NOT_STORED';
   id: string;
+  side: PayloadSide;
 };
+
+type PayloadUnavailableFailure = {
+  code: 'PAYLOAD_UNAVAILABLE';
+  id: string;
+  side: PayloadSide;
+};
+
+// The public service failure unions.
+export type GetLogFailure = LogNotFoundFailure;
+export type GetLogPayloadFailure = LogNotFoundFailure | PayloadNotStoredFailure | PayloadUnavailableFailure;
+export type DeleteLogFailure = LogNotFoundFailure;
 
 /**
  * Where a payload lives.

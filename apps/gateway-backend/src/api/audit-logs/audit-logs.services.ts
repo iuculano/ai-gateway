@@ -12,13 +12,13 @@ import Schemas, {
 } from './audit-logs.schemas';
 
 // The underlying error definitions.
-type AuditLogFailure = {
+type AuditLogNotFoundFailure = {
   code: 'AUDIT_LOG_NOT_FOUND';
   id: string;
 };
 
 // The public service failure unions.
-export type GetAuditLogFailure = AuditLogFailure;
+export type GetAuditLogFailure = AuditLogNotFoundFailure;
 
 /**
  * A database client to execute writes with either the shared client or a
