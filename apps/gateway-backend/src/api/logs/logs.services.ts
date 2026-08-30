@@ -149,8 +149,7 @@ async function getLogPayload(
 /**
  * Retrieves one side of the payload for many logs at once.
  *
- * Only ids that survive the tenant-scoped query become object keys. Reads are
- * concurrent, and absent payloads are reported in `meta.missing` rather than
+ * Reads are concurrent, and absent payloads are reported in `meta.missing` rather than
  * failing the batch.
  *
  * @param ids

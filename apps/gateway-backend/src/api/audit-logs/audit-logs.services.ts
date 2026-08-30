@@ -31,10 +31,6 @@ type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0
 
 /**
  * The user id an audit row's actor resolves to, for display joins.
- *
- * For an api_key actor the row stores the KEY's id, so the accountable human is
- * the key's creator; for every other actor type the stored id is already the
- * user. getActorId() in @repo/hono is the write-side counterpart.
  */
 const ACTOR_USER_ID = sql`coalesce(${apiKeys.creator_id}, ${auditLogs.actor_id})`;
 
