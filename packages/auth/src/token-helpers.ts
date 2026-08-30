@@ -3,10 +3,6 @@ import { HTTPException } from 'hono/http-exception';
 import * as jose from 'jose';
 import { LRUCache } from 'lru-cache';
 
-// Token-facing building blocks adapters compose to turn a credential into a
-// Caller: provider initialization, JWT verification, and userinfo. Identity
-// resolution lives in ./users and ./organizations.
-
 type JWKSet = ReturnType<typeof jose.createRemoteJWKSet>;
 
 interface OpenIDProvider {
@@ -26,8 +22,6 @@ export async function loadOpenIDProvider(issuer: string): Promise<OpenIDProvider
     });
   }
 
-  // The discovery document uses the spec's snake_case names (OIDC Discovery
-  // 1.0 section 3); map them onto our internal shape.
   const raw = (await response.json()) as {
     issuer?: string;
     userinfo_endpoint?: string;
@@ -85,6 +79,7 @@ export async function verifyAccessToken(
   }
 }
 
+// Just try to save us a network trip
 const userInfoCache = new LRUCache<string, Record<string, unknown>>({
   max: 10000,
   ttl: 1000 * 60 * 5,

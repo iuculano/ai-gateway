@@ -12,11 +12,15 @@ type UserProvisionProfile = Pick<UserRow, 'username' | 'email' | 'name'>;
  * take effect on the next authentication attempt, not after an in-process TTL.
  */
 async function findUserByExternalIdentity(issuer: string, externalId: string): Promise<string | null> {
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select({ id: users.id, status: users.status })
     .from(userIdentities)
     .innerJoin(users, eq(userIdentities.user_id, users.id))
-    .where(and(eq(userIdentities.external_idp, issuer), eq(userIdentities.external_id, externalId)));
+    .where(and(
+      eq(userIdentities.external_idp, issuer),
+      eq(userIdentities.external_id, externalId)
+    ));
 
   if (!row) {
     return null;
@@ -79,11 +83,12 @@ export async function resolveUser(issuer: string, externalId: string, profile: U
     });
   } catch (error) {
     // Two first logins for the same issuer/subject can race. The unique index
-    // rejects the loser; re-reading turns that expected conflict into success.
+    // rejects the loser - just re-read in this case.
     const retry = await findUserByExternalIdentity(issuer, externalId);
     if (retry) {
       return retry;
     }
+
     throw error;
   }
 }
