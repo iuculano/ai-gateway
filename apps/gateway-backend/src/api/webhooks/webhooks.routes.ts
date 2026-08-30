@@ -116,14 +116,6 @@ const updateWebhook = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -142,14 +134,6 @@ const deleteWebhook = createRoute({
     },
     404: {
       description: 'Webhook not found',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
       content: {
         'application/json': {
           schema: httpError,
@@ -179,14 +163,6 @@ const listWebhookOutbox = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -205,14 +181,6 @@ const listWebhookDeliveries = createRoute({
       content: {
         'application/json': {
           schema: Schemas.listWebhookDeliveries.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },

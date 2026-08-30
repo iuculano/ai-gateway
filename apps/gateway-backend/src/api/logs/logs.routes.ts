@@ -4,33 +4,6 @@ import { authorize, bearerSecurity, protectedRouteErrors, validatedProtectedRout
 import { SCOPES } from '../../authorization';
 import Schemas from './logs.schemas';
 
-/**
- * Note the absence of POST and PATCH.
- *
- * Log rows are written by the gateway on the inference path, never by a client
- * - an endpoint that lets a caller author its own log entries would let it
- * fabricate usage records and forge the audit surface those records feed. The
- * create/update paths live in the service layer, reachable only from
- * ingestion.
- *
- * DELETE stays, because a tenant deleting its own conversations is a
- * legitimate and frequently mandatory operation.
- */
-
-/**
- * The sanitized 500 the global error handler produces for anything that
- * rejects. Declared per route because that is this project's convention, and
- * shared from here so seven copies cannot drift apart.
- */
-const internalServerError = {
-  description: 'Internal server error',
-  content: {
-    'application/json': {
-      schema: httpError,
-    },
-  },
-};
-
 const getLog = createRoute({
   method: 'get' as const,
   path: '/logs/{id}',
@@ -57,9 +30,8 @@ const getLog = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
-});
+})
 
 const getLogRequest = createRoute({
   method: 'get' as const,
@@ -87,7 +59,6 @@ const getLogRequest = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -117,7 +88,6 @@ const getLogResponse = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -151,7 +121,6 @@ const getLogRequestBatch = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -180,7 +149,6 @@ const getLogResponseBatch = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -202,7 +170,6 @@ const listLogs = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -223,15 +190,13 @@ const getLogStats = createRoute({
     ...protectedRouteErrors,
     200: {
       description:
-        'Totals for the organization. Counted exactly up to 100,000 logs; above that the figures are ' +
-        'sampled and `estimated` is true, with an error under roughly 1%.',
+        'Totals for the organization. Estimated above 100,000 logs.',
       content: {
         'application/json': {
           schema: Schemas.stats.response,
         },
       },
     },
-    500: internalServerError,
   },
 });
 
@@ -256,7 +221,6 @@ const deleteLog = createRoute({
         },
       },
     },
-    500: internalServerError,
   },
 });
 

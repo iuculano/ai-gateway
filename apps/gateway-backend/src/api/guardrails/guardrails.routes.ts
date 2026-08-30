@@ -4,13 +4,6 @@ import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/
 import { SCOPES } from '../../authorization';
 import Schemas from './guardrails.schemas';
 
-/**
- * Reading the rules and running them is guardrailsRead; changing what the
- * gateway will refuse is guardrailsWrite. Evaluation lands on the read side
- * deliberately - it mutates nothing, and requiring write access to check a
- * string would mean handing out rule-editing rights to every caller that only
- * wants a pre-flight check.
- */
 const evaluateGuardrails = createRoute({
   method: 'post' as const,
   path: '/guardrails/evaluate',
@@ -33,14 +26,6 @@ const evaluateGuardrails = createRoute({
       content: {
         'application/json': {
           schema: Schemas.evaluateGuardrails.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },
@@ -71,14 +56,6 @@ const createRegexGuardrail = createRoute({
       content: {
         'application/json': {
           schema: Schemas.createRegexGuardrail.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },
@@ -123,14 +100,6 @@ const updateRegexGuardrail = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -153,14 +122,6 @@ const listGuardrails = createRoute({
       content: {
         'application/json': {
           schema: Schemas.listGuardrails.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },
@@ -193,14 +154,6 @@ const getGuardrail = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -219,14 +172,6 @@ const deleteGuardrail = createRoute({
     },
     404: {
       description: 'Guardrail not found',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
       content: {
         'application/json': {
           schema: httpError,
