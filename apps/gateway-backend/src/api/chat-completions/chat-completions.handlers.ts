@@ -8,7 +8,10 @@ import type { Result } from 'neverthrow';
 import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
 import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from './chat-completions.schemas';
-import Services, { type ChatCompletionFailure } from './chat-completions.services';
+import Services, {
+  type CreateChatCompletionFailure,
+  type StreamChatCompletionFailure,
+} from './chat-completions.services';
 
 /**
  * Returns a Redis key for rate limiting.
@@ -132,7 +135,9 @@ function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPExcept
  * Kept here rather than in the service so the service can be reused without
  * importing Hono, matching every other Result-returning endpoint.
  */
-function toChatCompletionHttpException(failure: ChatCompletionFailure): HTTPException {
+function toChatCompletionHttpException(
+  failure: CreateChatCompletionFailure | StreamChatCompletionFailure,
+): HTTPException {
   const { code } = failure;
 
   switch (code) {
@@ -304,7 +309,7 @@ const createChatCompletion = defineOpenAPIRoute({
     const chunks = Services.streamChatCompletion(headers, expanded.body, echoLogId);
     const first = await chunks.next();
 
-    const unwrap = (result: Result<ChatCompletionChunk, ChatCompletionFailure>) =>
+    const unwrap = (result: Result<ChatCompletionChunk, StreamChatCompletionFailure>) =>
       result.match(
         (chunk) => chunk,
         (failure) => {

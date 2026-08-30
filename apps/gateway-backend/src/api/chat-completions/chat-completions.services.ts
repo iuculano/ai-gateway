@@ -72,25 +72,85 @@ interface ResolvedModel {
   info: GetModelResponse;
 }
 
-/**
- * Outcomes a chat-completions caller can act on.
- *
- * These remain transport-neutral so the handler controls HTTP status, messages,
- * and headers. Unexpected failures reject unless explicitly handled as
- * best-effort.
- */
-export type ChatCompletionFailure =
-  | { code: 'MODEL_NOT_FOUND'; model: string }
-  | { code: 'UNSUPPORTED_MODEL_PROVIDER'; model: string; provider: string }
-  | { code: 'UNKNOWN_TOOL_CALL'; tool_call_id: string }
-  | { code: 'UNSUPPORTED_RESPONSE_FORMAT'; response_format: string }
-  | { code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' }
-  | { code: 'WEBHOOK_LOG_UNAVAILABLE' }
-  | { code: 'WEBHOOK_NOT_FOUND'; id: string }
-  | { code: 'PROVIDER_INVALID_REQUEST'; message: string; cause: unknown }
-  | { code: 'PROVIDER_REJECTED_REQUEST'; status: number; message: string; cause: unknown }
-  | { code: 'PROVIDER_FAILED'; message: string; cause: unknown }
-  | { code: 'PROVIDER_TIMEOUT'; cause: unknown };
+// The underlying error definitions.
+type ModelNotFoundFailure = {
+  code: 'MODEL_NOT_FOUND';
+  model: string;
+};
+
+type UnsupportedModelProviderFailure = {
+  code: 'UNSUPPORTED_MODEL_PROVIDER';
+  model: string;
+  provider: string;
+};
+
+type UnknownToolCallFailure = {
+  code: 'UNKNOWN_TOOL_CALL';
+  tool_call_id: string;
+};
+
+type UnsupportedResponseFormatFailure = {
+  code: 'UNSUPPORTED_RESPONSE_FORMAT';
+  response_format: string;
+};
+
+type TopLogprobsRequiresLogprobsFailure = {
+  code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS';
+};
+
+type WebhookLogUnavailableFailure = {
+  code: 'WEBHOOK_LOG_UNAVAILABLE';
+};
+
+type WebhookNotFoundFailure = {
+  code: 'WEBHOOK_NOT_FOUND';
+  id: string;
+};
+
+type ProviderInvalidRequestFailure = {
+  code: 'PROVIDER_INVALID_REQUEST';
+  message: string;
+  cause: unknown;
+};
+
+type ProviderRejectedRequestFailure = {
+  code: 'PROVIDER_REJECTED_REQUEST';
+  status: number;
+  message: string;
+  cause: unknown;
+};
+
+type ProviderFailedFailure = {
+  code: 'PROVIDER_FAILED';
+  message: string;
+  cause: unknown;
+};
+
+type ProviderTimeoutFailure = {
+  code: 'PROVIDER_TIMEOUT';
+  cause: unknown;
+};
+
+type ProviderFailure =
+  | ProviderInvalidRequestFailure
+  | ProviderRejectedRequestFailure
+  | ProviderFailedFailure
+  | ProviderTimeoutFailure;
+
+// The public service failure unions.
+export type CreateChatCompletionFailure =
+  | ModelNotFoundFailure
+  | UnsupportedModelProviderFailure
+  | UnknownToolCallFailure
+  | UnsupportedResponseFormatFailure
+  | TopLogprobsRequiresLogprobsFailure
+  | WebhookLogUnavailableFailure
+  | WebhookNotFoundFailure
+  | ProviderFailure;
+
+// Streaming is another transport for the same operation and has the same
+// caller-actionable outcomes.
+export type StreamChatCompletionFailure = CreateChatCompletionFailure;
 
 /**
  * Resolves a request's `model` to something callable.
@@ -115,7 +175,7 @@ async function resolveModel(
   model: string,
   apiKey: string,
   baseUrl?: string,
-): Promise<Result<ResolvedModel, ChatCompletionFailure>> {
+): Promise<Result<ResolvedModel, ModelNotFoundFailure | UnsupportedModelProviderFailure>> {
   const registered = await ModelsService.getModelBySlug(model);
   if (registered.isErr()) {
     return err({ code: 'MODEL_NOT_FOUND', model });
@@ -171,7 +231,7 @@ function flattenText(content: string | Array<{ type: 'text'; text: string }>): s
  * @returns
  * The equivalent SDK messages.
  */
-function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[], ChatCompletionFailure> {
+function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[], UnknownToolCallFailure> {
   const toolNamesByCallId = new Map<string, string>();
   const converted: ModelMessage[] = [];
 
@@ -275,7 +335,9 @@ function safeParseJson(value: string): unknown {
  * @param body
  * The validated request body.
  */
-function checkSupported(body: ChatCompletionBody): Result<void, ChatCompletionFailure> {
+function checkSupported(
+  body: ChatCompletionBody,
+): Result<void, UnsupportedResponseFormatFailure | TopLogprobsRequiresLogprobsFailure> {
   // Structured output would have to be routed through the SDK's `output`
   // option, which changes the result shape and the streaming contract. Until
   // that is built, saying no is the honest answer.
@@ -458,7 +520,7 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
  * @returns
  * A typed failure for the handler to translate.
  */
-function toProviderFailure(error: unknown): ChatCompletionFailure {
+function toProviderFailure(error: unknown): ProviderFailure {
   // RetryError hides the provider error that determines the response status.
   if (RetryError.isInstance(error)) {
     // An abort represents the caller's timeout rather than a provider response.
@@ -687,7 +749,7 @@ async function abandonLog(
 async function queueWebhook(
   headers: ChatCompletionHeaders,
   log: OpenLog | null,
-): Promise<Result<void, ChatCompletionFailure>> {
+): Promise<Result<void, WebhookLogUnavailableFailure | WebhookNotFoundFailure>> {
   const webhookId = headers['ai-webhook-id'];
   if (!webhookId) {
     return ok(undefined);
@@ -726,7 +788,7 @@ async function createChatCompletion(
   headers: ChatCompletionHeaders,
   body: ChatCompletionBody,
   onLog?: (logId: string) => void,
-): Promise<Result<ChatCompletion, ChatCompletionFailure>> {
+): Promise<Result<ChatCompletion, CreateChatCompletionFailure>> {
   const supported = checkSupported(body);
   if (supported.isErr()) {
     return err(supported.error);
@@ -840,7 +902,7 @@ async function* streamChatCompletion(
   headers: ChatCompletionHeaders,
   body: ChatCompletionBody,
   onLog?: (logId: string) => void,
-): AsyncGenerator<Result<ChatCompletionChunk, ChatCompletionFailure>> {
+): AsyncGenerator<Result<ChatCompletionChunk, StreamChatCompletionFailure>> {
   const supported = checkSupported(body);
   if (supported.isErr()) {
     yield err(supported.error);
@@ -876,7 +938,7 @@ async function* streamChatCompletion(
 
   const startedAt = performance.now();
 
-  let streamError: ChatCompletionFailure | undefined;
+  let streamError: ProviderFailure | undefined;
 
   let result: ReturnType<typeof streamText>;
   try {
