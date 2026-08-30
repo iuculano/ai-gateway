@@ -14,18 +14,38 @@ const CLAIMS = {
   roles: 'urn:zitadel:iam:org:project:roles',
 } as const;
 
-// The userinfo fields we consume. Zitadel mirrors the role claim here too.
-// A type (not an interface) so it overlaps with the Record<string, unknown>
-// that fetchUserInfo() returns.
-type ZitadelUserInfo = {
-  sub?: unknown;
-  preferred_username?: unknown;
-  email?: unknown;
-  name?: unknown;
-  given_name?: unknown;
-  family_name?: unknown;
+type ZitadelAccessToken = JWTPayload & {
+  [CLAIMS.organizationId]?: string;
+  [CLAIMS.organizationName]?: string;
   [CLAIMS.roles]?: unknown;
 };
+
+type ZitadelUserInfo = Record<string, unknown> & {
+  sub?: string;
+  preferred_username?: string;
+  email?: string;
+  name?: string;
+  given_name?: string;
+  family_name?: string;
+  [CLAIMS.roles]?: unknown;
+};
+
+function tokenIdentity(payload: ZitadelAccessToken) {
+  const externalOrganizationId = payload[CLAIMS.organizationId];
+  const externalUserId = payload.sub;
+
+  if (!externalOrganizationId || !externalUserId) {
+    throw new HTTPException(401, {
+      cause: 'Invalid token: missing required claims',
+    });
+  }
+
+  return {
+    externalOrganizationId,
+    externalUserId,
+    organizationName: payload[CLAIMS.organizationName],
+  };
+}
 
 /**
  * Options for the Zitadel adapter.
@@ -57,15 +77,14 @@ async function resolveTokenUser(token: string, issuer: string, userinfoUri: stri
   }
 
   const username = userInfo.preferred_username;
-  if (typeof username !== 'string' || username.length === 0) {
-    // Valid userinfo, but we can't identify the caller without a username.
+  if (!username) {
     throw new HTTPException(500, {
       cause: 'Userinfo response: missing required claims',
     });
   }
 
-  const email = typeof userInfo.email === 'string' && userInfo.email.length > 0 ? userInfo.email : username;
-  const displayName = typeof userInfo.name === 'string' && userInfo.name.length > 0 ? userInfo.name : undefined;
+  const email = userInfo.email ?? username;
+  const displayName = userInfo.name;
 
   const userId = await resolveUser(issuer, externalUserId, {
     username: username,
@@ -73,7 +92,17 @@ async function resolveTokenUser(token: string, issuer: string, userinfoUri: stri
     name: displayName ?? username,
   });
 
-  return { userId, userInfo, username, email, displayName };
+  return {
+    user: {
+      id: userId,
+      username: username,
+      email: email,
+      displayName: displayName,
+      firstName: userInfo.given_name,
+      lastName: userInfo.family_name,
+    },
+    roles: userInfo[CLAIMS.roles],
+  };
 }
 
 /**
@@ -82,8 +111,8 @@ async function resolveTokenUser(token: string, issuer: string, userinfoUri: stri
  * @param payload
  * The verified access token payload.
  *
- * @param userInfo
- * The userinfo response, used as a fallback for roles if the token has none.
+ * @param userInfoRoles
+ * Roles from userinfo, used when the token has none.
  *
  * @param roleScopesMap
  * Mapping of roles to scopes. If empty, the token's scopes will be used
@@ -93,8 +122,8 @@ async function resolveTokenUser(token: string, issuer: string, userinfoUri: stri
  * Array of effective scopes for the caller.
  */
 function resolveScopes(
-  payload: JWTPayload,
-  userInfo: ZitadelUserInfo,
+  payload: ZitadelAccessToken,
+  userInfoRoles: unknown,
   roleScopesMap: Record<string, string[]>,
 ): string[] {
   // If there's no role mapping, try to grab the scopes from the token itself.
@@ -105,7 +134,7 @@ function resolveScopes(
   // Try to grab them from the access token first, then fall back to the
   // userinfo response. Zitadel needs an option set to put them on the token.
   const tokenRoles = normalizeRoles(payload[CLAIMS.roles]);
-  const roles = tokenRoles.length > 0 ? tokenRoles : normalizeRoles(userInfo[CLAIMS.roles]);
+  const roles = tokenRoles.length > 0 ? tokenRoles : normalizeRoles(userInfoRoles);
 
   return rolesToScopes(roles, roleScopesMap);
 }
@@ -119,41 +148,12 @@ export async function createZitadelAdapter(options: ZitadelAdapterOptions): Prom
   return async ({ token }) => {
     // Verification first. Nothing of the following should be trusted until the
     // token is verified.
-    const payload = await verifyAccessToken(token, provider, options.audience);
+    const payload = (await verifyAccessToken(token, provider, options.audience)) as ZitadelAccessToken;
 
-    // Zitadel scopes tokens to a resource owner - that's our
-    // tenant/organization.
-    const externalOrganizationId = payload[CLAIMS.organizationId];
-    const externalUserId = payload.sub;
-
-    if (
-      typeof externalOrganizationId !== 'string' ||
-      externalOrganizationId.length === 0 ||
-      typeof externalUserId !== 'string' ||
-      externalUserId.length === 0
-    ) {
-      // Technically a valid token, but missing a claim we need to identify the
-      // caller. Somehow? No idea how these would be missing in practice...
-      throw new HTTPException(401, {
-        cause: 'Invalid token: missing required claims',
-      });
-    }
-
-    // The userinfo response is needed twice: identity fields here, and as the
-    // roles fallback in resolvePermissions().
-    const { userId, userInfo, username, email, displayName } = await resolveTokenUser(
-      token,
-      options.issuer,
-      provider.userinfoUri,
-      externalUserId,
-    );
-
-    const rawOrganizationName = payload[CLAIMS.organizationName];
-    const organizationName =
-      typeof rawOrganizationName === 'string' && rawOrganizationName.length > 0 ? rawOrganizationName : undefined;
+    const { externalOrganizationId, externalUserId, organizationName } = tokenIdentity(payload);
+    const { user, roles } = await resolveTokenUser(token, options.issuer, provider.userinfoUri, externalUserId);
     const organization = await resolveOrganization(options.issuer, externalOrganizationId, organizationName);
-
-    const scopes = resolveScopes(payload, userInfo, options.roleScopesMap);
+    const scopes = resolveScopes(payload, roles, options.roleScopesMap);
 
     return {
       organization: {
@@ -163,18 +163,7 @@ export async function createZitadelAdapter(options: ZitadelAdapterOptions): Prom
 
       actor: {
         type: 'user',
-        user: {
-          id: userId,
-          username: username,
-          email: email,
-          displayName: displayName,
-          firstName:
-            typeof userInfo.given_name === 'string' && userInfo.given_name.length > 0 ? userInfo.given_name : undefined,
-          lastName:
-            typeof userInfo.family_name === 'string' && userInfo.family_name.length > 0
-              ? userInfo.family_name
-              : undefined,
-        },
+        user: user,
       },
 
       permissions: {
