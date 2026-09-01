@@ -17,8 +17,6 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "oderwat.indent-rainbow",
-        "YoavBls.pretty-ts-errors",
         "oven.bun-vscode",
         "EditorConfig.EditorConfig",
         "biomejs.biome",
