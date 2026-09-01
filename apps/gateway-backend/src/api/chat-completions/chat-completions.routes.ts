@@ -4,12 +4,6 @@ import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/
 import { SCOPES } from '../../authorization';
 import Schemas from './chat-completions.schemas';
 
-/**
- * POST /chat/completions
- *
- * Database writes on this streaming path receive the organization explicitly,
- * because they can finish after the request's asynchronous context has ended.
- */
 const createChatCompletion = createRoute({
   method: 'post' as const,
   path: '/chat/completions',
@@ -35,8 +29,6 @@ const createChatCompletion = createRoute({
           schema: Schemas.createChatCompletion.response,
         },
 
-        // text/event-stream, not application/event-stream - the latter is not
-        // a registered media type and EventSource ignores it.
         'text/event-stream': {
           schema: Schemas.completionChunk,
         },

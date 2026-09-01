@@ -1,39 +1,9 @@
 import { createRoute } from '@hono/zod-openapi';
 import { httpError } from '@repo/core';
-// All three come from the package root, which re-exports route-helpers. The
-// sibling route files reach into '../../../../../packages/hono/src/...' for the
-// last two; same symbols, and there is no reason to repeat the deep path here.
 import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/hono';
 import { SCOPES } from '../../authorization';
 import Schemas from './prompts.schemas';
 
-const jsonErrorContent = {
-  'application/json': {
-    schema: httpError,
-  },
-};
-
-const promptNotFound = {
-  404: {
-    description: 'Prompt not found',
-    content: jsonErrorContent,
-  },
-} as const;
-
-const promptVersionNotFound = {
-  404: {
-    description: 'Prompt version not found',
-    content: jsonErrorContent,
-  },
-} as const;
-
-/**
- * Reading prompts is promptsRead; creating, editing and versioning them is
- * promptsWrite. Rendering lands on the read side: it resolves a stored template
- * and substitutes values, mutating nothing, so requiring write access to
- * preview a prompt would hand out editing rights to every caller that only
- * wants to see the text it will send.
- */
 const createPrompt = createRoute({
   method: 'post' as const,
   path: '/prompts',
@@ -61,7 +31,11 @@ const createPrompt = createRoute({
     },
     409: {
       description: 'A prompt with that name already exists in this organization',
-      content: jsonErrorContent,
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
     },
   },
 });
@@ -105,7 +79,14 @@ const getPrompt = createRoute({
         },
       },
     },
-    ...promptNotFound,
+    404: {
+      description: 'Prompt not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -135,14 +116,29 @@ const updatePrompt = createRoute({
         },
       },
     },
-    ...promptNotFound,
+    404: {
+      description: 'Prompt not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
     409: {
       description: 'A prompt with that name already exists in this organization',
-      content: jsonErrorContent,
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
     },
     422: {
       description: 'active_version names a version that does not exist on this prompt',
-      content: jsonErrorContent,
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
     },
   },
 });
@@ -160,7 +156,14 @@ const deletePrompt = createRoute({
     204: {
       description: 'Prompt deleted successfully',
     },
-    ...promptNotFound,
+    404: {
+      description: 'Prompt not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -192,7 +195,14 @@ const createPromptVersion = createRoute({
         },
       },
     },
-    ...promptNotFound,
+    404: {
+      description: 'Prompt not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -215,7 +225,14 @@ const listPromptVersions = createRoute({
         },
       },
     },
-    ...promptNotFound,
+    404: {
+      description: 'Prompt not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -245,7 +262,14 @@ const renderPromptVersion = createRoute({
         },
       },
     },
-    ...promptVersionNotFound,
+    404: {
+      description: 'Prompt version not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -267,7 +291,14 @@ const getPromptVersion = createRoute({
         },
       },
     },
-    ...promptVersionNotFound,
+    404: {
+      description: 'Prompt version not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -297,7 +328,14 @@ const updatePromptVersion = createRoute({
         },
       },
     },
-    ...promptVersionNotFound,
+    404: {
+      description: 'Prompt version not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
@@ -314,10 +352,21 @@ const deletePromptVersion = createRoute({
     204: {
       description: 'Prompt version deleted successfully',
     },
-    ...promptVersionNotFound,
+    404: {
+      description: 'Prompt version not found',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
     409: {
       description: 'The version is the active one and cannot be deleted',
-      content: jsonErrorContent,
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
     },
   },
 });

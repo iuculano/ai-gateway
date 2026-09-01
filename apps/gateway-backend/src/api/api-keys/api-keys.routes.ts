@@ -30,14 +30,6 @@ const getApiKey = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -67,14 +59,6 @@ const getApiKeyStats = createRoute({
         },
       },
     },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
   },
 });
 
@@ -93,14 +77,6 @@ const listApiKeys = createRoute({
       content: {
         'application/json': {
           schema: Schemas.listApiKeys.response,
-        },
-      },
-    },
-    500: {
-      description: 'Internal server error',
-      content: {
-        'application/json': {
-          schema: httpError,
         },
       },
     },
