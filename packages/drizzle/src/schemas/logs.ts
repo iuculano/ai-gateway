@@ -18,36 +18,20 @@ export const logs = pgTable(
     organization_id: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: 'restrict' }),
-
     model: text().notNull(),
     provider: text().notNull(),
-
-    // 'incomplete' is written before the provider is called, so a request that
-    // dies mid-flight leaves a row behind rather than vanishing.
     status: text({ enum: ['incomplete', 'complete', 'failed'] })
       .notNull()
       .default('incomplete'),
-
     actor_type: text({ enum: ['user', 'api_key'] }).notNull(),
     actor_id: uuid().notNull(),
-
     input_tokens: integer(),
     output_tokens: integer(),
-
     input_cost: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),
     output_cost: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),
-
     response_time_ms: integer(),
-
-    // Object storage keys, one per payload. Null means the object was never
-    // written - either the caller omitted that side, or the request failed
-    // before there was anything to write. Null is therefore meaningful and is
-    // what the /request and /response endpoints turn into a 404.
     request_object_reference: text(),
     response_object_reference: text(),
-
-    // Caller-supplied labels, filtered with the `@>` containment operator.
-    // jsonb rather than text for exactly that reason - see the GIN index below.
     tags: jsonb().$type<Record<string, string>>(),
 
     created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -57,18 +41,19 @@ export const logs = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
-    // Every read is scoped to one organization and ordered by id - the cursor
-    // pagination in listLogs walks this.
+    // For log pagination within an organization.
     index('logs_org_idx').on(t.organization_id, t.id),
 
-    // listLogs filters on these far more often than anything else.
+    // For filtering logs by model.
     index('logs_org_model_idx').on(t.organization_id, t.model, t.id),
+
+    // For filtering logs by status.
     index('logs_org_status_idx').on(t.organization_id, t.status, t.id),
 
-    // GIN, because `tags @> '{"env":"prod"}'::jsonb` cannot use a btree.
-    index('logs_tags_idx').using('gin', t.tags),
+    // For filtering logs by tags.
+    index('logs_tags_idx').using('gin', t.tags.op('jsonb_path_ops')),
 
-    // The analytics live tail.
+    // For time-based analytics within an organization.
     index('logs_org_created_idx').on(t.organization_id, t.created_at),
   ],
 );

@@ -52,7 +52,6 @@ const range = $derived(RANGES.find((r) => r.id === rangeId) ?? DEFAULT_RANGE);
 
 let loading = $state(true);
 let loadError = $state<string | null>(null);
-let sealedThrough = $state<string | null>(null);
 
 let totals = $state<SeriesPoint | null>(null);
 let byStatus: SeriesPoint[] = $state([]);
@@ -92,7 +91,6 @@ async function load() {
     providerPoints = providers.points;
     topModels = models.points;
     topCallers = callers.points;
-    sealedThrough = series.sealed_through;
   } catch (error) {
     loadError = error instanceof Error ? error.message : 'Failed to load analytics.';
   } finally {
@@ -123,29 +121,6 @@ const inFlight = $derived(statusCount('incomplete'));
  */
 const errorRate = $derived(requestTotal > 0 ? (failed / requestTotal) * 100 : 0);
 const inFlightRate = $derived(requestTotal > 0 ? (inFlight / requestTotal) * 100 : 0);
-
-const sealedLabel = $derived(
-  sealedThrough
-    ? new Date(sealedThrough).toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : null,
-);
-
-/**
- * How far the rollup worker is behind, in hours.
- *
- * NOT a correctness signal - the endpoint merges the sealed rollup with raw
- * rows for anything newer, so these figures are current either way. It is an
- * operational one: the further behind the worker is, the more of each query is
- * being answered from `logs` instead of the rollup, and the slower it gets.
- * In the steady state this sits under 1, because the hour in progress is never
- * sealed.
- */
-const rollupLagHours = $derived(sealedThrough ? (Date.now() - new Date(sealedThrough).getTime()) / 3_600_000 : 0);
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -339,21 +314,6 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 	<div class="mb-3.5 flex items-center gap-[9px] rounded-lg border border-red-500/20 bg-red-500/7 px-[13px] py-2.5">
 		<svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="flex-none"><circle cx="8" cy="8" r="6.3" stroke="#ef4444" stroke-width="1.4" /><path d="M8 4.8v3.6M8 11v.01" stroke="#ef4444" stroke-width="1.4" stroke-linecap="round" /></svg>
 		<span class="text-[12.5px] text-[#e0a0a0]">{loadError}</span>
-	</div>
-{:else if !loading && rollupLagHours >= 2}
-	<!--
-		Nothing is missing from the numbers - the endpoint merges raw rows for
-		anything the rollup has not sealed yet. This says the worker is behind,
-		which is a performance and ops problem rather than a correctness one, so
-		it reads as a caution and not an error.
-	-->
-	<div class="mb-3.5 flex items-center gap-[9px] rounded-lg border border-amber-500/18 bg-amber-500/7 px-[13px] py-2.5">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="flex-none"><path d="M8 2.5L14.5 13.5H1.5L8 2.5z" stroke="#f59e0b" stroke-width="1.4" stroke-linejoin="round" /><path d="M8 6.8v3M8 11.6v.01" stroke="#f59e0b" stroke-width="1.4" stroke-linecap="round" /></svg>
-		<span class="text-[12.5px] text-[#d4b483]">
-			Figures are current — anything the rollup has not sealed is read live from the request log. But the rollup worker
-			last sealed {sealedLabel}, {Math.floor(rollupLagHours)} hours ago, so these queries are doing more work than they
-			should.
-		</span>
 	</div>
 {/if}
 

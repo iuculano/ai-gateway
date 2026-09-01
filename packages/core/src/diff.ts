@@ -22,13 +22,10 @@ export interface FieldDiff<TRow> {
  * "not sent", which is distinct from an explicit null.
  *
  * @param fields
- * Which fields may be written. Callers derive this from their update schema
- * rather than hand-listing it, so a column omitted there stays unwritable here.
+ * Which fields may be written.
  *
  * @returns
- * The fields to write and the subset of those that changed. `difference` is
- * empty when the caller sent only values the row already had, which is the
- * signal to skip the write and the audit entirely.
+ * The fields to write and the subset of those that changed.
  */
 export function diffFields<TRow extends Record<string, unknown>>(
   existing: TRow,
@@ -42,7 +39,7 @@ export function diffFields<TRow extends Record<string, unknown>>(
     const next = patch[field];
 
     // Absent from the patch rather than set to nothing - PATCH semantics, so
-    // this is "leave it", not "clear it". An explicit null does reach the
+    // this is "leave it", not "clear it". An explicit null reaches the
     // comparison below.
     if (next === undefined) {
       continue;
@@ -50,9 +47,6 @@ export function diffFields<TRow extends Record<string, unknown>>(
 
     updates[field] = next;
 
-    // deepEquals over JSON.stringify: same answers for these column types, but
-    // it compares Dates and arrays directly instead of serialising both sides
-    // to strings first.
     if (!deepEquals(existing[field], next)) {
       difference[field] = { old: existing[field], new: next };
     }

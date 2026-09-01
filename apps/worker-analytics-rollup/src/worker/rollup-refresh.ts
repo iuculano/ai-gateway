@@ -5,17 +5,12 @@ import { environment } from '../environment';
 const MS_PER_HOUR = 3_600_000;
 
 /**
- * Serialises refreshes across replicas.
- *
- * The transaction-scoped form, not `pg_try_advisory_lock`. A session lock is
- * bound to the connection that took it, and every statement here goes through a
- * pool - so the release could land on a different connection than the acquire
- * and leak the lock for the life of the process. `_xact_` releases at COMMIT or
- * ROLLBACK, on the right connection, including when the process is killed.
+ * Prevents replicas from refreshing the same range at once.
+ * A transaction lock releases safely when pooled connections are used.
  */
 const LOCK = sql`pg_try_advisory_xact_lock(hashtext('analytics-rollup-refresh'))`;
 
-/** What one tick did, for the caller to log. */
+/** Summary returned for logging. */
 export interface RollupTickResult {
   status: 'written' | 'locked' | 'idle';
   chunks: number;
@@ -25,22 +20,8 @@ export interface RollupTickResult {
 }
 
 /**
- * Recomputes one hour-aligned range from `logs` and replaces it wholesale.
- *
- * Replacement removes aggregate groups that no longer exist; an upsert would
- * leave those rows stale. The transaction prevents readers from seeing the gap
- * between deletion and insertion.
- *
- * @param from
- * Inclusive start, normalized to the hour so deletion and insertion cover the
- * same buckets.
- *
- * @param to
- * End of the range, exclusive.
- *
- * @returns
- * The number of rollup rows written, or null when another replica holds the
- * lock and this tick did nothing.
+ * Rebuilds an hour-aligned range in one transaction.
+ * Replacement removes stale groups without exposing partial results.
  */
 async function refreshRange(from: Date, to: Date): Promise<number | null> {
   return db.transaction(async (tx) => {
@@ -52,8 +33,8 @@ async function refreshRange(from: Date, to: Date): Promise<number | null> {
 
     await tx.execute(sql`
       delete from analytics_hourly
-       where bucket >= date_trunc('hour', ${from}::timestamptz)
-         and bucket <  date_trunc('hour', ${to}::timestamptz)
+        where bucket >= date_trunc('hour', ${from}::timestamptz)
+          and bucket <  date_trunc('hour', ${to}::timestamptz)
     `);
 
     const [written] = await tx.execute<{ rows: number }>(sql`
@@ -72,15 +53,13 @@ async function refreshRange(from: Date, to: Date): Promise<number | null> {
           actor_type,
           actor_id,
           count(*),
-          -- COALESCE because sum() over an all-null set is null, and these
-          -- columns are NOT NULL. An 'incomplete' row has no tokens at all.
+          -- Empty sums are null, but rollup totals must be zero.
           coalesce(sum(input_tokens), 0),
           coalesce(sum(output_tokens), 0),
           coalesce(sum(input_cost), 0),
           coalesce(sum(output_cost), 0),
           coalesce(sum(response_time_ms), 0),
-          -- count(column), not count(*): rows that never recorded a latency
-          -- must not inflate the denominator of the average.
+          -- Ignore rows without latency when calculating the average.
           count(response_time_ms),
           min(response_time_ms),
           max(response_time_ms),
@@ -98,12 +77,7 @@ async function refreshRange(from: Date, to: Date): Promise<number | null> {
   });
 }
 
-/**
- * The exclusive upper bound of every refresh: the start of the current hour.
- *
- * The current hour remains in raw logs because it is still changing; storing it
- * here would overlap the dashboard's live tail.
- */
+/** Keeps the changing current hour in the dashboard's live tail. */
 async function sealedThrough(): Promise<Date> {
   const [row] = await db.execute<{ hour: Date }>(sql`select date_trunc('hour', now()) as hour`);
 
@@ -115,14 +89,8 @@ async function sealedThrough(): Promise<Date> {
 }
 
 /**
- * Where this tick starts recomputing.
- *
- * The rollup's latest bucket is its own watermark, so data and progress cannot
- * diverge. An empty rollup starts at the first logged hour, allowing the normal
- * chunked refresh path to perform the backfill.
- *
- * @returns
- * The inclusive start, or null when there is nothing logged at all.
+ * Rewinds from the latest bucket so late logs are included.
+ * An empty rollup starts at the first log so the same path handles backfills.
  */
 async function refreshFrom(): Promise<Date | null> {
   const [row] = await db.execute<{ start: Date | null }>(sql`
@@ -137,10 +105,8 @@ async function refreshFrom(): Promise<Date | null> {
 }
 
 /**
- * One pass of the rollup refresh.
- *
- * Idempotent by construction: running it twice over the same range produces the
- * same rows, so a crashed run needs no recovery beyond being run again.
+ * Refreshes sealed rollup hours in chunks.
+ * Replacing each chunk makes retries safe after a crash.
  */
 export async function tickAnalyticsRollup(): Promise<RollupTickResult> {
   const to = await sealedThrough();
@@ -160,9 +126,7 @@ export async function tickAnalyticsRollup(): Promise<RollupTickResult> {
     const next = new Date(Math.min(cursor.getTime() + chunkMs, to.getTime()));
     const written = await refreshRange(cursor, next);
 
-    // Another replica is mid-refresh. Stopping rather than skipping ahead keeps
-    // the watermark meaningful: the next tick re-reads it and resumes from
-    // wherever that replica actually got to.
+    // Stop on lock contention so the next tick resumes from the true watermark.
     if (written === null) {
       return { status: 'locked', chunks, rows, from, to };
     }
@@ -170,8 +134,7 @@ export async function tickAnalyticsRollup(): Promise<RollupTickResult> {
     chunks += 1;
     rows += written;
 
-    // Only worth saying during a backfill, which is the only time this loop
-    // runs more than once.
+    // Keep normal ticks quiet while reporting long backfills.
     if (chunks % 10 === 0) {
       logger.info({ through: next.toISOString(), chunks, rows }, 'Analytics rollup backfill progressing');
     }

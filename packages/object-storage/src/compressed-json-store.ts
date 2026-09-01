@@ -87,14 +87,6 @@ export class CompressedJsonStore {
   /**
    * Reads many payloads concurrently.
    *
-   * The reads overlap up to maxConcurrentReads, so a batch costs roughly the
-   * latency of its slowest object rather than the sum of all of them.
-   *
-   * A failure on one key does not sink the batch. Object storage is a remote
-   * system and one key being unreadable says nothing about the other
-   * forty-nine; the caller gets what could be read and can tell which keys are
-   * absent from the returned map.
-   *
    * @param paths
    * The object keys to read. Duplicates are fetched once.
    *

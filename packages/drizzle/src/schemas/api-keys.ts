@@ -28,9 +28,10 @@ export const apiKeys = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
-    // Literally what we're going to search by, always.
+    // For API key lookups.
     uniqueIndex('api_keys_key_hash_idx').on(t.key_hash),
 
+    // For active API keys within an organization.
     index('api_keys_org_active_idx').on(t.organization_id).where(sql`${t.revoked_at} is null`),
     check('api_keys_key_hash_len', sql`length(${t.key_hash}) = 64`),
   ],

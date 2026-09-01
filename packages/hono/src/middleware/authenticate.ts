@@ -165,7 +165,7 @@ export type KeyAuthAdapter = (input: KeyAuthAdapterInput) => Promise<CallerIdent
 /**
  * Options to configure the authentication middleware.
  */
-interface AuthenticateOptions {
+export interface AuthenticateOptions {
   /** The adapter used for JWT-shaped bearer credentials. */
   jwtAdapter: JWTAuthAdapter;
 
@@ -206,6 +206,8 @@ export function authenticate(options: AuthenticateOptions) {
       });
     }
 
+    // Adapters themselves don't care or know about the request. Surface it in
+    // the middleware (AKA here), NOT an adapter.
     const request: RequestInfo = {
       id: c.var.requestId, // Make sure this is set by upstream middleware
       ipAddress: getConnInfo(c).remote.address, // this might be wrong with a reverse proxy... todo fix/investigate, i guess

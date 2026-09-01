@@ -46,7 +46,10 @@ export const userIdentities = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    // For identity lookups from an external provider.
     uniqueIndex('identities_external_idx').on(t.external_idp, t.external_id),
+
+    // For identities belonging to a user.
     index('identities_user_idx').on(t.user_id),
   ],
 );

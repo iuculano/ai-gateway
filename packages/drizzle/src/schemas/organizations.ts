@@ -19,20 +19,21 @@ export const organizations = pgTable(
 
     external_id: text().notNull(),
     external_idp: text().notNull(), // no default: under federation, force callers to name the issuer
-
     name: text().notNull(), // cached from IdP, display-only
-    slug: text().notNull().unique(),
+    slug: text().notNull().unique(), // For unique organization slugs.
     status: text({ enum: ['active', 'suspended', 'deleted'] })
       .notNull()
       .default('active'),
-
     created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp({ withTimezone: true })
       .notNull()
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [uniqueIndex('orgs_external_idx').on(t.external_idp, t.external_id)],
+  (t) => [
+    // For organization lookups from an external provider.
+    uniqueIndex('orgs_external_idx').on(t.external_idp, t.external_id),
+  ],
 );
 
 export type OrganizationRow = typeof organizations.$inferSelect;

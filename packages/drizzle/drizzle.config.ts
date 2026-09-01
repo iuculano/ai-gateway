@@ -1,10 +1,5 @@
 import { defineConfig } from 'drizzle-kit';
 
-// drizzle-kit needs a schema-changing connection. The database name must match
-// POSTGRES_DB in docker-compose.yml.
-//
-// Deliberately no default: silently falling back to localhost is how a db:push
-// ends up applied to the wrong database.
 const connectionString = process.env.POSTGRES_ADMIN_CONNECTION_STRING;
 if (!connectionString) {
   throw new Error(

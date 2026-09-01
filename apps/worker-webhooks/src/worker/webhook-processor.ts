@@ -23,6 +23,8 @@ interface ClaimedDelivery {
  * This is currently at-most-once - a crash after claiming loses the batch,
  * but one failed endpoint cannot block the queue. Logs are not joined because
  * delivery only needs their ids and pruned logs must not strand outbox rows.
+ *
+ * TODO: FIX ME.
  */
 async function claimBatch(): Promise<ClaimedDelivery[]> {
   return db.transaction(async (tx) => {

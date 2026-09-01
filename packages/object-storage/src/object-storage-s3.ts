@@ -23,11 +23,6 @@ export interface S3ObjectStorageClientOptions {
 
 /**
  * The slice of Bun's S3Client this adapter actually uses.
- *
- * Named so the constructor can take a stand-in. `bun` is a builtin module and
- * cannot be intercepted with mock.module, so without a seam the only way to
- * reach the error branches below is to make a real bucket produce each error -
- * which is precisely what a unit test should not have to arrange.
  */
 export interface S3FileApi {
   file(path: string): {
@@ -51,8 +46,7 @@ export class S3ObjectStorageClient implements ObjectStorageClient {
    * Bucket and credentials.
    *
    * @param s3
-   * Overrides the client built from `options`. For tests only; production
-   * passes one argument and gets Bun's client.
+   * Overrides the client built from `options`.
    */
   constructor(options: S3ObjectStorageClientOptions, s3?: S3FileApi) {
     this.s3 =

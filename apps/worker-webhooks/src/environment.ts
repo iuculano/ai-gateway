@@ -8,12 +8,7 @@ const environmentSchema = z.object({
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(1_000).default(25),
   WORKER_DELIVERY_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
-  POSTGRES_CONNECTION_STRING: z
-    .url()
-    .refine(
-      (value) => value.startsWith('postgres://') || value.startsWith('postgresql://'),
-      'Must be a PostgreSQL connection URL',
-    ),
+  POSTGRES_CONNECTION_STRING: z.url(),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;

@@ -30,7 +30,5 @@ export default defineConfig({
   // },
 
   breakpoints: true,
-  // `strict` was dropped from drizzle-kit's config type in the version this
-  // workspace upgraded to; it arrived here from main, which predates that.
   verbose: true,
 });

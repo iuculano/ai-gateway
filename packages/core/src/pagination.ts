@@ -44,15 +44,10 @@ export function toPage<TRow>(rows: TRow[], limit: number, getId: (row: TRow) => 
 export function toPage<TRow>(rows: TRow[], limit: number, getId?: (row: TRow) => string): Page<TRow> {
   const moreData = rows.length > limit;
 
-  // Sliced rather than popped - this array belongs to the caller.
-  // Need to create another so we don't modify the original.
+  // Slice to create a copy so we don't mutate rows.
   const data = moreData ? rows.slice(0, limit) : rows;
   const oldest = data.at(-1);
 
-  // Safe by construction rather than by check: the only overload that lets
-  // getId be omitted constrains TRow to { id: string }, so a row shape without
-  // one cannot reach this branch. The cast exists because the implementation
-  // signature has to cover both overloads and so can't carry the constraint.
   const resolveId = getId ?? ((row: TRow) => (row as { id: string }).id);
 
   return {

@@ -48,11 +48,7 @@ export async function loadOpenIDProvider(issuer: string): Promise<OpenIDProvider
 }
 
 /**
- * Verifies a bearer token against the configured identity provider's JWKS
- * and returns the verified payload.
- *
- * The issuer on the returned payload (payload.iss) is verified and safe to
- * use as the external_idp for the resolve helpers.
+ * Verifies a bearer token. Literally what it says.
  */
 export async function verifyAccessToken(
   token: string,
@@ -67,8 +63,8 @@ export async function verifyAccessToken(
 
     return payload;
   } catch (error) {
-    // A failed verification is the caller's 401, not our 500 - and jose
-    // errors carry the raw claims payload, which must not hit the error log.
+    // Jose throws, rewire to a 401 and make sure we don't dump anything into
+    // logs.
     if (error instanceof jose.errors.JOSEError) {
       throw new HTTPException(401, {
         cause: `Invalid token: ${error.code}`,
