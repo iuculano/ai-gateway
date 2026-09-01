@@ -5,9 +5,7 @@ import { HTTPException } from 'hono/http-exception';
 import Routes from './logs.routes';
 import Services, { type DeleteLogFailure, type GetLogFailure, type GetLogPayloadFailure } from './logs.services';
 
-/**
- * The HTTP translations, one per service failure union.
- */
+// The HTTP translations, one per service failure union.
 function toGetLogHttpException(failure: GetLogFailure): HTTPException {
   const { code } = failure;
 

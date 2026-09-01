@@ -84,15 +84,11 @@ async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promis
   return headers;
 }
 
-/**
- * The HTTP translation for a prompt that could not be expanded.
- */
+// The HTTP translations, one per service failure union.
 function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPException {
   const { code } = failure;
 
   switch (code) {
-    // Only requests that actually name a prompt are held to this, so the
-    // challenge names the scope rather than failing the whole endpoint.
     case 'PROMPT_FORBIDDEN':
       return new HTTPException(403, {
         message: `Expanding a prompt requires the '${failure.required}' scope`,
@@ -116,9 +112,6 @@ function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPExcept
         message: `Prompt '${failure.name}' has no version ${failure.version}`,
       });
 
-    // 422 rather than 400: the body is well formed, and what is wrong is a
-    // fact about the template it named. The names are listed because the
-    // caller cannot see the template to work them out.
     case 'PROMPT_VARIABLES_MISSING':
       return new HTTPException(422, {
         message: `Prompt '${failure.name}' v${failure.version} requires variables that were not supplied: ${failure.missing.join(', ')}`,
@@ -129,12 +122,6 @@ function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPExcept
   }
 }
 
-/**
- * The HTTP translation for an expected completion refusal.
- *
- * Kept here rather than in the service so the service can be reused without
- * importing Hono, matching every other Result-returning endpoint.
- */
 function toChatCompletionHttpException(
   failure: CreateChatCompletionFailure | StreamChatCompletionFailure,
 ): HTTPException {
@@ -213,23 +200,11 @@ function toChatCompletionHttpException(
 /**
  * Expands a prompt reference into a leading system message.
  *
- * Returns a rewritten body rather than mutating: everything downstream - the
- * provider call, the log, the token accounting - should see one request, and
- * that request is the expanded one.
- *
- * Deliberately shaped as "resolve a reference into messages" rather than
- * "prepend a system message", so that a per-message reference, or a prompt
- * whose version carries a whole conversation, is a second call site here and
- * not a redesign.
- *
  * @param body
  * The validated request body, which may or may not name a prompt.
  *
  * @returns
  * The body to send upstream, and the version that was expanded when one was.
- *
- * @throws {HTTPException}
- * When the prompt cannot be resolved or rendered.
  */
 async function expandPrompt(body: ChatCompletionBody): Promise<{ body: ChatCompletionBody; version: number | null }> {
   if (!body.prompt) {

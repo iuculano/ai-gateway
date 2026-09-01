@@ -100,18 +100,6 @@ export type RenderPromptVersionFailure = PromptVersionNotFoundByIdFailure;
 type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
- * The organization predicate, in one place.
- *
- * Every read and write below goes through this rather than spelling the
- * predicate out, so "did this query carry a tenancy check" is answered by
- * whether it called this rather than by re-reading each `where`.
- */
-function scopedToCaller(id: string) {
-  const caller = getCaller();
-  return and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id));
-}
-
-/**
  * Loads a prompt the caller is entitled to, or nothing.
  *
  * @param executor
@@ -124,7 +112,11 @@ function scopedToCaller(id: string) {
  * Take a row lock, for the callers that go on to write through it.
  */
 async function findPrompt(executor: DbExecutor, id: string, lock = false): Promise<PromptRow | undefined> {
-  const query = executor.select().from(prompts).where(scopedToCaller(id));
+  const caller = getCaller();
+  const query = executor
+    .select()
+    .from(prompts)
+    .where(and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id)));
 
   const [row] = lock ? await query.for('update') : await query;
   return row;
@@ -272,6 +264,8 @@ async function updatePrompt(
   id: string,
   body: UpdatePromptBody,
 ): Promise<Result<UpdatePromptResponse, UpdatePromptFailure>> {
+  const caller = getCaller();
+
   // Expected refusals use Result; thrown failures still roll back the transaction.
   const result = await db.transaction(async (tx): Promise<Result<PromptRow, UpdatePromptFailure>> => {
     const existing = await findPrompt(tx, id, true);
@@ -303,8 +297,6 @@ async function updatePrompt(
     const nextName = body.name;
 
     if (nextName !== undefined && difference.name !== undefined) {
-      const caller = getCaller();
-
       const [conflict] = await tx
         .select({ id: prompts.id })
         .from(prompts)
@@ -315,7 +307,11 @@ async function updatePrompt(
       }
     }
 
-    const [row] = await tx.update(prompts).set(updates).where(scopedToCaller(id)).returning();
+    const [row] = await tx
+      .update(prompts)
+      .set(updates)
+      .where(and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id)))
+      .returning();
 
     if (!row) {
       throw new Error('Failed to update prompt');
@@ -355,8 +351,13 @@ async function updatePrompt(
  * The ID of the prompt to delete.
  */
 async function deletePrompt(id: string): Promise<Result<DeletePromptResponse, DeletePromptFailure>> {
+  const caller = getCaller();
+
   return db.transaction(async (tx): Promise<Result<DeletePromptResponse, DeletePromptFailure>> => {
-    const [row] = await tx.delete(prompts).where(scopedToCaller(id)).returning();
+    const [row] = await tx
+      .delete(prompts)
+      .where(and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id)))
+      .returning();
 
     if (!row) {
       return err({ code: 'PROMPT_NOT_FOUND', id });
@@ -403,11 +404,15 @@ async function getPromptVersion(
   id: string,
   version: number,
 ): Promise<Result<GetPromptVersionResponse, GetPromptVersionFailure>> {
+  const caller = getCaller();
+
   const [row] = await db
     .select({ version: promptVersions })
     .from(promptVersions)
     .innerJoin(prompts, eq(prompts.id, promptVersions.prompt_id))
-    .where(and(scopedToCaller(id), eq(promptVersions.version, version)));
+    .where(
+      and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id), eq(promptVersions.version, version)),
+    );
 
   if (!row) {
     return err({ code: 'PROMPT_VERSION_NOT_FOUND', id, version });
@@ -477,6 +482,8 @@ async function createPromptVersion(
   id: string,
   body: CreatePromptVersionBody,
 ): Promise<Result<CreatePromptVersionResponse, CreatePromptVersionFailure>> {
+  const caller = getCaller();
+
   // Version allocation must be serialized per prompt.
   const result = await db.transaction(async (tx): Promise<Result<PromptVersionRow, CreatePromptVersionFailure>> => {
     // Lock the tenant-scoped parent before deriving the next version.
@@ -509,7 +516,10 @@ async function createPromptVersion(
     // Make the first version usable immediately, later promotion stays
     // explicit.
     if (prompt.active_version === null) {
-      await tx.update(prompts).set({ active_version: row.version }).where(scopedToCaller(id));
+      await tx
+        .update(prompts)
+        .set({ active_version: row.version })
+        .where(and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id)));
     }
 
     await AuditLogServices.createAuditLog(
@@ -668,17 +678,14 @@ async function deletePromptVersion(
 /**
  * The mustache tags this renderer recognises.
  *
- * Inner whitespace is optional. Matching remains case-sensitive because input
- * names and the `aig.` namespace are case-sensitive.
+ * Inner whitespace is optional.
  */
 const SUBSTITUTION_PATTERN = /\{\{\s*([A-Za-z0-9._-]+)\s*\}\}/g;
 
 /**
  * Renders a prompt, replacing mustache tags with their values.
  *
- * Built-ins take precedence over caller inputs. Missing values remain visible
- * and are reported as unresolved; a single pass prevents substituted values
- * from introducing new built-in references.
+ * Built-ins take precedence over caller inputs.
  *
  * @param prompt
  * The prompt template to render.
@@ -741,7 +748,9 @@ async function renderPromptVersion(
     .select({ template: promptVersions.prompt, name: prompts.name })
     .from(promptVersions)
     .innerJoin(prompts, eq(prompts.id, promptVersions.prompt_id))
-    .where(and(scopedToCaller(id), eq(promptVersions.version, version)));
+    .where(
+      and(eq(prompts.organization_id, caller.organization.id), eq(prompts.id, id), eq(promptVersions.version, version)),
+    );
 
   if (!row) {
     return err({ code: 'PROMPT_VERSION_NOT_FOUND', id, version });
@@ -756,15 +765,12 @@ async function renderPromptVersion(
     requestId: caller.request.id,
   };
 
-  return ok(renderTemplate(row.template, inputs, context));
+  const rendered = renderTemplate(row.template, inputs, context);
+  return ok(rendered);
 }
 
 /**
  * Resolves a prompt by name and renders it for an inference request.
- *
- * Inference rendering is strict: unresolved tags fail instead of being sent to
- * the provider. The prompt scope is checked here because only inference
- * requests that reference a prompt require it.
  *
  * @param reference
  * The prompt name, the version to pin (or none, for the active one), and the
@@ -781,10 +787,14 @@ async function resolvePrompt(reference: {
     return err({ code: 'PROMPT_FORBIDDEN', required: SCOPES.promptsRead });
   }
 
+  // biome-ignore format: looks nicer
   const [prompt] = await db
     .select()
     .from(prompts)
-    .where(and(eq(prompts.organization_id, caller.organization.id), eq(prompts.name, reference.name)));
+    .where(and(
+      eq(prompts.organization_id, caller.organization.id),
+      eq(prompts.name, reference.name)
+    ));
 
   if (!prompt) {
     return err({ code: 'PROMPT_NOT_FOUND', name: reference.name });
@@ -797,10 +807,14 @@ async function resolvePrompt(reference: {
     return err({ code: 'PROMPT_NO_ACTIVE_VERSION', name: reference.name });
   }
 
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select({ template: promptVersions.prompt })
     .from(promptVersions)
-    .where(and(eq(promptVersions.prompt_id, prompt.id), eq(promptVersions.version, version)));
+    .where(and(
+      eq(promptVersions.prompt_id, prompt.id),
+      eq(promptVersions.version, version)
+    ));
 
   if (!row) {
     return err({ code: 'PROMPT_VERSION_NOT_FOUND', name: reference.name, version });

@@ -32,20 +32,14 @@ async function sealedThrough(organizationId: string): Promise<Date> {
 /**
  * A time series and/or breakdown over the hourly rollup.
  *
- * Sealed hours come from `analytics_hourly`; only the live, unsealed tail comes
- * from `logs`. This keeps historical query cost bounded while still returning
- * current results when the rollup worker is behind.
- *
- * Deliberately not Redis-cached: a cache would add a second staleness window on
+ * Deliberately not Redis-cached, a cache would add a second staleness window on
  * top of the rollup refresh interval.
  *
  * @param request
  * The interval, the dimensions to pivot on, and any filters to narrow by.
  *
  * @returns
- * The points, plus the watermark they are current as of. This has no expected
- * refusal; an empty series is valid and dependency failures reject rather than
- * creating a Result whose error type is never.
+ * The points, plus the watermark they are current as of.
  */
 async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<AnalyticsSeriesResponse> {
   const organizationId = getCaller().organization.id;
@@ -53,9 +47,6 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
 
   const grouped = new Set(request.group_by);
 
-  // Every fragment below comes from a zod enum, so none of this interpolates
-  // caller-controlled text into SQL - the values are already constrained to the
-  // names of columns these tables have.
   const bucket =
     request.interval === 'none' ? sql`null::timestamptz` : sql`date_trunc(${request.interval}, unified.bucket)`;
 

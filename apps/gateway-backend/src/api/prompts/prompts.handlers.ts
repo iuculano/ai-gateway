@@ -63,10 +63,6 @@ function toUpdatePromptHttpException(failure: UpdatePromptFailure): HTTPExceptio
     case 'PROMPT_NAME_TAKEN':
       return nameTakenError(failure.name);
 
-    // The prompt exists and the caller may see it - what is missing is the
-    // version they tried to make active. A 404 here would read as "no such
-    // prompt", so this is a 422: the request is well formed but names
-    // something that is not there to point at.
     case 'PROMPT_VERSION_NOT_FOUND':
       return new HTTPException(422, {
         message: `Version ${failure.version} does not exist on this prompt`,
@@ -386,12 +382,6 @@ const deletePromptVersion = defineOpenAPIRoute({
   },
 });
 
-// Unlike guardrails and webhooks, nothing here depends on registration order:
-// no static segment sits where a parameter does at the same depth, so there is
-// no sibling for `{id}` or `{version}` to swallow. Listed read-then-write per
-// resource purely so the file reads in the order the OpenAPI document does. Any
-// static route added under `/prompts/{...}` later - a `/prompts/search`, say -
-// reintroduces the trap and has to be registered ahead of the parameter.
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
   createPrompt,
   listPrompts,

@@ -9,9 +9,7 @@ import Services, {
   type UpdateRegexGuardrailFailure,
 } from './guardrails.services';
 
-/**
- * The HTTP translations, one per service failure union.
- */
+// The HTTP translations, one per service failure union.
 function toGetGuardrailHttpException(failure: GetGuardrailFailure): HTTPException {
   const { code } = failure;
 

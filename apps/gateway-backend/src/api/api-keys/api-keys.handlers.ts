@@ -11,9 +11,7 @@ import Services, {
   type UpdateApiKeyFailure,
 } from './api-keys.services';
 
-/**
- * Helper so the insufficient_scope header cannot drift between callers.
- */
+// Helper so the insufficient_scope header cannot drift between callers.
 function ungrantableScopesError(held: string[], ungrantable: string[]): HTTPException {
   const ungrantableJoined = ungrantable.join(' ');
 
@@ -28,9 +26,7 @@ function ungrantableScopesError(held: string[], ungrantable: string[]): HTTPExce
   });
 }
 
-/**
- * The HTTP translations, one per service failure union.
- */
+// The HTTP translations, one per service failure union.
 function toGetApiKeyHttpException(failure: GetApiKeyFailure): HTTPException {
   const { code } = failure;
 

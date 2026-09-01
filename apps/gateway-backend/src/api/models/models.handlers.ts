@@ -5,9 +5,7 @@ import { HTTPException } from 'hono/http-exception';
 import Routes from './models.routes';
 import Services, { type DeleteModelFailure, type GetModelFailure, type UpdateModelFailure } from './models.services';
 
-/**
- * The HTTP translations, one per service failure union.
- */
+// The HTTP translations, one per service failure union.
 function toGetModelHttpException(failure: GetModelFailure): HTTPException {
   const { code } = failure;
 

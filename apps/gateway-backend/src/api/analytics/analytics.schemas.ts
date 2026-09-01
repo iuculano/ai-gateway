@@ -5,37 +5,17 @@ const series = createSchema({
   body: z.object({
     start_date: z.iso.datetime().optional(),
     end_date: z.iso.datetime().optional(),
-
-    // 'none' collapses time entirely, which is what a "top models" or "top
-    // callers" list wants - those are rankings, not trends.
     interval: z.enum(['hour', 'day', 'none']).default('none'),
-
-    // Pivot, not filter. The dimensions here become columns on every point;
-    // the filters below still narrow which rows are aggregated.
     group_by: z.array(z.enum(['model', 'provider', 'status', 'actor'])).default([]),
-
     model: z.string().optional(),
     provider: z.string().optional(),
     status: z.enum(['incomplete', 'complete', 'failed']).optional(),
-
-    // Only meaningful with interval 'none' - a ranking has a top, a trend does
-    // not. Ignored otherwise rather than rejected, so a caller can flip the
-    // interval without also having to remember to drop this.
     limit: z.number().int().positive().max(100).optional(),
   }),
 
   response: z.object({
     interval: z.enum(['hour', 'day', 'none']),
     group_by: z.array(z.enum(['model', 'provider', 'status', 'actor'])),
-
-    /**
-     * The exclusive end of what the ROLLUP covers - not the end of the data.
-     *
-     * Anything newer than this is aggregated from `logs` directly and merged in,
-     * so the points are current regardless. This is returned as an operational
-     * signal: the further it lags behind now, the more of the answer came from
-     * raw rows rather than the rollup, and the slower the query was.
-     */
     sealed_through: z.string(),
 
     points: z.array(

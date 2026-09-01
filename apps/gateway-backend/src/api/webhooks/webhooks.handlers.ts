@@ -9,9 +9,7 @@ import Services, {
   type UpdateWebhookFailure,
 } from './webhooks.services';
 
-/**
- * The HTTP translations, one per service failure union.
- */
+// The HTTP translations, one per service failure union.
 function toGetWebhookHttpException(failure: GetWebhookFailure): HTTPException {
   const { code } = failure;
 

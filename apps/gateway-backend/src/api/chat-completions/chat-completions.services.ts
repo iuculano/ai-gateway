@@ -38,14 +38,6 @@ import type {
   ChatCompletionUsage,
 } from './chat-completions.schemas';
 
-/**
- * Instantiated provider clients, keyed by everything that can change their
- * behaviour - including the credential, so one caller's client is never handed
- * to another.
- *
- * Local and in-memory rather than Redis: the value is a live object with an
- * open fetch configuration, which is not something that survives serialisation.
- */
 const providerCache = new LRUCache<string, LanguageModel>({
   max: 1000,
   ttl: 1000 * 60 * 60, // 1 hour
@@ -62,13 +54,8 @@ function isProvider(value: string): value is Provider {
 
 interface ResolvedModel {
   provider: Provider;
-
-  /** The id as the provider knows it - an OpenAI model, an Azure deployment. */
   modelId: string;
-
   instance: LanguageModel;
-
-  /** The catalogue row that authorized this call and supplies its pricing. */
   info: GetModelResponse;
 }
 
@@ -145,8 +132,6 @@ export type CreateChatCompletionFailure =
   | ProviderFailedFailure
   | ProviderTimeoutFailure;
 
-// Streaming is another transport for the same operation and has the same
-// caller-actionable outcomes.
 export type StreamChatCompletionFailure = CreateChatCompletionFailure;
 
 type ProviderFailure =
@@ -158,12 +143,9 @@ type ProviderFailure =
 /**
  * Resolves a request's `model` to something callable.
  *
- * Accepts the catalogue's `provider/model` slug. Every request must resolve to
- * a catalogue row; the row is the source of truth for the provider,
- * provider-side model id, and accounting prices.
- *
  * @param model
- * The `model` field from the request body.
+ * The `model` field from the request body. May be a `provider/model` slug or
+ * just a model name.
  *
  * @param apiKey
  * The caller's upstream provider credential, from the ai-api-key header.
@@ -216,7 +198,8 @@ async function resolveModel(
 }
 
 /**
- * Flattens OpenAI's `string | TextPart[]` content into a plain string.
+ * Helper to flattens OpenAI's `string | TextPart[]` content into a plain
+ * string.
  */
 function flattenText(content: string | Array<{ type: 'text'; text: string }>): string {
   return typeof content === 'string' ? content : content.map((part) => part.text).join('');
@@ -360,9 +343,6 @@ function checkSupported(
 /**
  * The generation settings that map onto the SDK's own call options.
  *
- * Nullish checks preserve valid zero values such as `temperature: 0` and
- * `seed: 0`.
- *
  * @param body
  * The validated request body.
  *
@@ -483,10 +463,13 @@ function mapFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   switch (reason) {
     case 'length':
       return 'length';
+
     case 'content-filter':
       return 'content_filter';
+
     case 'tool-calls':
       return 'tool_calls';
+
     default:
       return 'stop';
   }
@@ -578,10 +561,6 @@ interface OpenLog {
 /**
  * Opens a log for a call that is about to be made.
  *
- * The accounting row is always attempted; omit headers control payload storage,
- * not usage tracking. Logging failures remain non-fatal so an observability
- * outage does not block inference.
- *
  * @param headers
  * The gateway headers, carrying the ai-log-tags control.
  *
@@ -604,7 +583,6 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
       model: model.modelId,
       provider: model.provider,
       tags: tags,
-      // Record the credential that spent; its owner remains available through creator_id.
       actor_type: caller.actor.type,
       actor_id: getActorId(caller),
     });

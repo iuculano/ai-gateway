@@ -107,7 +107,7 @@ async function getApiKey(id: string): Promise<Result<GetApiKeyResponse, GetApiKe
  */
 async function getApiKeyStats(id: string): Promise<Result<GetApiKeyStatsResponse, GetApiKeyStatsFailure>> {
   // Try to grab a key first to validate that it actually exists and belongs to
-  // the caller's organization.
+  // the caller's organization - can't just blindly read from Redis.
   const found = await getApiKey(id);
   if (found.isErr()) {
     return err(found.error);
@@ -125,7 +125,7 @@ async function getApiKeyStats(id: string): Promise<Result<GetApiKeyStatsResponse
     .pTTL(quotaKey) // ms left in the window
     .execTyped();
 
-  // usage is never null: a key that has never been used comes back as an empty
+  // usage is never null - a key that has never been used comes back as an empty
   // object, and a Redis command that fails rejects the whole exec.
   //
   // Individual fields can be absent, which is what the checks below cover.
@@ -247,9 +247,8 @@ async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKey
     const { held, ungrantable } = checkScopes(caller, body.scopes);
 
     if (ungrantable.length > 0) {
-      // Swallowed so the refusal below is what reaches the caller - a failed
-      // write about the refusal must not replace the refusal itself. This is
-      // the one place a failed audit write is deliberately dropped.
+      // Eat the error if this fails so the refusal makes it back to the caller.
+      // Is this sane behavior?
       await AuditLogServices.createAuditLog({
         event: 'api-keys.created',
         target_type: 'api_key',
@@ -325,9 +324,8 @@ async function updateApiKey(
     const { held, ungrantable } = checkScopes(caller, body.scopes);
 
     if (ungrantable.length > 0) {
-      // Swallowed so the refusal below is what reaches the caller - a failed
-      // write about the refusal must not replace the refusal itself. This is
-      // the one place a failed audit write is deliberately dropped.
+      // Eat the error if this fails so the refusal makes it back to the caller.
+      // Is this sane behavior?
       await AuditLogServices.createAuditLog({
         event: 'api-keys.updated',
         target_type: 'api_key',
@@ -394,7 +392,7 @@ async function updateApiKey(
       tx,
     );
 
-    // Reset an API key’s active rate-limit counter when its policy changes.
+    // Reset an API key's active rate-limit counter when its policy changes.
     const rateLimitChanged = 'rate_limit_requests' in difference || 'rate_limit_window' in difference;
     if (rateLimitChanged) {
       await redis.del(apiKeyQuotaKey(row.id));
@@ -436,8 +434,7 @@ async function revokeApiKey(id: string): Promise<Result<RevokeApiKeyResponse, Re
       .returning();
 
     // Failure at this point is ambiguous. If we got back no rows, the key is
-    // either already revoked or doesn't exist - need to check which case it
-    // is.
+    // either already revoked or doesn't exist - need to check which case it is.
     if (!row) {
       // If just a select returns nothing here, the key outright doesn't exist.
       // biome-ignore format: again this makes it uglier

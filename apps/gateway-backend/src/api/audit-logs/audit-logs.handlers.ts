@@ -5,9 +5,7 @@ import { HTTPException } from 'hono/http-exception';
 import Routes from './audit-logs.routes';
 import Services, { type GetAuditLogFailure } from './audit-logs.services';
 
-/**
- * The HTTP translations, one per service failure union.
- */
+// The HTTP translations, one per service failure union.
 function toGetAuditLogHttpException(failure: GetAuditLogFailure): HTTPException {
   const { code } = failure;
 

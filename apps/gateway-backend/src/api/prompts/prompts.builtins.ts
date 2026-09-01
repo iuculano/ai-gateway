@@ -1,48 +1,17 @@
 /**
- * The substitutions the templater resolves on its own.
- *
- * A registry rather than a switch, because three things have to agree on this
- * list: the renderer, the dashboard's variable form, and whatever decides
- * whether a rendered prompt is cacheable. A switch can only serve the first,
- * which is why the dashboard used to carry a hand-copied duplicate of it.
- *
- * `aig.` is reserved. A name under it always resolves here or not at all - it
- * never falls through to caller-supplied inputs - so adding a member can only
- * turn a tag that never worked into one that does. Removing one is the breaking
- * direction.
- *
- * Deliberately no node: imports and no dependency on anything server-side. The
- * dashboard imports this module for the catalogue, so it has to survive being
- * bundled for a browser.
- */
-
-/**
  * How much a built-in's value moves between two otherwise identical renders.
- *
- * Carried per member because the answer decides whether a rendered prompt can
- * be cached, and "it has a date in it" is not the same answer as "it has a
- * millisecond timestamp in it".
  */
 export type Stability =
-  /** Same for every render of this prompt by this organization. */
   | 'fixed'
-  /** Changes at UTC midnight. */
   | 'daily'
-  /** Changes on every render. */
   | 'instant';
 
 /** Everything a built-in may read. Assembled once per render. */
 export interface BuiltinContext {
-  /**
-   * The instant the render started.
-   *
-   * One Date for the whole pass, not one per tag. The previous implementation
-   * called new Date() inside each substitution, so a template using both
-   * `aig.time` and `aig.datetime` could straddle a second boundary and report
-   * two different times for one render.
-   */
+  /** The instant the render started. */
   now: Date;
 
+  /** The organization the request is running under. */
   organization: { id: string; name: string };
 
   /** The prompt being rendered, so a template can state which one it is. */
@@ -52,6 +21,7 @@ export interface BuiltinContext {
   requestId: string | undefined;
 }
 
+/** Represents a built-in variable that can be used in prompts. */
 export interface Builtin {
   /** Shown beside the name in the dashboard's variable list. */
   description: string;
@@ -59,6 +29,7 @@ export interface Builtin {
   /** An example value, so the catalogue reads concretely. */
   example: string;
 
+  /** The built-in's lifecycle/update pattern. */
   stability: Stability;
 
   /**
@@ -70,11 +41,12 @@ export interface Builtin {
   resolve: (context: BuiltinContext) => string | undefined;
 }
 
-/** Formats a part of `now` in UTC. Explicit timeZone, so a server's local zone never leaks in. */
 function part(now: Date, options: Intl.DateTimeFormatOptions): string {
   return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' }).format(now);
 }
 
+// Don't know how I feel about having things like examples stored like this, but
+// it's easy to hand off to the frontend...
 export const BUILTINS = {
   // Clock
   //
@@ -110,8 +82,6 @@ export const BUILTINS = {
     resolve: ({ now }) => String(Math.floor(now.getTime() / 1000)),
   },
 
-  // The individual parts exist so a template can compose a format this list
-  // does not carry, without needing a filter syntax to do it.
   'aig.year': {
     description: 'The current UTC year',
     example: '2026',
@@ -133,8 +103,6 @@ export const BUILTINS = {
     resolve: ({ now }) => now.toISOString().slice(8, 10),
   },
 
-  // Spelled out rather than numeric: a model reasoning about "next Tuesday"
-  // does better with the name than with an ordinal it has to decode first.
   'aig.weekday': {
     description: 'The current UTC day of the week, spelled out',
     example: 'Tuesday',
@@ -156,11 +124,9 @@ export const BUILTINS = {
     resolve: ({ now }) => part(now, { year: 'numeric', month: 'long', day: 'numeric' }),
   },
 
-  // Who and what
-
   'aig.organization_name': {
     description: 'The name of the organization the request is running under',
-    example: 'Northwind Labs',
+    example: 'Apollo Labs',
     stability: 'fixed',
     resolve: ({ organization }) => organization.name,
   },
@@ -174,7 +140,7 @@ export const BUILTINS = {
 
   'aig.prompt_name': {
     description: 'The name of the prompt being rendered',
-    example: 'support-triage',
+    example: 'some-cool-prompt',
     stability: 'fixed',
     resolve: ({ prompt }) => prompt.name,
   },
@@ -186,9 +152,7 @@ export const BUILTINS = {
     resolve: ({ prompt }) => String(prompt.version),
   },
 
-  // Unresolved rather than blank when absent: the id is assigned by upstream
-  // middleware, and a template that asks a model to quote it is better off
-  // showing the tag than quoting an empty string.
+  // NOTE: Relies on middleware upstream.
   'aig.request_id': {
     description: 'The id correlating this render with its log entry',
     example: '01K2Q8ZC7YV3F9J4M6N8P0R2T4',
@@ -196,10 +160,6 @@ export const BUILTINS = {
     resolve: ({ requestId }) => requestId,
   },
 
-  // Generated
-
-  // globalThis.crypto rather than node:crypto - this module is bundled for the
-  // dashboard too, and randomUUID is on both platforms.
   'aig.uuid': {
     description: 'A fresh UUID, different on every render',
     example: '5f8c1d2e-9a3b-4c6d-8e0f-1a2b3c4d5e6f',
@@ -209,16 +169,7 @@ export const BUILTINS = {
 } as const satisfies Record<string, Builtin>;
 
 export type BuiltinName = keyof typeof BUILTINS;
-
-/** The reserved prefix. Every member above starts with it. */
 export const BUILTIN_PREFIX = 'aig.';
-
-/**
- * The catalogue as plain data, for the dashboard's variable list.
- *
- * Stripped of `resolve` on the way out - the dashboard has no context to call
- * one with, and shipping the functions would invite it to try.
- */
 export const BUILTIN_CATALOGUE: { name: string; description: string; example: string; stability: Stability }[] =
   Object.entries(BUILTINS).map(([name, builtin]) => ({
     name,
@@ -227,7 +178,15 @@ export const BUILTIN_CATALOGUE: { name: string; description: string; example: st
     stability: builtin.stability,
   }));
 
-/** Whether a tag name is reserved, whether or not it names a known built-in. */
+/**
+ * Whether a tag name is reserved, whether or not it names a known built-in.
+ *
+ * @param name
+ * The tag name to check.
+ *
+ * @returns
+ * True if the name is reserved, false otherwise.
+ */
 export function isReserved(name: string): boolean {
   return name.startsWith(BUILTIN_PREFIX);
 }
