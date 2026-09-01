@@ -31,7 +31,7 @@ const getLog = createRoute({
       },
     },
   },
-})
+});
 
 const getLogRequest = createRoute({
   method: 'get' as const,
@@ -189,8 +189,7 @@ const getLogStats = createRoute({
   responses: {
     ...protectedRouteErrors,
     200: {
-      description:
-        'Totals for the organization. Estimated above 100,000 logs.',
+      description: 'Totals for the organization. Estimated above 100,000 logs.',
       content: {
         'application/json': {
           schema: Schemas.stats.response,

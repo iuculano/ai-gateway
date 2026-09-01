@@ -1,10 +1,7 @@
 /**
  * How much a built-in's value moves between two otherwise identical renders.
  */
-export type Stability =
-  | 'fixed'
-  | 'daily'
-  | 'instant';
+export type Stability = 'fixed' | 'daily' | 'instant';
 
 /** Everything a built-in may read. Assembled once per render. */
 export interface BuiltinContext {
