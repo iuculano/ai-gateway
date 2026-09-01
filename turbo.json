@@ -2,7 +2,8 @@
   "$schema": "https://turborepo.dev/schema.json",
   "tasks": {
     "build": {
-      "outputs": ["dist/**"]
+      "dependsOn": ["^build"],
+      "outputs": [".svelte-kit/**", "build/**", "dist/**"]
     },
     "check-types": {
       "dependsOn": ["^check-types"]
@@ -11,24 +12,53 @@
       "persistent": true,
       "cache": false
     },
-    "db:generate": {
+    "start": {
+      "persistent": true,
       "cache": false
+    },
+    "test:unit": {
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"],
+      "outputs": []
+    },
+    "test:unit:coverage": {
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.md"],
+      "outputs": ["coverage/**"]
+    },
+    "test:e2e": {
+      "cache": false,
+      "env": ["REDIS_E2E_URL"]
+    },
+    "test:integration": {
+      "dependsOn": ["gateway-backend#test:db:setup"],
+      "cache": false,
+      "env": [
+        "POSTGRES_TEST_ADMIN_CONNECTION_STRING",
+        "REDIS_FRONTEND_TEST_URL",
+        "REDIS_PACKAGE_TEST_URL",
+        "REDIS_TEST_URL",
+        "S3_TEST_ACCESS_KEY_ID",
+        "S3_TEST_BUCKET",
+        "S3_TEST_ENDPOINT",
+        "S3_TEST_REGION",
+        "S3_TEST_SECRET_ACCESS_KEY"
+      ]
+    },
+    "test:db:setup": {
+      "cache": false,
+      "env": ["POSTGRES_TEST_ADMIN_CONNECTION_STRING"]
+    },
+    "db:generate": {
+      "cache": false,
+      "env": ["POSTGRES_ADMIN_CONNECTION_STRING"]
     },
     "db:migrate": {
       "dependsOn": ["db:generate"],
-      "cache": false
+      "cache": false,
+      "env": ["POSTGRES_ADMIN_CONNECTION_STRING"]
     },
     "db:push": {
-      "cache": false
-    },
-    "//#lint": {
-      "inputs": [
-        "apps/**/*.ts",
-        "apps/**/*.tsx",
-        "packages/**/*.ts",
-        "eslint.config.ts"
-      ],
-      "outputs": []
+      "cache": false,
+      "env": ["POSTGRES_ADMIN_CONNECTION_STRING"]
     }
   }
 }

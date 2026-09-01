@@ -1,6 +1,5 @@
 import { db } from '@repo/drizzle';
 
-
 /**
  * Checks the connectivity to the PostgreSQL database by executing a simple
  * query.
@@ -13,9 +12,7 @@ async function checkPostgres(): Promise<boolean> {
   try {
     await db.execute('SELECT 1');
     return true;
-  }
-
-  catch {
+  } catch {
     return false;
   }
 }
@@ -36,17 +33,15 @@ async function checkPostgresTables(requiredTables: string[]): Promise<boolean> {
 
     // Assume that the database connection is valid and just grab the table
     // names.
-    const result = await db.execute(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
-    );
+    const result = await db.execute(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`);
 
+    // db.execute resolves to Record<string, unknown>[], so the row cannot be
+    // annotated as a narrower shape here - the cast belongs on the field.
     const rows = result.map((row) => row.table_name as string);
-    const allExists = requiredTables.every(table => rows.includes(table));
+    const allExists = requiredTables.every((table) => rows.includes(table));
 
     return allExists;
-  }
-
-  catch {
+  } catch {
     // If drizzle threw an exception, we probably have a connection issue and
     // have failed the earlier checkPostgres() check.
     //
@@ -58,4 +53,4 @@ async function checkPostgresTables(requiredTables: string[]): Promise<boolean> {
 export default {
   checkPostgres,
   checkPostgresTables,
-}
+};

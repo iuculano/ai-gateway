@@ -1,15 +1,12 @@
-# db
+# @repo/redis
 
-To install dependencies:
+The shared Redis client, plus some rate limiters taken from the Redis blog.
 
-```bash
-bun install
-```
+## Tests
 
-To run:
+There are no unit tests. The scripts are exercised against a real Redis server.
 
 ```bash
-bun run index.ts
+REDIS_PACKAGE_TEST_URL=redis://host.docker.internal:6379/14 \
+  bun run --cwd packages/redis test:integration
 ```
-
-This project was created using `bun init` in bun v1.3.9. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

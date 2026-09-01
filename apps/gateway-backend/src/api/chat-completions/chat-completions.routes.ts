@@ -1,0 +1,98 @@
+import { createRoute } from '@hono/zod-openapi';
+import { httpError } from '@repo/core';
+import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/hono';
+import { SCOPES } from '../../authorization';
+import Schemas from './chat-completions.schemas';
+
+const createChatCompletion = createRoute({
+  method: 'post' as const,
+  path: '/chat/completions',
+  security: bearerSecurity,
+  middleware: [authorize({ scopes: [SCOPES.chatCompletionsWrite] })],
+  request: {
+    headers: Schemas.createChatCompletion.headers,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.createChatCompletion.body,
+        },
+      },
+    },
+  },
+  responses: {
+    ...validatedProtectedRouteErrors,
+    200: {
+      description: 'Chat completion generated',
+      content: {
+        'application/json': {
+          schema: Schemas.createChatCompletion.response,
+        },
+
+        'text/event-stream': {
+          schema: Schemas.completionChunk,
+        },
+      },
+    },
+    401: {
+      description: 'Gateway authentication failed, or the upstream provider rejected the supplied ai-api-key',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    404: {
+      description: 'The request named a prompt, prompt version, webhook, or model that does not exist',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    422: {
+      description: 'The named prompt cannot be expanded - it has no active version, or variables were not supplied',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    429: {
+      description: 'Rate limit exceeded, either here or upstream',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    502: {
+      description: 'The upstream provider failed',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    503: {
+      description: 'A requested webhook delivery could not be queued because its inference log was unavailable',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    504: {
+      description: 'The upstream provider timed out',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+  },
+});
+
+export default {
+  createChatCompletion,
+};

@@ -1,37 +1,44 @@
-# https://bun.sh/guides/ecosystem/docker
-# https://hub.docker.com/r/oven/bun/tags
-FROM    oven/bun:1.2-slim AS base
+# syntax=docker/dockerfile:1.7
+
+# Build from the repository root:
+# docker build -f apps/worker-webhooks/Dockerfile -t ai-gateway-worker-webhooks .
+ARG BUN_VERSION=1.4.0
+# Chainguard's free tier publishes :latest only and rebuilds it daily, so this
+# tag moves under us - two builds a week apart can sit on different glibc. Mirror
+# a digest into GHCR and point this at that if builds need to be reproducible.
+ARG RUNTIME_IMAGE=cgr.dev/chainguard/glibc-dynamic:latest
+
+FROM oven/bun:${BUN_VERSION}-slim AS pruner
+ARG TURBO_VERSION=2.10.11
+ENV TURBO_TELEMETRY_DISABLED=1
+WORKDIR /repo
+
+COPY . .
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bunx turbo@${TURBO_VERSION} prune worker-webhooks --docker
+
+FROM oven/bun:${BUN_VERSION}-slim AS builder
+ENV NODE_ENV=production
+WORKDIR /repo
+
+# The manifests first, so a change to application source does not reinstall the
+# dependency tree. turbo prune emits out/json for exactly this.
+COPY --from=pruner /repo/out/json/ .
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile --production
+
+COPY --from=pruner /repo/out/full/ .
+RUN bun run --cwd apps/worker-webhooks build
+
+FROM ${RUNTIME_IMAGE} AS runtime
+ENV NODE_ENV=production \
+    PORT=8082
 WORKDIR /app
 
-# install dependencies into temp directory
-# this will cache them and speed up future builds
-FROM base AS install
-RUN  mkdir -p /temp/dev
-COPY package.json bun.lock /temp/dev/
-RUN  cd /temp/dev && bun install --frozen-lockfile
+COPY --from=builder --chown=65532:65532 --chmod=0555 \
+    /repo/apps/worker-webhooks/dist/worker-webhooks /app/worker-webhooks
 
-# install with --production (exclude devDependencies)
-RUN  mkdir -p /temp/prod
-COPY package.json bun.lock /temp/prod/
-RUN  cd /temp/prod && bun install --frozen-lockfile --production
-
-# copy node_modules from temp directory
-# then copy all (non-ignored) project files into the image
-FROM base AS prerelease
-COPY --from=install /temp/dev/node_modules node_modules
-COPY . .
-
-# [optional] tests & build
-# ENV NODE_ENV=production
-# RUN bun test
-# RUN bun run build
-
-# copy production dependencies and source code into final image
-FROM base AS release
-COPY --from=install /temp/prod/node_modules node_modules
-COPY --from=prerelease /app/src/ .
-
-
-USER       bun
-EXPOSE     3000/tcp
-ENTRYPOINT [ "bun", "run", "index.ts" ]
+USER 65532:65532
+EXPOSE 8082
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/app/worker-webhooks"]

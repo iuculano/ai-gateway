@@ -1,0 +1,40 @@
+# Repository and local tooling
+.git
+.github
+.agents
+.codex
+.devcontainer
+.idea
+.vscode
+.editorconfig
+.gitignore
+
+# Dependencies, caches, and build output
+**/.git
+**/.turbo
+**/.cache
+**/node_modules
+**/.svelte-kit
+**/build
+**/dist
+**/out
+**/coverage
+**/coverage-*
+**/*.tsbuildinfo
+
+# Files not needed by application builds
+**/tests
+**/*.md
+docker-compose*.yml
+docker-compose*.yaml
+compose*.yml
+compose*.yaml
+
+# Local configuration and secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local noise
+**/*.log
+**/.DS_Store

@@ -1,15 +1,10 @@
-# db
+# @repo/core
 
-To install dependencies:
+Small shared pieces with no home of their own.
 
-```bash
-bun install
-```
-
-To run:
+## Tests
 
 ```bash
-bun run index.ts
+bun run --cwd packages/core test:unit
+bun run --cwd packages/core test:unit:coverage
 ```
-
-This project was created using `bun init` in bun v1.3.9. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

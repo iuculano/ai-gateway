@@ -1,15 +1,12 @@
-# db
+# @repo/hono
 
-To install dependencies:
+Shared Hono middleware, OpenAPI response helpers, and the request-scoped caller
+context.
 
-```bash
-bun install
-```
+## Tests
 
-To run:
 
 ```bash
-bun run index.ts
+bun run --cwd packages/hono test:unit
+bun run --cwd packages/hono test:unit:coverage
 ```
-
-This project was created using `bun init` in bun v1.3.9. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
