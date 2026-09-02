@@ -14,6 +14,7 @@ export const SCOPES = {
   modelsWrite: 'models:write',
   promptsRead: 'prompts:read',
   promptsWrite: 'prompts:write',
+  tracesWrite: 'traces:write',
   webhooksRead: 'webhooks:read',
   webhooksWrite: 'webhooks:write',
 } as const;
@@ -35,6 +36,7 @@ export const ROLE_SCOPES_MAP: Record<string, string[]> = {
     SCOPES.logsRead,
     SCOPES.modelsRead,
     SCOPES.promptsRead,
+    SCOPES.tracesWrite,
     SCOPES.webhooksRead,
   ],
 };
