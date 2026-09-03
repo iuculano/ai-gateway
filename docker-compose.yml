@@ -30,6 +30,25 @@ services:
       timeout:  5s
       retries:  5
 
+  # Local storage for customer application traces. The gateway-facing OTLP
+  # endpoint is http://victoria-traces:10428/insert/opentelemetry/v1/traces.
+  victoria-traces:
+    image:   victoriametrics/victoria-traces:v0.10.0
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/victoria-traces-data
+    ports:
+      - "10428:10428"  # OTLP/HTTP, query API, and VMUI
+    volumes:
+      - victoria_traces_data:/victoria-traces-data
+    healthcheck:
+      # The hardened image has no shell or HTTP client. If the server process
+      # exits, the container stops.
+      test:     ["CMD", "/victoria-traces-prod", "-version"]
+      interval: 5s
+      timeout:  5s
+      retries:  5
+
   minio:
     image:   minio/minio:latest
     restart: unless-stopped
@@ -65,4 +84,5 @@ services:
 volumes:
   pg_data:
   valkey_data:
+  victoria_traces_data:
   minio_data:
