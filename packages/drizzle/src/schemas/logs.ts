@@ -20,6 +20,9 @@ export const logs = pgTable(
       .references(() => organizations.id, { onDelete: 'restrict' }),
     model: text().notNull(),
     provider: text().notNull(),
+    trace_id: text(),
+    span_id: text(),
+    parent_span_id: text(),
     status: text({ enum: ['incomplete', 'complete', 'failed'] })
       .notNull()
       .default('incomplete'),
@@ -55,6 +58,9 @@ export const logs = pgTable(
 
     // For time-based analytics within an organization.
     index('logs_org_created_idx').on(t.organization_id, t.created_at),
+
+    // For assembling every gateway request that belongs to one application trace.
+    index('logs_org_trace_idx').on(t.organization_id, t.trace_id, t.id),
   ],
 );
 
