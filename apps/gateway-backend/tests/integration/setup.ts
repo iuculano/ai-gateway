@@ -86,6 +86,14 @@ assertIsTestRedis(redisConnectionString);
 process.env.POSTGRES_CONNECTION_STRING = adminConnectionString;
 process.env.REDIS_URL = redisConnectionString;
 process.env.VICTORIA_TRACES_URL = victoriaTracesUrl;
+process.env.S3_ENDPOINT = objectStorageOptions.endpoint;
+process.env.S3_BUCKET = objectStorageOptions.bucket;
+process.env.S3_ACCESS_KEY_ID = objectStorageOptions.accessKeyId;
+process.env.S3_SECRET_ACCESS_KEY = objectStorageOptions.secretAccessKey;
+process.env.S3_REGION = objectStorageOptions.region;
+process.env.AUTH_TOKEN_ISSUER = 'https://issuer.integration.test';
+process.env.AUTH_TOKEN_AUDIENCE = 'gateway-integration-tests';
+process.env.NODE_ENV = 'test';
 
 /**
  * The harness's direct database connection.
