@@ -34,7 +34,7 @@
     "@repo/object-storage": "workspace:*",
     "@repo/redis": "workspace:*",
     "ai": "^7.0.84",
-    "drizzle-orm": "^1.0.0-rc.5-ab785fc",
+    "drizzle-orm": "^1.0.0-rc.5-169397b",
     "hono": "^4.13.5",
     "lru-cache": "^11.5.2",
     "neverthrow": "^8.2.0",
