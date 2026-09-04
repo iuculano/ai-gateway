@@ -68,6 +68,7 @@ function assertIsTestRedis(connectionString: string): void {
 
 const adminConnectionString = required('POSTGRES_TEST_ADMIN_CONNECTION_STRING');
 const redisConnectionString = required('REDIS_TEST_URL');
+const victoriaTracesUrl = required('VICTORIA_TRACES_TEST_URL');
 const objectStorageOptions = {
   endpoint: required('S3_TEST_ENDPOINT'),
   bucket: required('S3_TEST_BUCKET'),
@@ -84,6 +85,7 @@ assertIsTestRedis(redisConnectionString);
 // would otherwise point the whole suite at the development database.
 process.env.POSTGRES_CONNECTION_STRING = adminConnectionString;
 process.env.REDIS_URL = redisConnectionString;
+process.env.VICTORIA_TRACES_URL = victoriaTracesUrl;
 
 /**
  * The harness's direct database connection.
@@ -103,6 +105,8 @@ const TABLES = [
   'audit_logs',
   'api_keys',
   'guardrails',
+  'trace_spans',
+  'traces',
   'logs',
   'webhooks',
   'models',

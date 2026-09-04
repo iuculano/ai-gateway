@@ -1,5 +1,14 @@
 import type { SeriesResponse } from '../../src/lib/api/analytics';
-import type { ApiKey, CatalogProvider, CreatedApiKey, Log, Prompt, PromptVersion } from '../../src/lib/api/types';
+import type {
+  ApiKey,
+  CatalogProvider,
+  CreatedApiKey,
+  Log,
+  Prompt,
+  PromptVersion,
+  Trace,
+  TraceDetail,
+} from '../../src/lib/api/types';
 import type { ApiMock, RecordedApiRequest } from './api-mock';
 
 export const IDS = {
@@ -10,6 +19,17 @@ export const IDS = {
   failedLog: '0198f100-0000-7000-8000-000000000005',
   actor: '0198f100-0000-7000-8000-000000000006',
   model: '0198f100-0000-7000-8000-000000000007',
+  trace: '0198f100-0000-7000-8000-000000000008',
+  failedTrace: '0198f100-0000-7000-8000-000000000009',
+} as const;
+
+/** W3C ids, which are hex rather than uuids - see the trace schemas. */
+export const TRACE_IDS = {
+  workflow: 'f3a8c17d4e2b49b6a5018c9209f4d811',
+  failed: '4bf92f3577b34da6a3ce929d0e0e4736',
+  rootSpan: '8f2b7c1d9a4e6102',
+  llmSpan: '1c7e93a842d6b501',
+  gatewaySpan: '36b8a2e419f70c55',
 } as const;
 
 export const PAGE_META = { oldest_id: null, more_data: false } as const;
@@ -64,6 +84,12 @@ export const SUCCESS_LOG: Log = {
   id: IDS.successLog,
   model: 'gpt-5',
   provider: 'openai',
+
+  // Correlated, so the logs table's trace column has something to render and
+  // the link back to the run is covered.
+  trace_id: TRACE_IDS.workflow,
+  span_id: TRACE_IDS.gatewaySpan,
+  parent_span_id: TRACE_IDS.llmSpan,
   status: 'complete',
   actor_type: 'user',
   actor_id: IDS.actor,
@@ -89,6 +115,113 @@ export const FAILED_LOG: Log = {
   output_cost: 0,
   response_time_ms: 90,
   has_response: false,
+};
+
+export const TRACE: Trace = {
+  id: IDS.trace,
+  trace_id: TRACE_IDS.workflow,
+  name: 'checkout-recovery-agent',
+  status: 'complete',
+  started_at: '2026-08-20T14:00:00.000Z',
+  ended_at: '2026-08-20T14:00:12.180Z',
+  duration_ms: 12_180,
+  total_input_tokens: 1_480,
+  total_output_tokens: 312,
+  total_cost: 0.0028,
+  log_count: 1,
+  span_count: 2,
+  tool_count: 0,
+  error_count: 0,
+  tags: { environment: 'production' },
+  created_at: CREATED_AT,
+  updated_at: UPDATED_AT,
+};
+
+export const FAILED_TRACE: Trace = {
+  ...TRACE,
+  id: IDS.failedTrace,
+  trace_id: TRACE_IDS.failed,
+  name: 'customer-support-escalation',
+  status: 'failed',
+  duration_ms: 2_400,
+  error_count: 1,
+};
+
+/**
+ * The waterfall as the backend projects it: application spans and the gateway
+ * log correlated to them, already ordered, with their depth resolved.
+ */
+export const TRACE_DETAIL: TraceDetail = {
+  trace: { ...TRACE, detail_status: 'complete', window_ms: 12_180 },
+  nodes: [
+    {
+      id: TRACE_IDS.rootSpan,
+      parent_id: null,
+      depth: 0,
+      source: 'application_span',
+      kind: 'workflow',
+      name: 'checkout-recovery-agent',
+      status: 'ok',
+      start_offset_ms: 0,
+      duration_ms: 12_180,
+      model: null,
+      provider: null,
+      input_tokens: null,
+      output_tokens: null,
+      cost: null,
+      log_id: null,
+      attributes: { service: 'invoice-worker' },
+    },
+    {
+      id: TRACE_IDS.llmSpan,
+      parent_id: TRACE_IDS.rootSpan,
+      depth: 1,
+      source: 'application_span',
+      kind: 'llm',
+      name: 'streamText · diagnose checkout',
+      status: 'ok',
+      start_offset_ms: 180,
+      duration_ms: 2_240,
+      model: null,
+      provider: null,
+      input_tokens: null,
+      output_tokens: null,
+      cost: null,
+      log_id: null,
+      attributes: {},
+    },
+    {
+      id: TRACE_IDS.gatewaySpan,
+      parent_id: TRACE_IDS.llmSpan,
+      depth: 2,
+      source: 'gateway_log',
+      kind: 'llm',
+      name: 'gateway · gpt-5-mini',
+      status: 'ok',
+      start_offset_ms: 236,
+      duration_ms: 2_058,
+      model: 'gpt-5-mini',
+      provider: 'openai',
+      input_tokens: 1_480,
+      output_tokens: 312,
+      cost: 0.0028,
+      log_id: IDS.successLog,
+      attributes: { environment: 'production' },
+    },
+  ],
+};
+
+export const FAILED_TRACE_DETAIL: TraceDetail = {
+  trace: { ...FAILED_TRACE, detail_status: 'partial', window_ms: 2_400 },
+  nodes: [
+    {
+      ...TRACE_DETAIL.nodes[0],
+      name: 'customer-support-escalation',
+      status: 'error',
+      duration_ms: 2_400,
+      attributes: {},
+    },
+  ],
 };
 
 export const CATALOGUE: CatalogProvider[] = [
@@ -137,6 +270,7 @@ export function registerEmptyApp(api: ApiMock): void {
   api.get('/api/providers', { json: { data: [] } });
   api.get('/api/prompts', { json: { data: [], meta: PAGE_META } });
   api.get('/api/logs', { json: { data: [], meta: LOG_META } });
+  api.get('/api/traces', { json: { data: [], meta: LOG_META } });
   api.get('/api/audit-logs', { json: { data: [], meta: PAGE_META } });
   api.get('/api/webhooks', { json: { data: [], meta: PAGE_META } });
   api.get('/api/webhooks/outbox', { json: { data: [], meta: PAGE_META } });

@@ -162,7 +162,7 @@ async function completionFailure(...args: Parameters<typeof ResultServices.creat
 }
 
 const { OpenAPIHono } = await import('@hono/zod-openapi');
-const { callerContext, errorHandler } = await import('@repo/hono');
+const { callerContext, errorHandler, traceContext } = await import('@repo/hono');
 const { default: handlers } = await import('../../src/api/chat-completions/chat-completions.handlers');
 
 const httpCaller = {
@@ -171,6 +171,7 @@ const httpCaller = {
 };
 const app = new OpenAPIHono();
 app.onError(errorHandler());
+app.use('*', traceContext());
 app.use('*', async (c, next) => {
   c.set('caller', httpCaller);
   // biome-ignore lint/suspicious/noExplicitAny: minimal request logger for handler tests
@@ -1460,13 +1461,24 @@ test('a failure before the first chunk is still a normal error response, not a b
 
   expect(response.status).toBe(401);
   expect(response.headers.get('content-type')).not.toContain('text/event-stream');
+  expect(response.headers.get('ai-trace-id')).toMatch(/^[0-9a-f]{32}$/);
 });
 
 test('the non-streaming handler echoes the log id it opened', async () => {
-  const response = await post(body());
+  const traceId = '4bf92f3577b34da6a3ce929d0e0e4736';
+  const parentSpanId = '00f067aa0ba902b7';
+  const response = await post(body(), { traceparent: `00-${traceId}-${parentSpanId}-01` });
 
   expect(response.status).toBe(200);
   expect(response.headers.get('ai-log-id')).toBe(LOG_ID);
+  expect(response.headers.get('ai-trace-id')).toBe(traceId);
+  expect(logWrites.started[0]).toMatchObject({
+    entry: {
+      trace_id: traceId,
+      parent_span_id: parentSpanId,
+      span_id: expect.stringMatching(/^[0-9a-f]{16}$/),
+    },
+  });
   await expect(response.json()).resolves.toMatchObject({
     object: 'chat.completion',
     choices: [{ message: { content: 'Hello from the provider' } }],
