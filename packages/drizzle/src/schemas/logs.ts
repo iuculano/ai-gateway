@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { check, index, integer, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 
 /**
@@ -61,6 +61,21 @@ export const logs = pgTable(
 
     // For assembling every gateway request that belongs to one application trace.
     index('logs_org_trace_idx').on(t.organization_id, t.trace_id, t.id),
+
+    check(
+      'logs_trace_id_shape',
+      sql`${t.trace_id} IS NULL OR (${t.trace_id} ~ '^[0-9a-f]{32}$' AND ${t.trace_id} <> repeat('0', 32))`,
+    ),
+
+    check(
+      'logs_span_id_shape',
+      sql`${t.span_id} IS NULL OR (${t.span_id} ~ '^[0-9a-f]{16}$' AND ${t.span_id} <> repeat('0', 16))`,
+    ),
+
+    check(
+      'logs_parent_span_id_shape',
+      sql`${t.parent_span_id} IS NULL OR (${t.parent_span_id} ~ '^[0-9a-f]{16}$' AND ${t.parent_span_id} <> repeat('0', 16))`,
+    ),
   ],
 );
 
