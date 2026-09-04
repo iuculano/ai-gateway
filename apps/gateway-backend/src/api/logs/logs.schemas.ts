@@ -13,6 +13,8 @@ import { createSelectSchema } from 'drizzle-orm/zod';
  */
 const MAX_BATCH_SIZE = 100;
 
+const traceId = z.string().regex(/^[0-9a-f]{32}$/);
+
 const logShape = createSelectSchema(logs)
   .omit({
     organization_id: true,
@@ -107,6 +109,7 @@ const listLogs = createSchema({
     model: z.string().optional(),
     provider: z.string().optional(),
     status: z.enum(['incomplete', 'complete', 'failed']).optional(),
+    trace_id: traceId.optional(),
     tags: z.string().optional(), // "key1:value1,key2:value2"
     limit: z.coerce.number().int().min(1).max(250).optional().default(25),
     before_id: z.uuidv7().optional(),
