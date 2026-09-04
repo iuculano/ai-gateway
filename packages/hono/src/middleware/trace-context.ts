@@ -9,6 +9,13 @@ const TRACEPARENT_PATTERN = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-
 const ZERO_TRACE_ID = '0'.repeat(32);
 const ZERO_SPAN_ID = '0'.repeat(16);
 
+/** W3C identifiers established for one gateway request. */
+export interface RequestTraceContext {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+}
+
 // Make the trace identifiers visible on every Context: c.var.traceId and
 // c.var.spanId are typed everywhere. They are undefined on routes that
 // traceContext() does not cover.
@@ -60,6 +67,11 @@ export function traceContext() {
     c.set('traceId', traceId);
     c.set('spanId', randomBytes(8).toString('hex'));
     c.set('parentSpanId', parentSpanId);
+
+    // A caller without an OTel propagator can still correlate this response
+    // with the canonical gateway log. Setting it before next() also keeps the
+    // handle on validation, authentication, and provider error responses.
+    c.header('ai-trace-id', traceId);
 
     await next();
   });
