@@ -646,9 +646,6 @@ async function closeLog(
   } catch (error) {
     log.logger.error({ err: error, log_id: log.id }, 'Failed to store inference log payloads');
   }
-
-  // Attempt completion first so successful log writes are visible before fan-out.
-  await WebhookServices.fanOutForLog(log.organizationId, log.id, log.tags);
 }
 
 /**
