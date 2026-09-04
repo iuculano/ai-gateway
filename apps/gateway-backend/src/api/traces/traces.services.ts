@@ -418,7 +418,7 @@ function createNodesFromSpans(spans: VictoriaSpan[]): UnresolvedNode[] {
   return spans.map((span) => {
     const start = nanoseconds(span.start_time_unix_nano);
     const end = nanoseconds(span.end_time_unix_nano);
-    const scope = span.scope_name || '';
+    const scope = span.scope_name;
 
     return {
       id: span.span_id,

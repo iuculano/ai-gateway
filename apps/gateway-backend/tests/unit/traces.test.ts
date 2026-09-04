@@ -362,7 +362,7 @@ test('GET /traces/:trace_id builds a tenant-scoped waterfall and hides arbitrary
     kind: 'workflow',
     status: 'ok',
     duration_ms: 12_180,
-    attributes: { service: 'invoice-worker', scope: '@ai-sdk/otel@1.0.0' },
+    attributes: { service: 'invoice-worker', scope: '@ai-sdk/otel' },
   });
   expect(body.nodes[2]).toMatchObject({ kind: 'tool', status: 'error' });
   expect(body.nodes[2].attributes).not.toHaveProperty('request.body');
