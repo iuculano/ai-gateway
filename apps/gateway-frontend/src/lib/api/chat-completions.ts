@@ -33,6 +33,9 @@ export type { ChatCompletionChunk };
 /** Echoed by the gateway so a caller can find its own row on the logs page. */
 const LOG_ID_HEADER = 'ai-log-id';
 
+/** Echoed by the gateway so a caller can correlate every log in one trace. */
+const TRACE_ID_HEADER = 'ai-trace-id';
+
 /** Frames are separated by a blank line. The CR form is legal and does occur. */
 const FRAME_BOUNDARY = /\r?\n\r?\n/;
 
@@ -184,6 +187,7 @@ export async function createChatCompletion(headers: GatewayHeaders, body: ChatCo
 
   return {
     logId: response.headers.get(LOG_ID_HEADER),
+    traceId: response.headers.get(TRACE_ID_HEADER),
     completion: payload,
   };
 }
@@ -225,6 +229,7 @@ export async function streamChatCompletion(headers: GatewayHeaders, body: ChatCo
 
   return {
     logId: response.headers.get(LOG_ID_HEADER),
+    traceId: response.headers.get(TRACE_ID_HEADER),
     chunks: readChunks(response.body),
   };
 }

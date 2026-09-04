@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
+import CardToolbar from './card-toolbar.svelte';
 import ToolbarButton from './toolbar-button.svelte';
 
 /**
@@ -50,9 +51,9 @@ let {
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">
 	{#if toolbar}
-		<div class="flex flex-wrap items-center gap-3 border-b border-line px-4 py-[13px]">
+		<CardToolbar>
 			{@render toolbar()}
-		</div>
+		</CardToolbar>
 	{/if}
 
 	<div

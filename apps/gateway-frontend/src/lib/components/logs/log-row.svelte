@@ -11,7 +11,7 @@ import JsonView from '$lib/components/logs/json-view.svelte';
 import MessageList from '$lib/components/logs/message-list.svelte';
 import type { Turn } from '$lib/data/conversation';
 import { requestTurns, responseTurns, turnsToText } from '$lib/data/conversation';
-import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone } from '$lib/data/format';
+import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone, traceTone } from '$lib/data/format';
 
 export type PayloadView = 'simple' | 'json';
 
@@ -179,6 +179,27 @@ function copy(text: string, label: string) {
 		<code class="overflow-hidden font-mono text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-300">
 			{log.model}
 		</code>
+
+		{#if log.trace_id}
+			<!-- The dot is the correlation cue: every request from one run carries the
+			     same colour, so a trace reads as a group in the table without anyone
+			     comparing hex strings. stopPropagation because the whole row is a
+			     toggle, and following the link should not also expand the payload. -->
+			<a
+				href="/traces?trace={log.trace_id}"
+				title="Open this trace · {log.trace_id}"
+				aria-label="Open trace {log.trace_id}"
+				class="inline-flex min-w-0 items-center gap-[7px] rounded px-1 py-0.5 -mx-1 hover:bg-surface-5"
+				onclick={(event) => event.stopPropagation()}
+			>
+				<span class="size-[7px] flex-none rounded-[2px]" style:background={traceTone(log.trace_id)}></span>
+				<span class="overflow-hidden font-mono text-[11.5px] text-ellipsis whitespace-nowrap text-zinc-400">
+					{log.trace_id.slice(0, 8)}
+				</span>
+			</a>
+		{:else}
+			<span class="font-mono text-[11.5px] text-zinc-700">—</span>
+		{/if}
 
 		<span class="inline-flex items-center gap-1.5 text-xs font-medium" style:color={status.color}>
 			<span class="size-1.5 flex-none rounded-full" style:background={status.color}></span>{status.label}

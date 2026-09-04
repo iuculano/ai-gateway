@@ -71,6 +71,10 @@ const itemClass = (active: boolean) =>
 			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.8 8h2.6l1.5-3.6 2.3 7.2 1.6-4.3 1.1 2.1h3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
 			<span>Logs</span>
 		</a>
+		<a href="/traces" class={itemClass(isActive('/traces'))}>
+			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="3" cy="3.2" r="1.5" stroke="currentColor" stroke-width="1.3" /><circle cx="12.8" cy="8" r="1.5" stroke="currentColor" stroke-width="1.3" /><circle cx="3" cy="12.8" r="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M4.5 3.2h2A2.5 2.5 0 019 5.7v.8M4.5 12.8h2A2.5 2.5 0 009 10.3v-.8M9 8h2.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
+			<span>Traces</span>
+		</a>
 		<a href="/analytics" class={itemClass(isActive('/analytics'))}>
 			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 14V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><rect x="4" y="8" width="2.6" height="4.5" rx=".8" fill="currentColor" /><rect x="7.7" y="5" width="2.6" height="7.5" rx=".8" fill="currentColor" /><rect x="11.4" y="2.5" width="2.6" height="10" rx=".8" fill="currentColor" /></svg>
 			<span>Analytics</span>

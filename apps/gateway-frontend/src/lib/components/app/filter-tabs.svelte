@@ -15,9 +15,12 @@
 let {
   tabs,
   value = $bindable(),
+  equalWidth = false,
 }: {
   tabs: { id: T; label: string; color?: string }[];
   value: T;
+  /** Gives every segment the same 72px width for filters that must align across pages. */
+  equalWidth?: boolean;
 } = $props();
 </script>
 
@@ -26,7 +29,9 @@ let {
 		{@const on = value === tab.id}
 		<button
 			type="button"
-			class="flex h-[26px] items-center gap-[7px] rounded-md px-[13px] text-[12.5px] font-medium {on
+			class="flex h-[26px] items-center gap-[7px] rounded-md text-[12.5px] font-medium {equalWidth
+				? 'w-[72px] justify-center px-2'
+				: 'px-[13px]'} {on
 				? 'bg-seg text-zinc-50 shadow-[0_1px_2px_rgba(0,0,0,.3)]'
 				: 'text-zinc-500 hover:text-zinc-300'}"
 			onclick={() => (value = tab.id)}
