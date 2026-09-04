@@ -7,6 +7,7 @@ import guardrailHandlers from './api/guardrails/guardrails.handlers';
 import logHandlers from './api/logs/logs.handlers';
 import modelHandlers from './api/models/models.handlers';
 import promptHandlers from './api/prompts/prompts.handlers';
+import traceHandlers from './api/traces/traces.handlers';
 import webhookHandlers from './api/webhooks/webhooks.handlers';
 
 /**
@@ -27,6 +28,7 @@ export const apiRoutes = new OpenAPIHono()
   .route('/', logHandlers)
   .route('/', modelHandlers)
   .route('/', promptHandlers)
+  .route('/', traceHandlers)
   .route('/', webhookHandlers);
 
 export type ApiType = typeof apiRoutes;

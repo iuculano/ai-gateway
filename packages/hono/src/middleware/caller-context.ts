@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { type Logger, logger as rootLogger } from '@repo/core';
 import { createMiddleware } from 'hono/factory';
 import type { Caller } from './authenticate';
+import type { RequestTraceContext } from './trace-context';
 
 /**
  * Maintains the caller and logger for the current asynchronous flow.
@@ -16,6 +17,9 @@ interface AmbientScope {
 
   /** The request logger bound to the current asynchronous flow. */
   logger: Logger;
+
+  /** The W3C correlation identifiers bound to the current request. */
+  trace?: RequestTraceContext;
 }
 
 const store = new AsyncLocalStorage<AmbientScope>();
@@ -51,11 +55,22 @@ export function getLogger(): Logger {
 }
 
 /**
+ * Returns the W3C correlation identifiers for the active request, when the
+ * trace-context middleware established them.
+ */
+export function getTraceContext(): RequestTraceContext | undefined {
+  return store.getStore()?.trace;
+}
+
+/**
  * Options for runWithCaller().
  */
 export interface RunWithCallerOptions {
   /** The request logger bound to the current asynchronous flow. */
   logger?: Logger;
+
+  /** W3C correlation identifiers bound to the current asynchronous flow. */
+  trace?: RequestTraceContext;
 }
 
 /**
@@ -98,8 +113,10 @@ export function getAccountableUserId(caller: Caller): string {
  * Additional options for binding the caller.
  */
 export function runWithCaller<T>(caller: Caller, work: () => T, options: RunWithCallerOptions = {}): T {
-  const logger = options.logger ?? store.getStore()?.logger ?? rootLogger;
-  return store.run({ caller, logger }, work);
+  const active = store.getStore();
+  const logger = options.logger ?? active?.logger ?? rootLogger;
+  const trace = options.trace ?? active?.trace;
+  return store.run({ caller, logger, trace }, work);
 }
 
 /**
@@ -110,6 +127,15 @@ export function runWithCaller<T>(caller: Caller, work: () => T, options: RunWith
  */
 export function callerContext() {
   return createMiddleware(async (c, next) => {
-    return runWithCaller(c.var.caller, next, { logger: c.var.logger });
+    const trace =
+      c.var.traceId && c.var.spanId
+        ? {
+            traceId: c.var.traceId,
+            spanId: c.var.spanId,
+            ...(c.var.parentSpanId ? { parentSpanId: c.var.parentSpanId } : {}),
+          }
+        : undefined;
+
+    return runWithCaller(c.var.caller, next, { logger: c.var.logger, trace });
   });
 }

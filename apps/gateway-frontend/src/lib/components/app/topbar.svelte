@@ -15,6 +15,7 @@ let searchEl: HTMLInputElement | null = $state(null);
 const SECTIONS = [
   { prefix: '/keys', label: 'API Keys', placeholder: 'Search keys…' },
   { prefix: '/logs', label: 'Logs', placeholder: 'Search logs…' },
+  { prefix: '/traces', label: 'Traces', placeholder: 'Search trace names, IDs and tags…' },
   { prefix: '/models', label: 'Models', placeholder: 'Search providers and models…' },
   { prefix: '/overview', label: 'Overview', placeholder: 'Search…' },
   { prefix: '/playground', label: 'Playground', placeholder: 'Search…' },

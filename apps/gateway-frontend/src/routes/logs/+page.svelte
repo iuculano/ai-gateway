@@ -20,13 +20,14 @@ type StatusFilter = 'all' | 'success' | 'errors';
 const PAGE_SIZE = 20;
 
 // Shared with LogRow so the header and the rows sit in one grid.
-const COLS = '24px 150px minmax(110px,0.7fr) minmax(160px,1.6fr) 100px 84px 92px 84px';
+const COLS = '24px 150px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 84px 92px 84px';
 
 const COLUMNS = [
   { label: '' },
   { label: 'Timestamp' },
   { label: 'Provider' },
   { label: 'Model' },
+  { label: 'Trace' },
   { label: 'Status' },
   { label: 'Tokens', align: 'right' as const },
   { label: 'Cost', align: 'right' as const },
@@ -232,7 +233,7 @@ const filtered = $derived.by(() => {
 	showFooter={pageIndex > 0 || (meta?.more_data ?? false)}
 >
 	{#snippet toolbar()}
-		<FilterTabs tabs={TABS} bind:value={tab} />
+		<FilterTabs tabs={TABS} bind:value={tab} equalWidth />
 		<span class="text-[12.5px] text-zinc-600">
 			<!-- The filter runs over this page only - it is client-side, and the
 			     endpoint has no filter that maps onto 'errors' (which spans both

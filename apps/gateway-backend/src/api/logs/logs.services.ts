@@ -1,7 +1,7 @@
 import { parseTags, probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, gt, inArray, lt, sql } from '@repo/drizzle';
 import { logs } from '@repo/drizzle/schemas';
-import { getCaller } from '@repo/hono';
+import { getCaller, getTraceContext } from '@repo/hono';
 import { objectStorage } from '@repo/object-storage';
 import { err, ok, type Result } from 'neverthrow';
 import Schemas, {
@@ -234,6 +234,7 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
     query.model ? eq(logs.model, query.model) : undefined,
     query.provider ? eq(logs.provider, query.provider) : undefined,
     query.status ? eq(logs.status, query.status) : undefined,
+    query.trace_id ? eq(logs.trace_id, query.trace_id) : undefined,
     query.tags ? sql`${logs.tags} @> ${tagsToFilter}::jsonb` : undefined,
     query.after_id ? lt(logs.id, query.after_id) : undefined,
     query.before_id ? gt(logs.id, query.before_id) : undefined,
@@ -484,12 +485,20 @@ async function startLog(
     actor_id: string;
   },
 ): Promise<string> {
+  const trace = getTraceContext();
   const [row] = await db
     .insert(logs)
     .values({
       organization_id: organizationId,
       model: entry.model,
       provider: entry.provider,
+      ...(trace
+        ? {
+            trace_id: trace.traceId,
+            span_id: trace.spanId,
+            ...(trace.parentSpanId ? { parent_span_id: trace.parentSpanId } : {}),
+          }
+        : {}),
       // Required attribution ensures usage budgets cannot be bypassed.
       actor_type: entry.actor_type,
       actor_id: entry.actor_id,

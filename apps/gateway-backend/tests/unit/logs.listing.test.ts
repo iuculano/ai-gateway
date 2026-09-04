@@ -14,6 +14,7 @@ import { database, forCaller, installModuleMocks, logRow, resetDoubles, rows } f
 
 await installModuleMocks();
 
+const Schemas = (await import('../../src/api/logs/logs.schemas')).default;
 const Services = forCaller((await import('../../src/api/logs/logs.services')).default);
 
 // Descending ids, so "newest first" is legible in the fixtures.
@@ -104,6 +105,7 @@ describe('paging backwards', () => {
 
 describe('filters', () => {
   test('accepts every filter at once without disturbing the shape', async () => {
+    const traceId = 'a'.repeat(32);
     database.respondTo('select', 'logs', rows(logRow({ id: ID_20 })));
 
     const page = await Services.listLogs({
@@ -111,12 +113,20 @@ describe('filters', () => {
       model: 'gpt-5',
       provider: 'openai',
       status: 'complete',
+      trace_id: traceId,
       tags: 'env:prod,team:core',
       after_id: ID_20,
     });
 
     expect(page.data).toHaveLength(1);
     expect(page.meta.more_data).toBe(false);
+  });
+
+  test('rejects malformed and all-zero trace filters before querying', () => {
+    const parse = (trace_id: string) => Schemas.listLogs.query.parse({ limit: 20, trace_id });
+
+    expect(() => parse('A'.repeat(32))).toThrow();
+    expect(() => parse('0'.repeat(32))).toThrow();
   });
 
   test('rows come back in the derived shape, not raw', async () => {
