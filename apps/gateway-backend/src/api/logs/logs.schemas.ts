@@ -13,7 +13,11 @@ import { createSelectSchema } from 'drizzle-orm/zod';
  */
 const MAX_BATCH_SIZE = 100;
 
-const traceId = z.string().regex(/^[0-9a-f]{32}$/);
+// It is apparently prohibited by spec to have all 0s
+const traceId = z
+  .string()
+  .regex(/^[0-9a-f]{32}$/)
+  .refine((value) => value !== '0'.repeat(32), 'Trace ID cannot be all zeros');
 
 const logShape = createSelectSchema(logs)
   .omit({
