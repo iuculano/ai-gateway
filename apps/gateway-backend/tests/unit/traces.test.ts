@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, test } from 'bun:test';
+import { afterAll, beforeEach, expect, mock, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { Caller } from '@repo/hono';
 import type { CreateTraceRequest } from '../../src/api/traces/traces.schemas';
@@ -6,11 +6,16 @@ import { database, installModuleMocks, ORGANIZATION_ID, resetDoubles, rows } fro
 
 await installModuleMocks();
 
+const VICTORIA_TRACES_URL = 'http://victoria-traces.test';
+
+mock.module('../../src/environment', () => ({
+  environment: { VICTORIA_TRACES_URL },
+}));
+
 const { OpenAPIHono } = await import('@hono/zod-openapi');
 const { callerContext, errorHandler, runWithCaller } = await import('@repo/hono');
 const { default: handlers } = await import('../../src/api/traces/traces.handlers');
 const { default: TraceServices } = await import('../../src/api/traces/traces.services');
-const { environment } = await import('../../src/environment');
 
 const TRACE_ID = 'f3a8c17d4e2b49b6a5018c9209f4d811';
 const ROOT_SPAN_ID = '4e2b49b6a5018c92';
@@ -182,7 +187,7 @@ function outboundParts(request: Request | undefined) {
   return { origin: url.origin, pathname: url.pathname, search: url.search };
 }
 
-const VICTORIA_ORIGIN = new URL(environment.VICTORIA_TRACES_URL).origin;
+const VICTORIA_ORIGIN = new URL(VICTORIA_TRACES_URL).origin;
 
 beforeEach(() => {
   resetDoubles();
