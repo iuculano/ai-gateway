@@ -779,7 +779,7 @@ async function getTrace(traceId: string): Promise<Result<GetTraceResponse, GetTr
 
   // Find the earliest start time so we can normalize the waterfall to start at
   // 0 and all the other nodes are offset relative from that.
-  const startedAtArray = unresolved.map((node) => node.startedAt)
+  const startedAtArray = unresolved.map((node) => node.startedAt);
   const startMs = Math.min(...startedAtArray);
 
   const nodes = resolveNodes(unresolved, startMs);
