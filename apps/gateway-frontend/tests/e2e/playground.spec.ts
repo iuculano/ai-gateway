@@ -42,11 +42,12 @@ test('the playground streams a completion and sends the intended request', async
 
   await page.goto('/playground');
   await page.getByPlaceholder('What do you want to ask?').fill('Say hello from the gateway.');
+  await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
   await page.getByPlaceholder('Provider API key').fill('provider-secret-for-test');
   await page.getByRole('button', { name: /^Run/ }).click();
 
   await expect(page.getByText('Hello from Relay', { exact: true })).toBeVisible();
-  await expect(page.getByText('9', { exact: true })).toBeVisible();
+  await expect(page.getByText('9 tok', { exact: true })).toBeVisible();
   await expect(page.getByText(IDS.successLog, { exact: true })).toBeVisible();
 
   const calls = api.matching('POST', '/api/chat/completions');
@@ -69,6 +70,7 @@ test('numeric parameters send edited values and are omitted after clearing', asy
 
   await page.goto('/playground');
   await page.getByPlaceholder('What do you want to ask?').fill('Hello');
+  await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
   await page.getByPlaceholder('Provider API key').fill('test-provider-key');
 
   const temperature = page.getByLabel('Temperature', { exact: true });
@@ -125,6 +127,7 @@ for (const invalid of [
     registerEmptyApp(api);
     await page.goto('/playground');
     await page.getByPlaceholder('What do you want to ask?').fill('Hello');
+    await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
     await page.getByPlaceholder('Provider API key').fill('test-provider-key');
     await page.getByLabel(invalid.label, { exact: true }).fill(invalid.value);
     await page.getByRole('button', { name: /^Run/ }).click();
@@ -132,3 +135,120 @@ for (const invalid of [
     expect(api.matching('POST', '/api/chat/completions')).toHaveLength(0);
   });
 }
+
+// Keep requests open in the browser so the test can observe the actual AbortSignal,
+// including aborts after streaming has already delivered response headers and text.
+for (const stream of [true, false]) {
+  for (const count of [1, 2]) {
+    for (const action of ['stop', 'navigate'] as const) {
+      test(`${action} cancels ${count} comparison requests (${stream ? 'streaming' : 'whole response'})`, async ({
+        page,
+        api,
+      }) => {
+        registerEmptyApp(api);
+        await page.addInitScript(() => {
+          const requests: { aborted: boolean }[] = [];
+          Object.assign(window, { playgroundRequests: requests });
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = new Proxy(originalFetch, {
+            async apply(_target, _thisArg, [input, init]: [RequestInfo | URL, RequestInit?]) {
+              if (String(input) !== '/api/chat/completions') return originalFetch(input, init);
+              const request = { aborted: false };
+              requests.push(request);
+              const signal = init?.signal;
+              const abortError = () => new DOMException('Aborted', 'AbortError');
+              const body = JSON.parse(String(init?.body));
+
+              if (!body.stream) {
+                return new Promise<Response>((_resolve, reject) => {
+                  signal?.addEventListener(
+                    'abort',
+                    () => {
+                      request.aborted = true;
+                      reject(abortError());
+                    },
+                    { once: true },
+                  );
+                });
+              }
+
+              const responseBody = new ReadableStream<Uint8Array>({
+                start(controller) {
+                  const chunk = {
+                    choices: [{ index: 0, delta: { content: 'Partial answer' }, finish_reason: null }],
+                  };
+                  controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                  signal?.addEventListener(
+                    'abort',
+                    () => {
+                      request.aborted = true;
+                      controller.error(abortError());
+                    },
+                    { once: true },
+                  );
+                },
+              });
+              return new Response(responseBody, { headers: { 'content-type': 'text/event-stream' } });
+            },
+          });
+        });
+
+        const requests = () =>
+          page.evaluate(
+            () => (window as typeof window & { playgroundRequests: { aborted: boolean }[] }).playgroundRequests,
+          );
+        await page.goto('/playground');
+        if (count === 1) await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
+        await page.getByPlaceholder('What do you want to ask?').fill('Hello');
+        for (const field of await page.getByPlaceholder('Provider API key').all()) {
+          await field.fill('test-provider-key');
+        }
+        if (!stream) await page.getByRole('switch', { name: /Stream/ }).click();
+        await page.getByRole('button', { name: /^Run/ }).click();
+        await expect.poll(requests).toEqual(Array.from({ length: count }, () => ({ aborted: false })));
+        if (stream) await expect(page.getByText('Partial answer', { exact: true })).toHaveCount(count);
+
+        await expect(page.getByRole('button', { name: 'Add model', exact: true })).toBeDisabled();
+        for (const button of await page.getByRole('button', { name: 'Remove this model', exact: true }).all()) {
+          await expect(button).toBeDisabled();
+        }
+        await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /^Run/ })).toBeHidden();
+        await expect(page.getByRole('button', { name: 'Clear', exact: true })).toBeDisabled();
+        await page.keyboard.press('Control+Enter');
+        expect(await requests()).toHaveLength(count);
+
+        if (action === 'stop') {
+          await page.getByRole('button', { name: 'Stop', exact: true }).click();
+          await expect(page.getByRole('button', { name: /^Run/ })).toBeVisible();
+          if (stream) await expect(page.getByText('Partial answer', { exact: true })).toHaveCount(count);
+        } else {
+          // Client navigation preserves the window, so aborts must come from page teardown.
+          await page.getByRole('link', { name: 'API Keys', exact: true }).click();
+          await expect(page).toHaveURL('/keys');
+        }
+        await expect.poll(requests).toEqual(Array.from({ length: count }, () => ({ aborted: true })));
+      });
+    }
+  }
+}
+
+test('the playground has one comparison layout with one to four model columns', async ({ page, api }) => {
+  registerEmptyApp(api);
+  await page.goto('/playground');
+  await expect(page.getByRole('button', { name: /^(Single|Compare)$/ })).toHaveCount(0);
+  const keys = page.getByPlaceholder('Provider API key');
+  const remove = page.getByRole('button', { name: 'Remove this model', exact: true });
+  const add = page.getByRole('button', { name: 'Add model', exact: true });
+  await expect(keys).toHaveCount(2);
+  await keys.nth(1).fill('keep-this-credential');
+  await remove.first().click();
+  await expect(keys).toHaveCount(1);
+  await expect(keys).toHaveValue('keep-this-credential');
+  await expect(remove).toBeDisabled();
+  for (let count = 2; count <= 4; count++) {
+    await add.click();
+    await expect(keys).toHaveCount(count);
+  }
+  await expect(add).toBeHidden();
+});

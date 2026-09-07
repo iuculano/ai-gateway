@@ -51,6 +51,7 @@ test('a stored request can be inspected and replayed in the playground', async (
     body: 'data: [DONE]\n\n',
     headers: { 'content-type': 'text/event-stream' },
   });
+  await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
   await page.getByPlaceholder('Provider API key').fill('test-provider-key');
   const response = page.waitForResponse('**/api/chat/completions');
   await page.getByRole('button', { name: /^Run/ }).click();

@@ -1,15 +1,11 @@
 <script lang="ts">
-import { onMount } from 'svelte';
+import { onDestroy, onMount } from 'svelte';
 import { toast } from 'svelte-sonner';
 import { page } from '$app/state';
 import type { ChatCompletionMessage, ChatCompletionRequest, GatewayHeaders } from '$lib/api/chat-completions';
-import { createChatCompletion, streamChatCompletion } from '$lib/api/chat-completions';
 import { getLogRequest } from '$lib/api/logs';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import Panel from '$lib/components/app/panel.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import type { DraftMessage } from '$lib/components/playground/message-editor.svelte';
 import MessageEditor, {
@@ -27,7 +23,6 @@ import * as Select from '$lib/components/ui/select';
 import { Switch } from '$lib/components/ui/switch';
 import { toResponsePayload } from '$lib/data/completion';
 import { responseTurns } from '$lib/data/conversation';
-import { fmtLatency, fmtThroughput, fmtTokens } from '$lib/data/format';
 import { PlaygroundRun } from '$lib/state/playground-run.svelte';
 import { webhooks } from '$lib/state/webhooks.svelte';
 
@@ -47,31 +42,12 @@ const MONO_FIELD_CLASS = `${FIELD_CLASS} font-mono`;
 // system row costs nothing if it goes unused.
 let drafts: DraftMessage[] = $state([emptyDraft('system'), emptyDraft('user')]);
 
-/**
- * Single sends one request; compare sends the SAME request to several models
- * and puts the answers beside each other.
- *
- * A mode rather than a second page, because everything except the model list
- * and the shape of the response area is shared - the credential, the messages,
- * the prompt, the parameters. Two pages would have drifted within a week.
- */
-type Mode = 'single' | 'compare';
-
-const MODE_TABS = [
-  { id: 'single' as const, label: 'Single' },
-  { id: 'compare' as const, label: 'Compare' },
-];
-
-let mode: Mode = $state('single');
-
-const single = new PlaygroundRun('openai/gpt-5');
-
-/** Compare mode's columns. Capped, because each one spends real money upstream. */
+// Each column sends the same request with its own model and provider credential.
 const MAX_COMPARISONS = 4;
 let comparisons = $state([new PlaygroundRun('openai/gpt-5'), new PlaygroundRun('openai/gpt-5-mini')]);
+const running = $derived(comparisons.some((run) => run.running));
 
-const runs = $derived(mode === 'single' ? [single] : comparisons);
-const running = $derived(runs.some((run) => run.running));
+onDestroy(stop);
 
 let stream = $state(true);
 
@@ -100,8 +76,6 @@ onMount(() => {
 let temperature = $state<number | undefined>(undefined);
 let maxTokens = $state<number | undefined>(undefined);
 let topP = $state<number | undefined>(undefined);
-
-const usage = $derived(single.assembly.usage);
 
 /**
  * One draft, as the request's discriminated union.
@@ -188,7 +162,7 @@ function buildHeaders(): GatewayHeaders {
 async function run() {
   if (running) return;
 
-  const targets = runs.filter((entry) => entry.model.trim().length > 0);
+  const targets = comparisons.filter((entry) => entry.model.trim().length > 0);
   if (targets.length === 0) {
     toast.error('Name at least one model to send this to.');
     return;
@@ -214,7 +188,7 @@ async function run() {
 }
 
 function stop() {
-  for (const entry of runs) {
+  for (const entry of comparisons) {
     entry.stop();
   }
 }
@@ -263,7 +237,6 @@ async function loadFromLog(id: string) {
       }));
 
     if (typeof payload.model === 'string' && payload.model.length > 0) {
-      single.model = payload.model;
       // Seeded rather than overwritten wholesale: the original model is the
       // baseline you are comparing a candidate against.
       if (comparisons[0]) comparisons[0].model = payload.model;
@@ -283,7 +256,7 @@ function clear() {
   if (running) return;
 
   drafts = [emptyDraft('system'), emptyDraft('user')];
-  for (const entry of runs) {
+  for (const entry of comparisons) {
     entry.reset();
   }
 }
@@ -309,7 +282,6 @@ function onKeydown(event: KeyboardEvent) {
 	description="Send a request through Relay to any model your provider key can reach, streamed or whole."
 >
 	{#snippet actions()}
-		<FilterTabs tabs={MODE_TABS} bind:value={mode} />
 		<ToolbarButton disabled={running} onclick={clear}>Clear</ToolbarButton>
 		{#if running}
 			<ToolbarButton onclick={stop}>
@@ -325,25 +297,6 @@ function onKeydown(event: KeyboardEvent) {
 		{/if}
 	{/snippet}
 </PageHeader>
-
-<!-- Single mode only. Four figures cannot describe several runs at once,
-     so in compare mode each column carries its own in its footer. -->
-{#if mode === 'single'}
-	<StatGrid>
-		<StatCard label="Latency" value={fmtLatency(single.elapsedMs)} />
-		<StatCard
-			label="First token"
-			value={fmtLatency(single.firstTokenMs)}
-			hint={stream ? undefined : 'stream only'}
-		/>
-		<StatCard
-			label="Tokens"
-			value={fmtTokens(usage?.total_tokens ?? null)}
-			hint={usage ? `${usage.prompt_tokens} in · ${usage.completion_tokens} out` : undefined}
-		/>
-		<StatCard label="Throughput" value={fmtThroughput(usage?.completion_tokens ?? null, single.elapsedMs)} />
-	</StatGrid>
-{/if}
 
 <!-- items-start so the settings rail keeps its own height instead of being
      stretched to match a long conversation beside it. -->
@@ -378,18 +331,8 @@ function onKeydown(event: KeyboardEvent) {
 			</div>
 		</Panel>
 
-		<!--
-			One shape for both modes. A single run is a comparison of one, and giving
-			it its own markup is how the two drift - the credential would end up
-			validated differently, or the metrics shown in one and not the other.
-
-			360px rather than 300px: this row now carries a credential field beside
-			the view controls, and three of them do not share 300px legibly.
-		-->
-		<div
-			class={mode === 'single' ? '' : 'grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] items-start gap-3.5'}
-		>
-			{#each runs as entry, index (index)}
+		<div class="grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] items-start gap-3.5">
+			{#each comparisons as entry, index (entry)}
 				{@const answered = responseTurns(toResponsePayload(entry.assembly))}
 				<ResponsePanel
 					turns={answered}
@@ -398,8 +341,8 @@ function onKeydown(event: KeyboardEvent) {
 					error={entry.error}
 					finishReason={entry.assembly.finishReason}
 					logId={entry.logId}
-					elapsedMs={mode === 'single' ? null : entry.elapsedMs}
-					tokens={mode === 'single' ? null : (entry.assembly.usage?.total_tokens ?? null)}
+					elapsedMs={entry.elapsedMs}
+					tokens={entry.assembly.usage?.total_tokens ?? null}
 				>
 					{#snippet header()}
 						<div class="flex min-w-0 flex-1 items-center gap-2">
@@ -411,17 +354,15 @@ function onKeydown(event: KeyboardEvent) {
 									class={FIELD_CLASS}
 								/>
 							</div>
-							{#if mode === 'compare'}
-								<button
-									type="button"
-									class="size-9 flex-none rounded-lg border border-line-strong bg-surface-3 text-zinc-500 hover:bg-surface-4 hover:text-zinc-300 disabled:opacity-40"
-									aria-label="Remove this model"
-									disabled={running || comparisons.length <= 1}
-									onclick={() => removeComparison(index)}
-								>
-									<svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="mx-auto"><path d="M4 8h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
-								</button>
-							{/if}
+							<button
+								type="button"
+								class="size-9 flex-none rounded-lg border border-line-strong bg-surface-3 text-zinc-500 hover:bg-surface-4 hover:text-zinc-300 disabled:opacity-40"
+								aria-label="Remove this model"
+								disabled={running || comparisons.length <= 1}
+								onclick={() => removeComparison(index)}
+							>
+								<svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="mx-auto"><path d="M4 8h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+							</button>
 						</div>
 					{/snippet}
 
@@ -442,7 +383,7 @@ function onKeydown(event: KeyboardEvent) {
 				</ResponsePanel>
 			{/each}
 
-			{#if mode === 'compare' && comparisons.length < MAX_COMPARISONS}
+			{#if comparisons.length < MAX_COMPARISONS}
 				<!-- A tile in the grid rather than a button beneath it: adding a model
 				     adds a column, and the control that does it should occupy the space
 				     the column will take. -->
