@@ -96,12 +96,10 @@ onMount(() => {
   if (from) void loadFromLog(from);
 });
 
-// Parameters are strings, not numbers, so that "unset" is expressible. A number
-// bound to an emptied field goes to NaN or 0, and sending 0 for temperature is
-// a real instruction rather than an absent one.
-let temperature = $state('');
-let maxTokens = $state('');
-let topP = $state('');
+// Normalize cleared numeric bindings to undefined so provider defaults stay unset.
+let temperature = $state<number | undefined>(undefined);
+let maxTokens = $state<number | undefined>(undefined);
+let topP = $state<number | undefined>(undefined);
 
 const usage = $derived(single.assembly.usage);
 
@@ -128,21 +126,6 @@ function toMessage(draft: DraftMessage): ChatCompletionMessage {
 }
 
 /**
- * A parameter the provider should decide, or the number the reader typed.
- *
- * Anything unparseable is treated as unset rather than sent as NaN, which the
- * request schema would reject with a message about the field rather than about
- * the typo.
- */
-function optionalNumber(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-/**
  * The request body, or null when the form is not ready to send.
  *
  * Empty messages are dropped rather than sent: a blank system row is the
@@ -150,6 +133,21 @@ function optionalNumber(value: string): number | undefined {
  * of every conversation started here.
  */
 function buildBody(): ChatCompletionRequest | null {
+  if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
+    toast.error('Temperature must be between 0 and 2.');
+    return null;
+  }
+
+  if (topP !== undefined && (!Number.isFinite(topP) || topP < 0 || topP > 1)) {
+    toast.error('Top P must be between 0 and 1.');
+    return null;
+  }
+
+  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) {
+    toast.error('Max completion tokens must be a positive safe integer.');
+    return null;
+  }
+
   const messages = drafts.filter((draft) => draft.content.trim().length > 0).map(toMessage);
 
   if (messages.length === 0) {
@@ -173,9 +171,9 @@ function buildBody(): ChatCompletionRequest | null {
           },
         }
       : {}),
-    temperature: optionalNumber(temperature),
-    max_completion_tokens: optionalNumber(maxTokens),
-    top_p: optionalNumber(topP),
+    temperature: temperature,
+    max_completion_tokens: maxTokens,
+    top_p: topP,
   };
 }
 
@@ -271,9 +269,9 @@ async function loadFromLog(id: string) {
       if (comparisons[0]) comparisons[0].model = payload.model;
     }
 
-    temperature = payload.temperature != null ? String(payload.temperature) : '';
-    maxTokens = payload.max_completion_tokens != null ? String(payload.max_completion_tokens) : '';
-    topP = payload.top_p != null ? String(payload.top_p) : '';
+    temperature = payload.temperature ?? undefined;
+    maxTokens = payload.max_completion_tokens ?? undefined;
+    topP = payload.top_p ?? undefined;
 
     toast.success('Loaded the request from that log');
   } catch (cause) {
@@ -532,7 +530,7 @@ function onKeydown(event: KeyboardEvent) {
 						</Label>
 						<Input
 							id="playground-temperature"
-							bind:value={temperature}
+							bind:value={() => temperature, (value) => (temperature = value ?? undefined)}
 							type="number"
 							min="0"
 							max="2"
@@ -548,7 +546,7 @@ function onKeydown(event: KeyboardEvent) {
 						</Label>
 						<Input
 							id="playground-top-p"
-							bind:value={topP}
+							bind:value={() => topP, (value) => (topP = value ?? undefined)}
 							type="number"
 							min="0"
 							max="1"
@@ -566,7 +564,7 @@ function onKeydown(event: KeyboardEvent) {
 					</Label>
 					<Input
 						id="playground-max-tokens"
-						bind:value={maxTokens}
+						bind:value={() => maxTokens, (value) => (maxTokens = value ?? undefined)}
 						type="number"
 						min="1"
 						step="1"

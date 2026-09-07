@@ -9,6 +9,8 @@ test('a stored request can be inspected and replayed in the playground', async (
       model: 'gpt-5',
       messages: [{ role: 'user', content: 'Investigate this production incident.' }],
       temperature: 0.2,
+      top_p: 0.8,
+      max_completion_tokens: 64,
     },
   });
   api.get(`/api/logs/${IDS.successLog}/response`, {
@@ -42,4 +44,20 @@ test('a stored request can be inspected and replayed in the playground', async (
   await expect(page.getByPlaceholder('What do you want to ask?')).toHaveValue('Investigate this production incident.');
   await expect(page.locator('#playground-model-0')).toHaveValue('gpt-5');
   await expect(page.getByText('Loaded the request from that log')).toBeVisible();
+  await expect(page.getByLabel('Temperature', { exact: true })).toHaveValue('0.2');
+  await expect(page.getByLabel('Top P', { exact: true })).toHaveValue('0.8');
+  await expect(page.getByLabel('Max completion tokens', { exact: true })).toHaveValue('64');
+  api.post('/api/chat/completions', {
+    body: 'data: [DONE]\n\n',
+    headers: { 'content-type': 'text/event-stream' },
+  });
+  await page.getByPlaceholder('Provider API key').fill('test-provider-key');
+  const response = page.waitForResponse('**/api/chat/completions');
+  await page.getByRole('button', { name: /^Run/ }).click();
+  await response;
+  expect(api.matching('POST', '/api/chat/completions')[0]?.body).toMatchObject({
+    temperature: 0.2,
+    top_p: 0.8,
+    max_completion_tokens: 64,
+  });
 });
