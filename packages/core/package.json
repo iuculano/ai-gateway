@@ -12,7 +12,7 @@
     "test:unit:coverage": "bun test --coverage tests/unit"
   },
   "dependencies": {
-    "@hono/zod-openapi": "^1.6.1",
+    "@hono/zod-openapi": "^1.6.2",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3"
   },
