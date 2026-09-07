@@ -62,3 +62,75 @@ test('a stored request can be inspected and replayed in the playground', async (
     max_completion_tokens: 64,
   });
 });
+
+for (const scenario of [
+  { failed: ['request'], omitted: [] },
+  { failed: ['response'], omitted: [] },
+  { failed: ['request', 'response'], omitted: [] },
+  { failed: ['request'], omitted: ['response'] },
+  { failed: ['response'], omitted: ['request'] },
+]) {
+  test(`payload retry: failed ${scenario.failed.join(', ')}, omitted ${scenario.omitted.join(', ') || 'none'}`, async ({
+    page,
+    api,
+  }) => {
+    registerEmptyApp(api);
+    api.get('/api/logs', {
+      json: {
+        data: [
+          {
+            ...SUCCESS_LOG,
+            has_request: !scenario.omitted.includes('request'),
+            has_response: !scenario.omitted.includes('response'),
+          },
+        ],
+        meta: LOG_META,
+      },
+    });
+    const texts = { request: 'Stored request text', response: 'Stored response text' };
+    const attempts = { request: 0, response: 0 };
+    for (const kind of ['request', 'response'] as const) {
+      if (scenario.omitted.includes(kind)) continue;
+      api.get(`/api/logs/${IDS.successLog}/${kind}`, () => {
+        attempts[kind]++;
+        if (scenario.failed.includes(kind) && attempts[kind] === 1) {
+          return { status: 503, json: { error: { message: `${kind} temporarily unavailable` } } };
+        }
+        return {
+          json:
+            kind === 'request'
+              ? { messages: [{ role: 'user', content: texts.request }] }
+              : { choices: [{ message: { role: 'assistant', content: texts.response }, finish_reason: 'stop' }] },
+        };
+      });
+    }
+
+    await page.goto('/logs');
+    const row = page.getByRole('button', { name: new RegExp(SUCCESS_LOG.model) });
+    await row.click();
+    for (const kind of ['request', 'response'] as const) {
+      if (scenario.omitted.includes(kind)) {
+        await expect(page.getByText(`No ${kind} payload was stored.`, { exact: true })).toBeVisible();
+      } else if (scenario.failed.includes(kind)) {
+        await expect(page.getByText(`${kind} temporarily unavailable`, { exact: true })).toBeVisible();
+      } else {
+        await expect(page.getByText(texts[kind], { exact: true })).toBeVisible();
+      }
+    }
+    await row.click();
+    await row.click();
+    // Detect an unintended reactive retry loop while the failed panel is open.
+    await page.waitForTimeout(500);
+    for (const kind of ['request', 'response'] as const) {
+      expect(attempts[kind]).toBe(scenario.omitted.includes(kind) ? 0 : 1);
+    }
+
+    for (const kind of scenario.failed) {
+      await page.getByRole('button', { name: `Retry ${kind}`, exact: true }).click();
+      await expect(page.getByText(texts[kind as keyof typeof texts], { exact: true })).toBeVisible();
+    }
+    for (const kind of ['request', 'response'] as const) {
+      expect(attempts[kind]).toBe(scenario.omitted.includes(kind) ? 0 : scenario.failed.includes(kind) ? 2 : 1);
+    }
+  });
+}
