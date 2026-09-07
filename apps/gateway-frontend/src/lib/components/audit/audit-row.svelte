@@ -1,5 +1,5 @@
 <script lang="ts">
-import { toast } from 'svelte-sonner';
+import { copyToClipboard } from '$lib/clipboard';
 import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
@@ -70,8 +70,7 @@ $effect(() => {
 
 function copyMeta(ev: MouseEvent) {
   ev.stopPropagation();
-  navigator.clipboard?.writeText(metaJson).catch(() => {});
-  toast.success('Metadata copied');
+  void copyToClipboard(metaJson, 'Metadata copied');
 }
 </script>
 
