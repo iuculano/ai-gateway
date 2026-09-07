@@ -130,3 +130,45 @@ for (const outcome of ['success', 'rejected', 'unavailable'] as const) {
     }
   });
 }
+
+for (const succeeds of [true, false]) {
+  test(`key creation prevents dismissal until ${succeeds ? 'the secret arrives' : 'failure'}`, async ({
+    page,
+    api,
+  }) => {
+    registerEmptyApp(api);
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    api.post('/api/api-keys', async () => {
+      await pending;
+      return succeeds
+        ? { status: 201, json: CREATED_API_KEY }
+        : { status: 503, json: { error: { message: 'Creation unavailable' } } };
+    });
+    await page.goto('/keys');
+    await page.getByRole('button', { name: 'Create key', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Key name').fill('Pending key');
+    await dialog.getByRole('button', { name: 'Create key', exact: true }).click();
+    await expect.poll(() => api.matching('POST', '/api/api-keys').length).toBe(1);
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeVisible();
+    await page.mouse.click(5, 5);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Creating…', exact: true })).toBeDisabled();
+    expect(api.matching('POST', '/api/api-keys')).toHaveLength(1);
+    finish();
+    if (succeeds) {
+      await expect(dialog.getByText(CREATED_API_KEY.key, { exact: true })).toBeVisible();
+      await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    } else {
+      await expect(page.getByText('Creation unavailable', { exact: true })).toBeVisible();
+      await expect(dialog.getByLabel('Key name')).toHaveValue('Pending key');
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    }
+    await expect(dialog).toBeHidden();
+  });
+}
