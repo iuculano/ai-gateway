@@ -20,6 +20,7 @@ import {
   streamText,
   type ToolSet,
   tool,
+  wrapLanguageModel,
 } from 'ai';
 import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
@@ -27,6 +28,7 @@ import LogsService from '../logs/logs.services';
 import type { GetModelResponse } from '../models/models.schemas';
 import ModelsService from '../models/models.services';
 import WebhookServices from '../webhooks/webhooks.services';
+import { createCacheMiddleware } from './chat-completions.cache';
 import type {
   ChatCompletion,
   ChatCompletionBody,
@@ -38,7 +40,10 @@ import type {
   ChatCompletionUsage,
 } from './chat-completions.schemas';
 
-const providerCache = new LRUCache<string, LanguageModel>({
+// Exclude string model IDs - wrapLanguageModel requires a model instance.
+type LanguageModelInstance = Exclude<LanguageModel, string>;
+
+const providerCache = new LRUCache<string, LanguageModelInstance>({
   max: 1000,
   ttl: 1000 * 60 * 60, // 1 hour
 });
@@ -55,7 +60,7 @@ function isProvider(value: string): value is Provider {
 interface ResolvedModel {
   provider: Provider;
   modelId: string;
-  instance: LanguageModel;
+  instance: LanguageModelInstance;
   info: GetModelResponse;
 }
 
@@ -804,7 +809,18 @@ async function createChatCompletion(
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText({
-      model: model.instance,
+      model: wrapLanguageModel({
+        model: model.instance,
+        middleware: createCacheMiddleware(
+          createCacheKey('chat-completions:scope:', {
+            organizationId: getCaller().organization.id,
+            provider: model.provider,
+            modelId: model.modelId,
+            apiKey: headers['ai-api-key'],
+            baseUrl: headers['ai-base-url'] ?? null,
+          }),
+        ),
+      }),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
