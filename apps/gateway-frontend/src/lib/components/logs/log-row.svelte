@@ -3,6 +3,7 @@ import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 import { getLogRequest, getLogResponse } from '$lib/api/logs';
 import type { Log, LogPayload } from '$lib/api/types';
+import { copyToClipboard } from '$lib/clipboard';
 import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
@@ -172,8 +173,7 @@ function copy(text: string, label: string) {
       toast.error(`No ${label.toLowerCase()} payload to copy`);
       return;
     }
-    navigator.clipboard?.writeText(text).catch(() => {});
-    toast.success(`${label} copied`);
+    void copyToClipboard(text, `${label} copied`);
   };
 }
 </script>

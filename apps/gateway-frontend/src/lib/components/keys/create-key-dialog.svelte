@@ -1,5 +1,6 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
+import { copyToClipboard } from '$lib/clipboard';
 import * as Dialog from '$lib/components/ui/dialog';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
@@ -66,10 +67,11 @@ async function create() {
   }
 }
 
-function copyGenerated() {
-  navigator.clipboard?.writeText(generatedKey).catch(() => {});
-  copied = true;
-  toast.success('Key copied to clipboard');
+async function copyGenerated() {
+  copied = false;
+  const key = generatedKey;
+  const success = await copyToClipboard(key, 'Key copied to clipboard');
+  if (generatedKey === key) copied = success;
 }
 </script>
 

@@ -79,3 +79,54 @@ test('failed key usage stays idle until retry and successful usage is cached', a
   await page.waitForTimeout(500);
   expect(api.matching('GET', statsPath)).toHaveLength(3);
 });
+
+for (const outcome of ['success', 'rejected', 'unavailable'] as const) {
+  test(`copying a generated key reports clipboard ${outcome}`, async ({ page, api }) => {
+    registerEmptyApp(api);
+    api.post('/api/api-keys', { status: 201, json: CREATED_API_KEY });
+    await page.addInitScript((outcome) => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value:
+          outcome === 'unavailable'
+            ? undefined
+            : {
+                writeText: (text: string) =>
+                  new Promise<void>((resolve, reject) => {
+                    Object.assign(window, {
+                      copiedText: text,
+                      finishCopy: () => (outcome === 'success' ? resolve() : reject(new Error('Permission denied'))),
+                    });
+                  }),
+              },
+      });
+    }, outcome);
+    await page.goto('/keys');
+    await page.getByRole('button', { name: 'Create key', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Key name').fill('Clipboard test');
+    await dialog.getByRole('button', { name: 'Create key', exact: true }).click();
+    await expect(dialog.getByText(CREATED_API_KEY.key, { exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Copy', exact: true }).click();
+
+    if (outcome !== 'unavailable') {
+      await expect
+        .poll(() => page.evaluate(() => (window as typeof window & { copiedText: string }).copiedText))
+        .toBe(CREATED_API_KEY.key);
+      await expect(dialog.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
+      await expect(page.getByText('Key copied to clipboard', { exact: true })).toBeHidden();
+      await page.evaluate(() => (window as typeof window & { finishCopy: () => void }).finishCopy());
+    }
+    if (outcome === 'success') {
+      await expect(dialog.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+      await expect(page.getByText('Key copied to clipboard', { exact: true })).toBeVisible();
+    } else {
+      await expect(
+        page.getByText('Could not copy to clipboard. Please select and copy the text manually.', { exact: true }),
+      ).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
+      await expect(page.getByText('Key copied to clipboard', { exact: true })).toBeHidden();
+      await expect(dialog.getByText(CREATED_API_KEY.key, { exact: true })).toBeVisible();
+    }
+  });
+}

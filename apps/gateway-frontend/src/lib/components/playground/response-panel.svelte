@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 import { toast } from 'svelte-sonner';
+import { copyToClipboard } from '$lib/clipboard';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import Panel from '$lib/components/app/panel.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
@@ -85,8 +86,7 @@ function copy() {
     return;
   }
 
-  navigator.clipboard?.writeText(text).catch(() => {});
-  toast.success('Response copied');
+  void copyToClipboard(text, 'Response copied');
 }
 
 /**

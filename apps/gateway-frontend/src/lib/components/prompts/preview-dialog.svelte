@@ -1,6 +1,6 @@
 <script lang="ts">
-import { toast } from 'svelte-sonner';
 import { getPromptVersion, renderPromptVersion } from '$lib/api/prompts';
+import { copyToClipboard } from '$lib/clipboard';
 import Panel from '$lib/components/app/panel.svelte';
 import * as Dialog from '$lib/components/ui/dialog';
 import { Input } from '$lib/components/ui/input';
@@ -146,8 +146,7 @@ async function render(id: string, version: number, payload: Record<string, strin
 function copyRendered() {
   if (rendered === null) return;
 
-  navigator.clipboard?.writeText(rendered).catch(() => {});
-  toast.success('Rendered prompt copied');
+  void copyToClipboard(rendered, 'Rendered prompt copied');
 }
 
 const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').length > 0).length);
