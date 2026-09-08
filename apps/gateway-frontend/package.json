@@ -12,6 +12,7 @@
     "check-types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium",
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {

@@ -120,7 +120,7 @@ jobs:
           turbo-cache: 'false'
 
       - name: Install Chromium and its system dependencies
-        run:  bunx playwright install --with-deps chromium
+        run:  bun run --cwd apps/gateway-frontend test:e2e:install
 
       - name: Run frontend browser tests
         run:  bun run test:e2e

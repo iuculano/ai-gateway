@@ -1,7 +1,9 @@
 <script lang="ts">
+import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 import { getLogRequest, getLogResponse } from '$lib/api/logs';
 import type { Log, LogPayload } from '$lib/api/types';
+import { copyToClipboard } from '$lib/clipboard';
 import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
@@ -55,40 +57,46 @@ const status = $derived(STATUS[log.status] ?? { label: log.status, color: '#7171
 // Payloads live in object storage behind their own endpoints, so they are
 // fetched on first expand rather than with the page. A list of 50 rows would
 // otherwise pull 100 objects nobody has asked to see.
-let request: LogPayload | undefined = $state(undefined);
-let response: LogPayload | undefined = $state(undefined);
-let loading = $state(false);
-let loaded = $state(false);
-let payloadError: string | null = $state(null);
+type PayloadKind = 'request' | 'response';
+interface PayloadState {
+  data: LogPayload | undefined;
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+}
 
-async function loadPayloads() {
-  if (loaded || loading) return;
-  loading = true;
-  payloadError = null;
+const payloads = $state<Record<PayloadKind, PayloadState>>({
+  request: { data: undefined, loading: false, loaded: false, error: null },
+  response: { data: undefined, loading: false, loaded: false, error: null },
+});
+const request = $derived(payloads.request.data);
+const response = $derived(payloads.response.data);
 
-  // Both sides at once, and only the sides the row says exist - has_request /
-  // has_response are false when the caller suppressed one with
-  // ai-log-omit-request / ai-log-omit-response.
-  const [req, res] = await Promise.allSettled([
-    log.has_request ? getLogRequest(log.id) : Promise.resolve(undefined),
-    log.has_response ? getLogResponse(log.id) : Promise.resolve(undefined),
-  ]);
+async function loadPayload(kind: PayloadKind) {
+  const state = payloads[kind];
+  if (!log[kind === 'request' ? 'has_request' : 'has_response'] || state.loaded || state.loading) return;
+  state.loading = true;
+  state.error = null;
 
-  if (req.status === 'fulfilled') request = req.value;
-  if (res.status === 'fulfilled') response = res.value;
-
-  // Only an error if BOTH sides failed. One missing payload is normal - it
-  // expired, or was never stored - and should not blank out the other.
-  if (req.status === 'rejected' && res.status === 'rejected') {
-    payloadError = req.reason instanceof Error ? req.reason.message : 'Failed to load payloads.';
+  try {
+    state.data = await (kind === 'request' ? getLogRequest(log.id) : getLogResponse(log.id));
+    state.loaded = true;
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : 'Failed to load payload.';
+  } finally {
+    state.loading = false;
   }
-
-  loaded = true;
-  loading = false;
 }
 
 $effect(() => {
-  if (expanded) loadPayloads();
+  if (expanded) {
+    // Loader state must not trigger automatic retries after a failure.
+    untrack(() => {
+      for (const kind of ['request', 'response'] as const) {
+        if (!payloads[kind].error) void loadPayload(kind);
+      }
+    });
+  }
 });
 
 const requestJson = $derived(request === undefined ? '' : JSON.stringify(request, null, 2));
@@ -131,12 +139,16 @@ const detailItems: DetailItem[] = $derived([
 const panels = $derived([
   {
     title: 'Request',
+    kind: 'request' as const,
+    state: payloads.request,
     json: requestJson,
     turns: request === undefined ? [] : requestTurns(request),
     present: log.has_request,
   },
   {
     title: 'Response',
+    kind: 'response' as const,
+    state: payloads.response,
     json: responseJson,
     turns: response === undefined ? [] : responseTurns(response),
     present: log.has_response,
@@ -161,8 +173,7 @@ function copy(text: string, label: string) {
       toast.error(`No ${label.toLowerCase()} payload to copy`);
       return;
     }
-    navigator.clipboard?.writeText(text).catch(() => {});
-    toast.success(`${label} copied`);
+    void copyToClipboard(text, `${label} copied`);
   };
 }
 </script>
@@ -242,47 +253,43 @@ function copy(text: string, label: string) {
 			{/if}
 		</div>
 
-		{#if payloadError}
-			<Panel>
-				<div class="flex items-center gap-[9px] px-3.5 py-4 text-[12.5px] text-red-400">
-					<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3" /><path d="M8 5.2v3.4M8 10.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-					{payloadError}
-				</div>
-			</Panel>
-		{:else}
-			<div class="grid grid-cols-2 gap-3.5">
-				{#each panels as panel (panel.title)}
-					<Panel title={panel.title}>
-						{#snippet actions()}
-							<ToolbarButton onclick={copy(copyText(panel), panel.title)}>Copy</ToolbarButton>
-						{/snippet}
-						{#if loading}
-							<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">Loading payload…</div>
-						{:else if !panel.present}
+		<div class="grid grid-cols-2 gap-3.5">
+			{#each panels as panel (panel.title)}
+				<Panel title={panel.title}>
+					{#snippet actions()}
+						<ToolbarButton disabled={!panel.json} onclick={copy(copyText(panel), panel.title)}>Copy</ToolbarButton>
+					{/snippet}
+					{#if panel.state.loading}
+						<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">Loading payload…</div>
+					{:else if panel.state.error}
+						<div class="flex flex-col items-center gap-3 px-[13px] py-6">
+							<span role="alert" class="text-[12.5px] text-red-400">{panel.state.error}</span>
+							<ToolbarButton onclick={() => void loadPayload(panel.kind)}>Retry {panel.kind}</ToolbarButton>
+						</div>
+					{:else if !panel.present}
+						<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
+							No {panel.title.toLowerCase()} payload was stored.
+						</div>
+					{:else if !panel.json}
+						<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
+							This payload is no longer available.
+						</div>
+					{:else if view === 'simple'}
+						<!-- A payload with no messages in it is a real case - a failed call
+						     stores the request but never gets a response body - so simple
+						     mode says so rather than rendering an empty box. -->
+						{#if panel.turns.length === 0}
 							<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
-								No {panel.title.toLowerCase()} payload was stored.
+								No messages in this payload — switch to JSON to see it.
 							</div>
-						{:else if !panel.json}
-							<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
-								This payload is no longer available.
-							</div>
-						{:else if view === 'simple'}
-							<!-- A payload with no messages in it is a real case - a failed call
-							     stores the request but never gets a response body - so simple
-							     mode says so rather than rendering an empty box. -->
-							{#if panel.turns.length === 0}
-								<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
-									No messages in this payload — switch to JSON to see it.
-								</div>
-							{:else}
-								<MessageList turns={panel.turns} />
-							{/if}
 						{:else}
-							<JsonView json={panel.json} />
+							<MessageList turns={panel.turns} />
 						{/if}
-					</Panel>
-				{/each}
-			</div>
-		{/if}
+					{:else}
+						<JsonView json={panel.json} />
+					{/if}
+				</Panel>
+			{/each}
+		</div>
 	{/snippet}
 </ExpandableRow>

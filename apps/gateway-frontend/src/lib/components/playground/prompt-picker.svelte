@@ -8,9 +8,10 @@ export interface PromptSelection {
 </script>
 
 <script lang="ts">
-import { onMount } from 'svelte';
+import { onMount, untrack } from 'svelte';
 import { getPromptVersion } from '$lib/api/prompts';
 import type { Prompt } from '$lib/api/types';
+import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import * as Select from '$lib/components/ui/select';
 import { Input } from '$lib/components/ui/input';
 import { BUILTINS, extractVariables } from '$lib/data/prompts';
@@ -50,18 +51,24 @@ const selected = $derived<Prompt | undefined>(prompts.list.rows.find((prompt) =>
 const versions = $derived(selected ? prompts.versionsFor(selected.id) : null);
 const variables = $derived(extractVariables(template));
 
-// Load the chosen prompt's versions, and settle on one.
+// Fetch once per selection; cached failures are retried explicitly.
 $effect(() => {
   const prompt = selected;
-  if (!prompt) return;
+  if (prompt) untrack(() => void prompts.ensureVersions(prompt.id));
+});
 
-  void prompts.ensureVersions(prompt.id).then(() => {
-    const rows = prompts.versionsFor(prompt.id).rows;
+// Also runs after Retry completes, without making another request.
+$effect(() => {
+  const prompt = selected;
+  const list = versions;
+  if (!prompt || !list || list.loading || list.error) {
+    version = null;
+    return;
+  }
 
-    // The active version by default, because that is what a caller omitting
-    // `version` would get from the API.
-    version = prompt.active_version ?? rows[0]?.version ?? null;
-  });
+  version = list.rows.some((row) => row.version === prompt.active_version)
+    ? prompt.active_version
+    : (list.rows[0]?.version ?? null);
 });
 
 // Fetch the template for the chosen version, purely to discover its variables.
@@ -71,6 +78,7 @@ $effect(() => {
 
   if (!prompt || chosen === null) {
     template = '';
+    loadError = null;
     return;
   }
 
@@ -162,6 +170,11 @@ const missing = $derived(variables.inputs.filter((name) => (values[name] ?? '').
 			<span class="mb-[7px] block text-[12.5px] font-medium text-zinc-200">Version</span>
 			{#if versions?.loading && versions.rows.length === 0}
 				<p class="text-[12px] text-zinc-600">Loading versions…</p>
+			{:else if versions?.error}
+				<div class="flex flex-col items-start gap-2">
+					<p role="alert" class="text-[12px] text-red-400">{versions.error}</p>
+					<ToolbarButton {disabled} onclick={() => void prompts.loadVersions(selected.id)}>Retry versions</ToolbarButton>
+				</div>
 			{:else if versions && versions.rows.length === 0}
 				<p class="text-[12px] text-amber-400/90">
 					This prompt has no versions, so the request would be refused.

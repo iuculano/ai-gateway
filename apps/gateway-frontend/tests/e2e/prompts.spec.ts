@@ -53,3 +53,52 @@ test('a prompt can be created, versioned, and rendered with an input', async ({ 
   expect(createVersion).toHaveLength(1);
   expect(createVersion[0]?.body).toEqual({ prompt: PROMPT_VERSION.prompt });
 });
+
+for (const hasVersions of [true, false]) {
+  test(`playground retries failed version lists and recovers to ${hasVersions ? 'a version' : 'an empty list'}`, async ({
+    page,
+    api,
+  }) => {
+    registerEmptyApp(api);
+    api.get('/api/prompts', {
+      json: { data: [{ ...PROMPT, active_version: hasVersions ? 1 : null }], meta: PAGE_META },
+    });
+    const path = `/api/prompts/${IDS.prompt}/versions`;
+    let attempts = 0;
+    api.get(path, () => {
+      attempts++;
+      return attempts <= 2
+        ? { status: 503, json: { error: { message: 'Versions temporarily unavailable' } } }
+        : { json: { data: hasVersions ? [PROMPT_VERSION] : [], meta: PAGE_META } };
+    });
+    api.get(`${path}/1`, { json: PROMPT_VERSION });
+    await page.goto('/playground');
+    // The prompt picker follows the webhook picker, which also starts at None.
+    await page.getByRole('button', { name: 'None', exact: true }).last().click();
+    await page.getByRole('option', { name: new RegExp(PROMPT.name) }).click();
+    const error = page.getByText('Versions temporarily unavailable', { exact: true });
+    const empty = page.getByText('This prompt has no versions, so the request would be refused.', { exact: true });
+    await expect(error).toBeVisible();
+    await expect(empty).toBeHidden();
+    await page.waitForTimeout(500);
+    expect(attempts).toBe(1);
+    expect(api.matching('GET', `${path}/1`)).toHaveLength(0);
+
+    await page.getByRole('button', { name: 'Retry versions', exact: true }).click();
+    await expect(error).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(attempts).toBe(2);
+    await page.getByRole('button', { name: 'Retry versions', exact: true }).click();
+    await expect(error).toBeHidden();
+    if (hasVersions) {
+      await expect(page.getByRole('button', { name: 'v1', exact: true })).toBeVisible();
+      await expect(page.getByLabel('customer_name', { exact: true })).toBeVisible();
+      await expect(empty).toBeHidden();
+      expect(api.matching('GET', `${path}/1`)).toHaveLength(1);
+    } else {
+      await expect(empty).toBeVisible();
+      expect(api.matching('GET', `${path}/1`)).toHaveLength(0);
+    }
+    expect(attempts).toBe(3);
+  });
+}

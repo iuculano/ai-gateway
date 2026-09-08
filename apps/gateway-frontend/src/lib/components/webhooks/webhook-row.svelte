@@ -1,6 +1,7 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
 import type { Webhook } from '$lib/api/types';
+import { copyToClipboard } from '$lib/clipboard';
 import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
 import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
@@ -67,8 +68,7 @@ async function remove() {
 
 function copyEndpoint(event: MouseEvent) {
   event.stopPropagation();
-  navigator.clipboard?.writeText(w.endpoint).catch(() => {});
-  toast.success('Endpoint copied');
+  void copyToClipboard(w.endpoint, 'Endpoint copied');
 }
 </script>
 

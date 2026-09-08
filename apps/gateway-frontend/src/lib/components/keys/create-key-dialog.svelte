@@ -1,5 +1,6 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
+import { copyToClipboard } from '$lib/clipboard';
 import * as Dialog from '$lib/components/ui/dialog';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
@@ -39,6 +40,7 @@ $effect(() => {
 });
 
 async function create() {
+  if (creating) return;
   if (!name.trim()) {
     toast.error('Give the key a name first.');
     return;
@@ -66,10 +68,11 @@ async function create() {
   }
 }
 
-function copyGenerated() {
-  navigator.clipboard?.writeText(generatedKey).catch(() => {});
-  copied = true;
-  toast.success('Key copied to clipboard');
+async function copyGenerated() {
+  copied = false;
+  const key = generatedKey;
+  const success = await copyToClipboard(key, 'Key copied to clipboard');
+  if (generatedKey === key) copied = success;
 }
 </script>
 
@@ -77,6 +80,8 @@ function copyGenerated() {
 	<Dialog.Content
 		class="flex max-h-[calc(100dvh-4rem)] w-[480px] flex-col gap-0 overflow-hidden rounded-[14px] border border-line-strong bg-surface-2 p-0 shadow-[0_24px_70px_rgba(0,0,0,.6)] sm:max-w-[480px]"
 		showCloseButton={false}
+		escapeKeydownBehavior={creating ? 'ignore' : 'close'}
+		interactOutsideBehavior={creating ? 'ignore' : 'close'}
 	>
 		{#if step === 'form'}
 			<div class="flex-none border-b border-line px-6 pt-[22px] pb-[18px]">
@@ -162,6 +167,7 @@ function copyGenerated() {
 				<button
 					type="button"
 					class="ml-auto h-[38px] rounded-lg border border-line-strong bg-surface-3 px-4 text-[13.5px] font-medium text-zinc-200 hover:bg-surface-4"
+					disabled={creating}
 					onclick={() => (open = false)}
 				>
 					Cancel

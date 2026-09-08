@@ -95,7 +95,7 @@ async function save() {
       // no filter at all means.
       await webhooks.update(webhook.id, {
         name: name.trim(),
-        description: description.trim() || undefined,
+        description: description.trim() || null,
         endpoint: endpoint.trim(),
         filter: filter ?? {},
         tags: tags ?? {},

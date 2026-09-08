@@ -1,4 +1,5 @@
 <script lang="ts">
+import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 import { getApiKeyStats } from '$lib/api/api-keys';
 import type { ApiKey, ApiKeyStats } from '$lib/api/types';
@@ -7,6 +8,7 @@ import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
+import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import { Switch } from '$lib/components/ui/switch';
 import { formatDate, timeAgo, timeUntil } from '$lib/data/format';
 import { SCOPE_OPTIONS } from '$lib/data/scopes';
@@ -77,7 +79,12 @@ async function loadStats() {
 }
 
 $effect(() => {
-  if (expanded) loadStats();
+  if (expanded) {
+    // Only expansion triggers loading; failures remain idle until an explicit retry.
+    untrack(() => {
+      if (!statsError) void loadStats();
+    });
+  }
 });
 
 /**
@@ -248,7 +255,10 @@ async function remove() {
 				{#if statsLoading}
 					<div class="flex grow items-center px-3.5 py-[13px] text-[12.5px] text-zinc-600">Loading usage…</div>
 				{:else if statsError}
-					<div class="flex grow items-center px-3.5 py-[13px] text-[12.5px] text-red-400">{statsError}</div>
+					<div class="flex grow items-center gap-3 px-3.5 py-[13px]">
+						<span class="text-[12.5px] text-red-400">{statsError}</span>
+						<ToolbarButton onclick={() => void loadStats()}>Retry usage</ToolbarButton>
+					</div>
 				{:else if stats}
 					<div class="flex grow items-center gap-8 px-3.5 py-[13px]">
 						<div>
