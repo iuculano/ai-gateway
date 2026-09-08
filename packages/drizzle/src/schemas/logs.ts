@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 
 /**
@@ -25,6 +25,7 @@ export const logs = pgTable(
       .default('incomplete'),
     actor_type: text({ enum: ['user', 'api_key'] }).notNull(),
     actor_id: uuid().notNull(),
+    cache_hit: boolean().notNull().default(false),
     input_tokens: integer(),
     output_tokens: integer(),
     input_cost: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),

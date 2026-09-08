@@ -3,13 +3,14 @@ import { createCacheKey } from '@repo/core';
 import { redis } from '@repo/redis';
 import { type LanguageModelMiddleware, simulateReadableStream } from 'ai';
 
-export function createCacheMiddleware(scope: string): LanguageModelMiddleware {
+export function createCacheMiddleware(scope: string, cache: { hit: boolean }): LanguageModelMiddleware {
   return {
     wrapGenerate: async ({ doGenerate, params }) => {
       const key = createCacheKey('chat-completions:generate:', { scope, params });
       const cached = await redis.get(key);
 
       if (cached !== null) {
+        cache.hit = true;
         const result = JSON.parse(cached) as Awaited<ReturnType<typeof doGenerate>>;
         if (result.response?.timestamp) {
           result.response.timestamp = new Date(result.response.timestamp);
@@ -21,11 +22,13 @@ export function createCacheMiddleware(scope: string): LanguageModelMiddleware {
       await redis.set(key, JSON.stringify(result));
       return result;
     },
+
     wrapStream: async ({ doStream, params }) => {
       const key = createCacheKey('chat-completions:stream:', { scope, params });
       const cached = await redis.get(key);
 
       if (cached !== null) {
+        cache.hit = true;
         const chunks = JSON.parse(cached) as LanguageModelV4StreamPart[];
         for (const chunk of chunks) {
           if (chunk.type === 'response-metadata' && chunk.timestamp) {

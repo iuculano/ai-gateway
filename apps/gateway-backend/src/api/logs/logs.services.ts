@@ -530,6 +530,7 @@ async function completeLog(
     response?: unknown;
     omitRequest?: boolean;
     omitResponse?: boolean;
+    cache_hit?: boolean;
     input_tokens?: number;
     output_tokens?: number;
     input_cost?: number;
@@ -552,6 +553,7 @@ async function completeLog(
     .update(logs)
     .set({
       status: 'complete',
+      cache_hit: entry.cache_hit ?? false,
       request_object_reference: requestKey,
       response_object_reference: responseKey,
       ...(entry.input_tokens != null ? { input_tokens: entry.input_tokens } : {}),

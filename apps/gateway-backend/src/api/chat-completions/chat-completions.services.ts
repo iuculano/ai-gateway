@@ -631,6 +631,7 @@ async function closeLog(
   response: ChatCompletion,
   model: GetModelResponse,
   responseTimeMs: number,
+  cacheHit: boolean,
 ): Promise<void> {
   if (!log) {
     return;
@@ -643,9 +644,10 @@ async function closeLog(
       // The row and its accounting survive either omit header; see openLog.
       omitRequest: headers['ai-log-omit-request'],
       omitResponse: headers['ai-log-omit-response'],
+      cache_hit: cacheHit,
       input_tokens: response.usage.prompt_tokens,
       output_tokens: response.usage.completion_tokens,
-      ...calculateCosts(response.usage, model),
+      ...(cacheHit ? { input_cost: 0, output_cost: 0 } : calculateCosts(response.usage, model)),
       response_time_ms: Math.round(responseTimeMs),
     });
   } catch (error) {
@@ -755,7 +757,7 @@ async function queueWebhook(
   return ok(undefined);
 }
 
-function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders) {
+function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders, cache: { hit: boolean }) {
   const caller = getCaller();
 
   const scope = createCacheKey('chat-completions:scope:', {
@@ -766,7 +768,7 @@ function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders) {
     baseUrl: headers['ai-base-url'] ?? null,
   });
 
-  return wrapLanguageModel({ model: model.instance, middleware: createCacheMiddleware(scope) });
+  return wrapLanguageModel({ model: model.instance, middleware: createCacheMiddleware(scope, cache) });
 }
 
 /**
@@ -818,12 +820,13 @@ async function createChatCompletion(
     return err(queued.error);
   }
 
+  const cache = { hit: false };
   const startedAt = performance.now();
 
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText({
-      model: cacheModel(model, headers),
+      model: cacheModel(model, headers, cache),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
@@ -874,7 +877,7 @@ async function createChatCompletion(
     usage: toUsage(result.totalUsage),
   };
 
-  await closeLog(log, headers, body, completion, model.info, responseTimeMs);
+  await closeLog(log, headers, body, completion, model.info, responseTimeMs, cache.hit);
 
   return ok(completion);
 }
@@ -936,6 +939,7 @@ async function* streamChatCompletion(
     return;
   }
 
+  const cache = { hit: false };
   const startedAt = performance.now();
 
   let streamError: ProviderFailure | undefined;
@@ -943,7 +947,7 @@ async function* streamChatCompletion(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-      model: cacheModel(model, headers),
+      model: cacheModel(model, headers, cache),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
@@ -1121,7 +1125,7 @@ async function* streamChatCompletion(
     usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 
-  await closeLog(log, headers, body, completion, model.info, performance.now() - startedAt);
+  await closeLog(log, headers, body, completion, model.info, performance.now() - startedAt, cache.hit);
 }
 
 export default {
