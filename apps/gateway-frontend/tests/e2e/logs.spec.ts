@@ -1,5 +1,5 @@
 import { expect, test } from './api-mock';
-import { FAILED_LOG, IDS, LOG_META, registerEmptyApp, SUCCESS_LOG } from './fixtures';
+import { FAILED_LOG, IDS, LOG_META, registerEmptyApp, SUCCESS_LOG, TRACE_IDS } from './fixtures';
 
 test('a stored request can be inspected and replayed in the playground', async ({ page, api }) => {
   registerEmptyApp(api);
@@ -28,6 +28,12 @@ test('a stored request can be inspected and replayed in the playground', async (
   await page.goto('/logs');
   await expect(page.getByText(SUCCESS_LOG.model, { exact: true })).toBeVisible();
   await expect(page.getByText(FAILED_LOG.model, { exact: true })).toBeVisible();
+
+  // A correlated request shows its trace and links back to the run; an
+  // uncorrelated one says so rather than linking nowhere.
+  const trace = page.getByRole('link', { name: `Open trace ${TRACE_IDS.workflow}` }).first();
+  await expect(trace).toHaveAttribute('href', `/traces?trace=${TRACE_IDS.workflow}`);
+  await expect(trace).toHaveText(TRACE_IDS.workflow.slice(0, 8));
 
   await page.getByRole('button', { name: 'Errors' }).click();
   await expect(page.getByText(FAILED_LOG.model, { exact: true })).toBeVisible();
@@ -106,7 +112,10 @@ for (const scenario of [
     }
 
     await page.goto('/logs');
-    const row = page.getByRole('button', { name: new RegExp(SUCCESS_LOG.model) });
+    // Scope to the toggle: expanded details repeat the model name, and the trace link is a separate target.
+    const row = page
+      .getByRole('button', { name: new RegExp(SUCCESS_LOG.model) })
+      .getByText(SUCCESS_LOG.model, { exact: true });
     await row.click();
     for (const kind of ['request', 'response'] as const) {
       if (scenario.omitted.includes(kind)) {

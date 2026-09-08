@@ -24,6 +24,7 @@ const createChatCompletion = createRoute({
     ...validatedProtectedRouteErrors,
     200: {
       description: 'Chat completion generated',
+      headers: Schemas.responseHeaders,
       content: {
         'application/json': {
           schema: Schemas.createChatCompletion.response,

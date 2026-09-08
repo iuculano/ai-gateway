@@ -5,13 +5,16 @@ import { refreshSession, type Session } from '$lib/server/session';
 /**
  * The gateway's own request/response controls, all spelled `ai-*`:
  * `ai-api-key` (the caller's UPSTREAM provider credential), `ai-base-url`,
- * the log and retry switches, and `ai-log-id` on the way back.
+ * the log and retry switches, and correlation handles on the way back. W3C
+ * trace headers are also forwarded so browser-side instrumentation can join
+ * its application trace to the gateway request.
  *
  * Forwarded verbatim in both directions. They are not authentication - the
  * session bearer below is - so passing them through gives the browser nothing
  * the backend would not already grant this session on a direct call.
  */
 const GATEWAY_HEADER_PREFIX = 'ai-';
+const TRACE_HEADERS = new Set(['traceparent', 'tracestate']);
 
 // The BFF proxy: forwards /api/* to the backend's /v1/* with the session's
 // bearer token attached. The browser never holds a token; the backend does
@@ -43,7 +46,7 @@ const handler: RequestHandler = async ({ params, request, cookies, url, locals }
     // Header names are lower-cased by Headers, so the prefix test needs no
     // normalisation of its own.
     request.headers.forEach((value, name) => {
-      if (name.startsWith(GATEWAY_HEADER_PREFIX)) {
+      if (name.startsWith(GATEWAY_HEADER_PREFIX) || TRACE_HEADERS.has(name)) {
         headers.set(name, value);
       }
     });

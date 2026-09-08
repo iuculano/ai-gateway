@@ -25,6 +25,8 @@ const environmentSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_USERNAME: z.string().optional(),
 
+  VICTORIA_TRACES_URL: z.url().default('http://localhost:10428'),
+
   AUTH_TOKEN_ISSUER: z.url(),
   AUTH_TOKEN_AUDIENCE: z.string().min(1),
 });

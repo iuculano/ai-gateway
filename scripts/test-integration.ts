@@ -34,6 +34,7 @@ const needsLocalPostgres = !process.env.POSTGRES_TEST_ADMIN_CONNECTION_STRING;
 const needsLocalRedis =
   !process.env.REDIS_TEST_URL || !process.env.REDIS_PACKAGE_TEST_URL || !process.env.REDIS_FRONTEND_TEST_URL;
 const needsLocalObjectStorage = !process.env.S3_TEST_ENDPOINT;
+const needsLocalVictoriaTraces = !process.env.VICTORIA_TRACES_TEST_URL;
 
 const localDefaults = {
   POSTGRES_TEST_ADMIN_CONNECTION_STRING: `postgresql://postgres:postgres@${serviceHost}:5432/ai_gateway_test`,
@@ -45,6 +46,7 @@ const localDefaults = {
   S3_TEST_SECRET_ACCESS_KEY: 'minioadmin',
   S3_TEST_BUCKET: 'ai-gateway-logs-test',
   S3_TEST_REGION: 'us-east-1',
+  VICTORIA_TRACES_TEST_URL: `http://${serviceHost}:10428`,
 } as const;
 
 for (const [name, value] of Object.entries(localDefaults)) {
@@ -55,6 +57,7 @@ const services = [
   ...(needsLocalPostgres ? ['postgres'] : []),
   ...(needsLocalRedis ? ['valkey'] : []),
   ...(needsLocalObjectStorage ? ['minio'] : []),
+  ...(needsLocalVictoriaTraces ? ['victoria-traces'] : []),
 ];
 
 if (services.length > 0) {

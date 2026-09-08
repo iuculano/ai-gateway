@@ -5,6 +5,7 @@ Simple AI Gateway for trying various ideas.
 Pass requests through it, get automatic logging, cost tracking, and more.
 
 ![Screenshot](docs/images/analytics.webp)
+![Screenshot](docs/images/traces.webp)
 
 ## Getting started
 
@@ -16,7 +17,7 @@ included Dev Container manifest.
 bun install
 
 # Start the backing services
-docker compose up --detach --wait postgres valkey minio
+docker compose up --detach --wait postgres valkey victoria-traces minio
 
 # Drop the little helper that creates some buckets in MinIO
 docker compose run --rm minio-init

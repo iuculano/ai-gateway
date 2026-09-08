@@ -1,7 +1,7 @@
 import { diffFields, parseTags, probe, toPage } from '@repo/core';
 import { and, db, desc, eq, lt, sql } from '@repo/drizzle';
 import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
-import { getAccountableUserId, getCaller, getLogger } from '@repo/hono';
+import { getAccountableUserId, getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
 import AuditLogServices from '../audit-logs/audit-logs.services';
 import Schemas, {
@@ -338,50 +338,6 @@ async function submitWebhookRequest(webhookId: string, logId: string) {
 }
 
 /**
- * Queues webhooks whose filters match a completed log.
- *
- * @param organizationId
- * Tenant captured before a streaming continuation can outlive request context.
- *
- * @param logId
- * The log to deliver.
- *
- * @param tags
- * The log's tags, which the filters are matched against.
- */
-async function fanOutForLog(
-  organizationId: string,
-  logId: string,
-  tags: Record<string, string> | null | undefined,
-): Promise<void> {
-  const payload = JSON.stringify(tags ?? {});
-
-  try {
-    const matched = await db
-      .select({ id: webhooks.id })
-      .from(webhooks)
-      .where(
-        and(
-          eq(webhooks.organization_id, organizationId),
-          sql`(
-            ${webhooks.filter} IS NULL
-            OR ${webhooks.filter} = '{}'::jsonb
-            OR ${payload}::jsonb @> ${webhooks.filter}
-          )`,
-        ),
-      );
-
-    if (matched.length === 0) {
-      return;
-    }
-
-    await db.insert(webhookOutbox).values(matched.map((webhook) => ({ webhook_id: webhook.id, log_id: logId })));
-  } catch (error) {
-    getLogger().error({ err: error, log_id: logId }, 'Failed to fan out webhooks for log');
-  }
-}
-
-/**
  * Queues an explicitly requested webhook delivery.
  *
  * @param webhookId
@@ -414,7 +370,6 @@ async function enqueueDelivery(webhookId: string, logId: string): Promise<Result
 
 export default {
   enqueueDelivery,
-  fanOutForLog,
   getWebhook,
   listWebhooks,
   createWebhook,

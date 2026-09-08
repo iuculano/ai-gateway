@@ -42,6 +42,16 @@ export class ApiMock {
     await this.#page.route('**/api/**', async (route) => {
       const browserRequest = route.request();
       const url = new URL(browserRequest.url());
+
+      // The glob is only a prefilter. It also matches things like
+      // /src/lib/api/traces.ts, which a dev server serves as a real module -
+      // answering those with the unhandled-request stub below breaks the page
+      // rather than testing it. Only the BFF's own /api/ prefix is ours.
+      if (!url.pathname.startsWith('/api/')) {
+        await route.fallback();
+        return;
+      }
+
       let body: unknown;
 
       try {
