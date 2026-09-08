@@ -42,7 +42,9 @@ test('the playground streams a completion and sends the intended request', async
 
   await page.goto('/playground');
   await page.getByPlaceholder('What do you want to ask?').fill('Say hello from the gateway.');
-  await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
+  const caching = page.getByRole('switch', { name: 'Enable caching', exact: true });
+  await expect(caching).not.toBeChecked();
+  await caching.click();
   await page.getByPlaceholder('Provider API key').fill('provider-secret-for-test');
   await page.getByRole('button', { name: /^Run/ }).click();
 
@@ -53,6 +55,7 @@ test('the playground streams a completion and sends the intended request', async
   const calls = api.matching('POST', '/api/chat/completions');
   expect(calls).toHaveLength(1);
   expect(calls[0]?.headers['ai-api-key']).toBe('provider-secret-for-test');
+  expect(calls[0]?.headers['ai-cache-enabled']).toBe('true');
   expect(calls[0]?.body).toMatchObject({
     model: 'openai/gpt-5',
     messages: [{ role: 'user', content: 'Say hello from the gateway.' }],
@@ -70,7 +73,6 @@ test('numeric parameters send edited values and are omitted after clearing', asy
 
   await page.goto('/playground');
   await page.getByPlaceholder('What do you want to ask?').fill('Hello');
-  await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
   await page.getByPlaceholder('Provider API key').fill('test-provider-key');
 
   const temperature = page.getByLabel('Temperature', { exact: true });
@@ -127,7 +129,6 @@ for (const invalid of [
     registerEmptyApp(api);
     await page.goto('/playground');
     await page.getByPlaceholder('What do you want to ask?').fill('Hello');
-    await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
     await page.getByPlaceholder('Provider API key').fill('test-provider-key');
     await page.getByLabel(invalid.label, { exact: true }).fill(invalid.value);
     await page.getByRole('button', { name: /^Run/ }).click();
@@ -198,7 +199,10 @@ for (const stream of [true, false]) {
             () => (window as typeof window & { playgroundRequests: { aborted: boolean }[] }).playgroundRequests,
           );
         await page.goto('/playground');
-        if (count === 1) await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
+        if (count === 2) {
+          await page.getByRole('button', { name: 'Add model', exact: true }).click();
+          await page.locator('#playground-model-1').fill('openai/gpt-5-mini');
+        }
         await page.getByPlaceholder('What do you want to ask?').fill('Hello');
         for (const field of await page.getByPlaceholder('Provider API key').all()) {
           await field.fill('test-provider-key');
@@ -240,6 +244,8 @@ test('the playground has one comparison layout with one to four model columns', 
   const keys = page.getByPlaceholder('Provider API key');
   const remove = page.getByRole('button', { name: 'Remove this model', exact: true });
   const add = page.getByRole('button', { name: 'Add model', exact: true });
+  await expect(keys).toHaveCount(1);
+  await add.click();
   await expect(keys).toHaveCount(2);
   await keys.nth(1).fill('keep-this-credential');
   await remove.first().click();

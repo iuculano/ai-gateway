@@ -44,12 +44,13 @@ let drafts: DraftMessage[] = $state([emptyDraft('system'), emptyDraft('user')]);
 
 // Each column sends the same request with its own model and provider credential.
 const MAX_COMPARISONS = 4;
-let comparisons = $state([new PlaygroundRun('openai/gpt-5'), new PlaygroundRun('openai/gpt-5-mini')]);
+let comparisons = $state([new PlaygroundRun('openai/gpt-5')]);
 const running = $derived(comparisons.some((run) => run.running));
 
 onDestroy(stop);
 
 let stream = $state(true);
+let cacheEnabled = $state(false);
 
 /** The stored prompt to expand, or null to send the messages as written. */
 let promptSelection: PromptSelection | null = $state(null);
@@ -155,6 +156,7 @@ function buildHeaders(): GatewayHeaders {
   return {
     // Replaced by every run with its own credential, the same way `model` is.
     'ai-api-key': '',
+    'ai-cache-enabled': String(cacheEnabled),
     ...(webhookId !== NO_WEBHOOK ? { 'ai-webhook-id': webhookId } : {}),
   };
 }
@@ -457,6 +459,20 @@ function onKeydown(event: KeyboardEvent) {
 						checked={stream}
 						disabled={running}
 						onCheckedChange={(on) => (stream = on)}
+						class="h-5 w-9 flex-none data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
+					/>
+				</label>
+
+				<label class="flex items-center justify-between gap-3">
+					<span class="flex flex-col gap-[3px]">
+						<span class="text-[12.5px] font-medium text-zinc-200">Enable caching</span>
+						<span class="text-[11.5px] text-zinc-600">Reuse matching responses for 5 minutes</span>
+					</span>
+					<Switch
+						aria-label="Enable caching"
+						checked={cacheEnabled}
+						disabled={running}
+						onCheckedChange={(on) => (cacheEnabled = on)}
 						class="h-5 w-9 flex-none data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
 					/>
 				</label>
