@@ -755,6 +755,20 @@ async function queueWebhook(
   return ok(undefined);
 }
 
+function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders) {
+  const caller = getCaller();
+
+  const scope = createCacheKey('chat-completions:scope:', {
+    organizationId: caller.organization.id,
+    provider: model.provider,
+    modelId: model.modelId,
+    apiKey: headers['ai-api-key'],
+    baseUrl: headers['ai-base-url'] ?? null,
+  });
+
+  return wrapLanguageModel({ model: model.instance, middleware: createCacheMiddleware(scope) });
+}
+
 /**
  * Generates a chat completion.
  *
@@ -809,18 +823,7 @@ async function createChatCompletion(
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText({
-      model: wrapLanguageModel({
-        model: model.instance,
-        middleware: createCacheMiddleware(
-          createCacheKey('chat-completions:scope:', {
-            organizationId: getCaller().organization.id,
-            provider: model.provider,
-            modelId: model.modelId,
-            apiKey: headers['ai-api-key'],
-            baseUrl: headers['ai-base-url'] ?? null,
-          }),
-        ),
-      }),
+      model: cacheModel(model, headers),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
@@ -940,7 +943,7 @@ async function* streamChatCompletion(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-      model: model.instance,
+      model: cacheModel(model, headers),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
