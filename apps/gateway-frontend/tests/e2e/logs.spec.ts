@@ -112,8 +112,10 @@ for (const scenario of [
     }
 
     await page.goto('/logs');
-    // Click the model text so the row's embedded trace link cannot intercept the click.
-    const row = page.getByText(SUCCESS_LOG.model, { exact: true });
+    // Scope to the toggle: expanded details repeat the model name, and the trace link is a separate target.
+    const row = page
+      .getByRole('button', { name: new RegExp(SUCCESS_LOG.model) })
+      .getByText(SUCCESS_LOG.model, { exact: true });
     await row.click();
     for (const kind of ['request', 'response'] as const) {
       if (scenario.omitted.includes(kind)) {
