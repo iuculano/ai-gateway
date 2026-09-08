@@ -1,5 +1,6 @@
 import { beforeEach, expect, mock, test } from 'bun:test';
 import { streamText, wrapLanguageModel } from 'ai';
+import Schemas from '../../src/api/chat-completions/chat-completions.schemas';
 import { cache, callerFixture, database, installModuleMocks, logWrites, modelRow, resetDoubles, rows } from './doubles';
 
 await installModuleMocks();
@@ -142,7 +143,7 @@ for (const streaming of [false, true]) {
     );
     database.defaultResponse('select', 'webhooks', rows());
     logWrites.installDefaults();
-    const headers = { 'ai-api-key': 'cache-test-secret' };
+    const headers = { 'ai-api-key': 'cache-test-secret', 'ai-cache-enabled': true };
     const body = { model: 'openai/test-model', messages: [{ role: 'user' as const, content: 'Hello' }] };
     await runWithCaller(callerFixture, async () => {
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -170,3 +171,64 @@ for (const streaming of [false, true]) {
     expect(streaming ? calls.stream : calls.generate).toBe(1);
   });
 }
+
+for (const streaming of [false, true]) {
+  test(`${streaming ? 'stream' : 'generate'} refresh replaces the entry with the requested TTL`, async () => {
+    const invoke = async (model: Model) =>
+      streaming ? collect((await model.doStream(params)).stream) : model.doGenerate(params);
+    await invoke(cachedModel());
+    expect(cache.responseWrites[0]?.options).toEqual({ expiration: { type: 'EX', value: 300 } });
+    const reads = cache.responseReads.length;
+    const state = { hit: false };
+    await invoke(
+      wrapLanguageModel({
+        model: providerModel,
+        middleware: createCacheMiddleware('test', state, { ttl: 60, refresh: true }),
+      }),
+    );
+    expect(state.hit).toBe(false);
+    expect(cache.responseReads).toHaveLength(reads);
+    expect(cache.responseWrites).toHaveLength(2);
+    expect(cache.responseWrites[1]?.key).toBe(cache.responseWrites[0]?.key);
+    expect(cache.responseWrites[1]?.options).toEqual({ expiration: { type: 'EX', value: 60 } });
+    await invoke(cachedModel());
+    expect(streaming ? calls.stream : calls.generate).toBe(2);
+  });
+
+  test(`${streaming ? 'stream' : 'generate'} caching is disabled by default, even with refresh and TTL`, async () => {
+    database.defaultResponse('select', 'models', rows(modelRow({ provider: 'openai', name: 'test-model' })));
+    database.defaultResponse('select', 'webhooks', rows());
+    logWrites.installDefaults();
+    const body = { model: 'openai/test-model', messages: [{ role: 'user' as const, content: 'Hello' }] };
+    await runWithCaller(callerFixture, async () => {
+      for (const headers of [
+        { 'ai-api-key': 'cache-test-secret' },
+        { 'ai-api-key': 'cache-test-secret', 'ai-cache-refresh': true, 'ai-cache-ttl': 60 },
+        { 'ai-api-key': 'cache-test-secret', 'ai-cache-enabled': false },
+      ]) {
+        if (streaming) {
+          for await (const result of ChatCompletions.streamChatCompletion(headers, body))
+            expect(result.isOk()).toBe(true);
+        } else expect((await ChatCompletions.createChatCompletion(headers, body)).isOk()).toBe(true);
+      }
+    });
+    expect(cache.responseReads).toHaveLength(0);
+    expect(cache.responseWrites).toHaveLength(0);
+    expect(streaming ? calls.stream : calls.generate).toBe(3);
+  });
+}
+
+test('cache headers parse booleans and positive whole-second TTLs', () => {
+  const schema = Schemas.createChatCompletion.headers;
+  expect(
+    schema.parse({
+      'ai-api-key': 'test',
+      'ai-cache-enabled': 'true',
+      'ai-cache-refresh': 'false',
+      'ai-cache-ttl': '60',
+    }),
+  ).toMatchObject({ 'ai-cache-enabled': true, 'ai-cache-refresh': false, 'ai-cache-ttl': 60 });
+  for (const ttl of ['0', '-1', '1.5', 'invalid']) {
+    expect(schema.safeParse({ 'ai-api-key': 'test', 'ai-cache-ttl': ttl }).success).toBe(false);
+  }
+});
