@@ -21,6 +21,9 @@ const headers = z.object({
   // Bring-your-own-key.
   'ai-api-key': z.string().min(1),
   'ai-base-url': z.url().optional(),
+  'ai-cache-enabled': z.stringbool().optional(),
+  'ai-cache-ttl': z.coerce.number().int().positive().optional(),
+  'ai-cache-refresh': z.stringbool().optional(),
   'ai-rate-limit-policy': rateLimitPolicy.optional(),
   'ai-log-tags': z.string().optional(),
   'ai-log-omit-request': z.stringbool().optional(),

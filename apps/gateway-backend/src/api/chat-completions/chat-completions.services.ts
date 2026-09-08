@@ -756,6 +756,10 @@ async function queueWebhook(
 }
 
 function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders, cache: { hit: boolean }) {
+  if (!headers['ai-cache-enabled']) {
+    return model.instance;
+  }
+
   const caller = getCaller();
 
   const scope = createCacheKey('chat-completions:scope:', {
@@ -766,7 +770,13 @@ function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders, cache:
     baseUrl: headers['ai-base-url'] ?? null,
   });
 
-  return wrapLanguageModel({ model: model.instance, middleware: createCacheMiddleware(scope, cache) });
+  return wrapLanguageModel({
+    model: model.instance,
+    middleware: createCacheMiddleware(scope, cache, {
+      ttl: headers['ai-cache-ttl'] ?? 300,
+      refresh: headers['ai-cache-refresh'] ?? false,
+    }),
+  });
 }
 
 /**
