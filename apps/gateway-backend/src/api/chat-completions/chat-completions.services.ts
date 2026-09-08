@@ -20,6 +20,7 @@ import {
   streamText,
   type ToolSet,
   tool,
+  wrapLanguageModel,
 } from 'ai';
 import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
@@ -27,6 +28,7 @@ import LogsService from '../logs/logs.services';
 import type { GetModelResponse } from '../models/models.schemas';
 import ModelsService from '../models/models.services';
 import WebhookServices from '../webhooks/webhooks.services';
+import { createCacheMiddleware } from './chat-completions.cache';
 import type {
   ChatCompletion,
   ChatCompletionBody,
@@ -38,7 +40,10 @@ import type {
   ChatCompletionUsage,
 } from './chat-completions.schemas';
 
-const providerCache = new LRUCache<string, LanguageModel>({
+// Exclude string model IDs - wrapLanguageModel requires a model instance.
+type LanguageModelInstance = Exclude<LanguageModel, string>;
+
+const providerCache = new LRUCache<string, LanguageModelInstance>({
   max: 1000,
   ttl: 1000 * 60 * 60, // 1 hour
 });
@@ -55,7 +60,7 @@ function isProvider(value: string): value is Provider {
 interface ResolvedModel {
   provider: Provider;
   modelId: string;
-  instance: LanguageModel;
+  instance: LanguageModelInstance;
   info: GetModelResponse;
 }
 
@@ -626,6 +631,7 @@ async function closeLog(
   response: ChatCompletion,
   model: GetModelResponse,
   responseTimeMs: number,
+  cacheHit: boolean,
 ): Promise<void> {
   if (!log) {
     return;
@@ -638,9 +644,11 @@ async function closeLog(
       // The row and its accounting survive either omit header; see openLog.
       omitRequest: headers['ai-log-omit-request'],
       omitResponse: headers['ai-log-omit-response'],
+      gateway_cache_hit: cacheHit,
       input_tokens: response.usage.prompt_tokens,
+      cached_input_tokens: response.usage.prompt_tokens_details?.cached_tokens ?? null,
       output_tokens: response.usage.completion_tokens,
-      ...calculateCosts(response.usage, model),
+      ...(cacheHit ? { input_cost: 0, output_cost: 0 } : calculateCosts(response.usage, model)),
       response_time_ms: Math.round(responseTimeMs),
     });
   } catch (error) {
@@ -747,6 +755,30 @@ async function queueWebhook(
   return ok(undefined);
 }
 
+function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders, cache: { hit: boolean }) {
+  if (!headers['ai-cache-enabled']) {
+    return model.instance;
+  }
+
+  const caller = getCaller();
+
+  const scope = createCacheKey('chat-completions:scope:', {
+    organizationId: caller.organization.id,
+    provider: model.provider,
+    modelId: model.modelId,
+    apiKey: headers['ai-api-key'],
+    baseUrl: headers['ai-base-url'] ?? null,
+  });
+
+  return wrapLanguageModel({
+    model: model.instance,
+    middleware: createCacheMiddleware(scope, cache, {
+      ttl: headers['ai-cache-ttl'] ?? 300,
+      refresh: headers['ai-cache-refresh'] ?? false,
+    }),
+  });
+}
+
 /**
  * Generates a chat completion.
  *
@@ -796,12 +828,13 @@ async function createChatCompletion(
     return err(queued.error);
   }
 
+  const cache = { hit: false };
   const startedAt = performance.now();
 
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText({
-      model: model.instance,
+      model: cacheModel(model, headers, cache),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
@@ -852,7 +885,7 @@ async function createChatCompletion(
     usage: toUsage(result.totalUsage),
   };
 
-  await closeLog(log, headers, body, completion, model.info, responseTimeMs);
+  await closeLog(log, headers, body, completion, model.info, responseTimeMs, cache.hit);
 
   return ok(completion);
 }
@@ -914,6 +947,7 @@ async function* streamChatCompletion(
     return;
   }
 
+  const cache = { hit: false };
   const startedAt = performance.now();
 
   let streamError: ProviderFailure | undefined;
@@ -921,7 +955,7 @@ async function* streamChatCompletion(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-      model: model.instance,
+      model: cacheModel(model, headers, cache),
       messages: messages.value,
 
       // Preserve caller message order instead of hoisting system messages into instructions.
@@ -1099,7 +1133,7 @@ async function* streamChatCompletion(
     usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 
-  await closeLog(log, headers, body, completion, model.info, performance.now() - startedAt);
+  await closeLog(log, headers, body, completion, model.info, performance.now() - startedAt, cache.hit);
 }
 
 export default {

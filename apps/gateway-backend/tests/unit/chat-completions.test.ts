@@ -922,6 +922,7 @@ test('usage the provider left incomplete becomes zeroes and a computed total', a
 
   expect(completion.usage).toEqual({ prompt_tokens: 9, completion_tokens: 0, total_tokens: 9 });
   // Absent rather than zeroed: the provider said nothing about either.
+  expect(logWrites.completed[0]?.entry.cached_input_tokens).toBeNull();
   expect(completion.usage).not.toHaveProperty('prompt_tokens_details');
   expect(completion.usage).not.toHaveProperty('completion_tokens_details');
 });
@@ -1483,4 +1484,13 @@ test('the non-streaming handler echoes the log id it opened', async () => {
     object: 'chat.completion',
     choices: [{ message: { content: 'Hello from the provider' } }],
   });
+});
+
+test('an explicit zero provider cache count is stored as zero', async () => {
+  aiState.generateResult = {
+    ...aiState.generateResult,
+    totalUsage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, inputTokenDetails: { cacheReadTokens: 0 } },
+  };
+  await withCaller(() => Services.createChatCompletion(headers(), body()));
+  expect(logWrites.completed[0]?.entry.cached_input_tokens).toBe(0);
 });

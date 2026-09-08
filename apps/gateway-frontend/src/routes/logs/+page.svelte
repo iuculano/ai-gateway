@@ -20,7 +20,7 @@ type StatusFilter = 'all' | 'success' | 'errors';
 const PAGE_SIZE = 20;
 
 // Shared with LogRow so the header and the rows sit in one grid.
-const COLS = '24px 150px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 84px 92px 84px';
+const COLS = '24px 150px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 76px 100px 96px 104px 100px 92px 84px';
 
 const COLUMNS = [
   { label: '' },
@@ -29,7 +29,11 @@ const COLUMNS = [
   { label: 'Model' },
   { label: 'Trace' },
   { label: 'Status' },
-  { label: 'Tokens', align: 'right' as const },
+  { label: 'Cache hit', align: 'right' as const },
+  { label: 'Cached tokens', align: 'right' as const },
+  { label: 'Input tokens', align: 'right' as const },
+  { label: 'Output tokens', align: 'right' as const },
+  { label: 'Throughput', align: 'right' as const },
   { label: 'Cost', align: 'right' as const },
   { label: 'Latency', align: 'right' as const },
 ];

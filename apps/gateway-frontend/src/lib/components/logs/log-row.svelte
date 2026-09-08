@@ -4,8 +4,6 @@ import { toast } from 'svelte-sonner';
 import { getLogRequest, getLogResponse } from '$lib/api/logs';
 import type { Log, LogPayload } from '$lib/api/types';
 import { copyToClipboard } from '$lib/clipboard';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
@@ -37,9 +35,7 @@ let {
 
 const ts = $derived(fmtTs(log.created_at));
 const tone = $derived(providerTone(log.provider));
-const totalTokens = $derived(
-  log.input_tokens === null && log.output_tokens === null ? null : (log.input_tokens ?? 0) + (log.output_tokens ?? 0),
-);
+const throughput = $derived(log.gateway_cache_hit ? '—' : fmtThroughput(log.output_tokens, log.response_time_ms));
 // Coerced: postgres hands `numeric` back as a string, and a stray one here
 // would turn this addition into string concatenation.
 const totalCost = $derived(Number(log.input_cost) + Number(log.output_cost));
@@ -102,15 +98,9 @@ $effect(() => {
 const requestJson = $derived(request === undefined ? '' : JSON.stringify(request, null, 2));
 const responseJson = $derived(response === undefined ? '' : JSON.stringify(response, null, 2));
 
-// The expanded detail cells the backend cannot answer from the row alone come
-// out of the request/response payloads once they arrive.
+// Finish reason arrives with the stored response payload.
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-
-const temperature = $derived.by(() => {
-  const value = asRecord(request).temperature;
-  return typeof value === 'number' ? String(value) : '—';
-});
 
 const finishReason = $derived.by(() => {
   const choices = asRecord(response).choices;
@@ -118,23 +108,6 @@ const finishReason = $derived.by(() => {
   const reason = asRecord(choices[0]).finish_reason;
   return typeof reason === 'string' ? reason : '—';
 });
-
-/** The response body carries the model id the provider actually served. */
-const servedModel = $derived.by(() => {
-  const value = asRecord(response).model;
-  return typeof value === 'string' ? value : log.model;
-});
-
-const detailItems: DetailItem[] = $derived([
-  { label: 'Log ID', value: log.id },
-  { label: 'Endpoint', value: '/v1/chat/completions' },
-  { label: 'Model served', value: servedModel },
-  { label: 'Temperature', value: temperature },
-  { label: 'Prompt tokens', value: fmtTokens(log.input_tokens) },
-  { label: 'Completion tokens', value: fmtTokens(log.output_tokens) },
-  { label: 'Throughput', value: fmtThroughput(log.output_tokens, log.response_time_ms) },
-  { label: 'Finish reason', value: finishReason },
-]);
 
 const panels = $derived([
   {
@@ -182,6 +155,7 @@ function copy(text: string, label: string) {
 	{#snippet cells()}
 		<span class="font-mono text-xs text-zinc-400"><span class="text-zinc-600">{ts.short} · </span>{ts.time}</span>
 
+
 		<span class="inline-flex min-w-0 items-center gap-[7px] text-[12.5px] text-zinc-300">
 			<span class="size-[7px] flex-none rounded-full" style:background={tone.color}></span>
 			<span class="overflow-hidden text-ellipsis whitespace-nowrap">{tone.label}</span>
@@ -216,7 +190,11 @@ function copy(text: string, label: string) {
 			<span class="size-1.5 flex-none rounded-full" style:background={status.color}></span>{status.label}
 		</span>
 
-		<span class="text-right font-mono text-xs text-zinc-400">{fmtTokens(totalTokens)}</span>
+		<span class="text-right text-xs text-zinc-400">{log.gateway_cache_hit ? 'Yes' : 'No'}</span>
+		<span class="text-right font-mono text-xs text-zinc-400">{fmtTokens(log.cached_input_tokens)}</span>
+		<span class="text-right font-mono text-xs text-zinc-400">{fmtTokens(log.input_tokens)}</span>
+		<span class="text-right font-mono text-xs text-zinc-400">{fmtTokens(log.output_tokens)}</span>
+		<span class="text-right font-mono text-xs text-zinc-400">{throughput}</span>
 		<span class="text-right font-mono text-xs text-zinc-400">{fmtCost(totalCost)}</span>
 		<span
 			class="text-right font-mono text-xs"
@@ -228,28 +206,24 @@ function copy(text: string, label: string) {
 	{/snippet}
 
 	{#snippet details()}
-		<DetailGrid items={detailItems} />
-
-		<!-- An anchor, not a ToolbarButton, because this navigates. The playground
-		     reads ?from= and rehydrates the stored request.
-
-		     Only offered when the payload actually exists: `ai-log-omit-request`
-		     leaves a row whose request was never written, and there is nothing
-		     to replay from that. -->
-		<div class="flex items-center gap-2.5">
+		<div class="flex items-center gap-4 overflow-x-auto whitespace-nowrap text-xs">
+			<div class="flex items-center gap-3 text-zinc-500">
+				<span>Log ID <span class="font-mono text-zinc-300">{log.id}</span></span>
+				<span aria-hidden="true" class="text-zinc-700">|</span>
+				<span>Endpoint <span class="font-mono text-zinc-300">/v1/chat/completions</span></span>
+				<span aria-hidden="true" class="text-zinc-700">|</span>
+				<span>Throughput <span class="font-mono text-zinc-300">{throughput}</span></span>
+				<span aria-hidden="true" class="text-zinc-700">|</span>
+				<span>Finish reason <span class="font-mono text-zinc-300">{finishReason}</span></span>
+			</div>
 			{#if log.has_request}
 				<a
 					href="/playground?from={log.id}"
-					class="flex h-8 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
+					class="ml-auto flex h-8 shrink-0 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
 				>
 					<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-					Replay in playground
+					Replay in Playground
 				</a>
-				<span class="text-[11.5px] text-zinc-600">Re-send this request to a different model.</span>
-			{:else}
-				<span class="text-[11.5px] text-zinc-600">
-					No stored request, so this call cannot be replayed.
-				</span>
 			{/if}
 		</div>
 

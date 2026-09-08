@@ -43,7 +43,7 @@ test('a stored request can be inspected and replayed in the playground', async (
   await page.getByText(SUCCESS_LOG.model, { exact: true }).click();
   await expect(page.getByText('Investigate this production incident.', { exact: true })).toBeVisible();
   await expect(page.getByText('Recovered answer.', { exact: true })).toBeVisible();
-  await expect(page.getByText('gpt-5-2026-08-01', { exact: true })).toBeVisible();
+  await expect(page.getByText('Finish reason', { exact: false })).toBeVisible();
 
   await page.getByRole('link', { name: 'Replay in playground' }).click();
   await expect(page).toHaveURL(`/playground?from=${IDS.successLog}`);
@@ -57,7 +57,6 @@ test('a stored request can be inspected and replayed in the playground', async (
     body: 'data: [DONE]\n\n',
     headers: { 'content-type': 'text/event-stream' },
   });
-  await page.getByRole('button', { name: 'Remove this model', exact: true }).last().click();
   await page.getByPlaceholder('Provider API key').fill('test-provider-key');
   const response = page.waitForResponse('**/api/chat/completions');
   await page.getByRole('button', { name: /^Run/ }).click();
