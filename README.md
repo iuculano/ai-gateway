@@ -32,11 +32,6 @@ bun run dev
 
 Each app reads its own `apps/<app>/.env`.
 
-VictoriaTraces stores customer application traces in the persistent
-`victoria_traces_data` volume. Its OTLP/HTTP ingest endpoint is
-`http://localhost:10428/insert/opentelemetry/v1/traces`, and its local trace UI
-is available at `http://localhost:10428/select/vmui`.
-
 | App                      | Port |
 | ------------------------ | ---- |
 | gateway-backend          | 8080 |
