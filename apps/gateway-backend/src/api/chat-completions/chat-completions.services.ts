@@ -644,8 +644,9 @@ async function closeLog(
       // The row and its accounting survive either omit header; see openLog.
       omitRequest: headers['ai-log-omit-request'],
       omitResponse: headers['ai-log-omit-response'],
-      cache_hit: cacheHit,
+      gateway_cache_hit: cacheHit,
       input_tokens: response.usage.prompt_tokens,
+      cached_input_tokens: response.usage.prompt_tokens_details?.cached_tokens ?? null,
       output_tokens: response.usage.completion_tokens,
       ...(cacheHit ? { input_cost: 0, output_cost: 0 } : calculateCosts(response.usage, model)),
       response_time_ms: Math.round(responseTimeMs),
