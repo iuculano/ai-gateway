@@ -197,6 +197,29 @@ const PROVIDER_TONES: Record<string, { label: string; color: string }> = {
   meta: { label: 'Meta', color: '#c084fc' },
 };
 
+/**
+ * A stable colour for a trace id.
+ *
+ * The point is recognition, not meaning: two log rows carrying the same colour
+ * came from the same run, and that reads at a glance in a way a 32-character
+ * hex string never will. Deterministic, so the same trace is the same colour on
+ * the logs table and on the traces page, and across reloads.
+ *
+ * FNV-1a because it is four lines and spreads short hex strings evenly. The
+ * saturation and lightness are fixed so every colour it can produce stays
+ * legible on the dark surface.
+ */
+export function traceTone(traceId: string): string {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < traceId.length; index += 1) {
+    hash ^= traceId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `hsl(${Math.abs(hash) % 360} 65% 62%)`;
+}
+
 export function providerTone(provider: string): { label: string; color: string } {
   return PROVIDER_TONES[provider.toLowerCase()] ?? { label: humanize(provider), color: '#71717a' };
 }

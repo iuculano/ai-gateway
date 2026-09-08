@@ -534,6 +534,9 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
     organization_id: ORGANIZATION_ID,
     model: 'gpt-4-turbo',
     provider: 'openai',
+    trace_id: null,
+    span_id: null,
+    parent_span_id: null,
     status: 'complete',
     // Matches callerFixture, so a completion driven by that caller and a row
     // read back through this fixture describe the same actor.

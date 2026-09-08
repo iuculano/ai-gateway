@@ -1,6 +1,14 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { createGenericKeyAdapter, createZitadelAdapter } from '@repo/auth';
-import { authenticate, callerContext, errorHandler, exposeMetrics, requestLogger, requestMetrics } from '@repo/hono';
+import {
+  authenticate,
+  callerContext,
+  errorHandler,
+  exposeMetrics,
+  requestLogger,
+  requestMetrics,
+  traceContext,
+} from '@repo/hono';
 import { createObjectStorage } from '@repo/object-storage';
 import { connectRedis } from '@repo/redis';
 import { requestId } from 'hono/request-id';
@@ -27,6 +35,7 @@ await connectRedis();
 app.onError(errorHandler());
 app.use('*', secureHeaders());
 app.use('*', requestId());
+app.use('*', traceContext());
 app.use('*', requestMetrics());
 app.use('*', requestLogger());
 app.get('/metrics', exposeMetrics());

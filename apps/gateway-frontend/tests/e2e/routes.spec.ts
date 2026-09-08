@@ -35,6 +35,7 @@ test('the authenticated shell loads every primary frontend route', async ({ page
     { path: '/playground', heading: 'Playground', breadcrumb: 'Playground', ready: 'Nothing sent yet.' },
     { path: '/prompts', heading: 'Prompts', breadcrumb: 'Prompts', ready: 'No prompts yet' },
     { path: '/logs', heading: 'Logs', breadcrumb: 'Logs', ready: 'No logs recorded yet' },
+    { path: '/traces', heading: 'Traces', breadcrumb: 'Traces', ready: 'No traces recorded yet' },
     { path: '/analytics', heading: 'Analytics', breadcrumb: 'Analytics', ready: 'No requests in this window.' },
     { path: '/audit', heading: 'Audit log', breadcrumb: 'Audit log', ready: 'No audit events recorded yet' },
     { path: '/keys', heading: 'API Keys', breadcrumb: 'API Keys', ready: 'No API keys yet' },

@@ -8,6 +8,7 @@ import {
   getActorId,
   getCaller,
   getLogger,
+  getTraceContext,
   runWithCaller,
 } from '../../index';
 
@@ -72,6 +73,24 @@ test('runWithCaller preserves the exact caller and logger across asynchronous wo
 test('ambient access outside a caller scope refuses identity but retains the process logger', () => {
   expect(() => getCaller()).toThrow('No caller is active');
   expect(getLogger()).toBe(rootLogger);
+  expect(getTraceContext()).toBeUndefined();
+});
+
+test('runWithCaller preserves trace correlation across asynchronous work', async () => {
+  const trace = {
+    traceId: 'a'.repeat(32),
+    spanId: 'b'.repeat(16),
+    parentSpanId: 'c'.repeat(16),
+  };
+
+  await runWithCaller(
+    apiKeyCaller,
+    async () => {
+      await Promise.resolve();
+      expect(getTraceContext()).toEqual(trace);
+    },
+    { trace },
+  );
 });
 
 test('nested caller scopes inherit the logger and restore the outer identity', () => {
@@ -112,16 +131,31 @@ test('callerContext binds Hono caller and logger through asynchronous route work
   app.use('*', async (c, next) => {
     c.set('caller', apiKeyCaller);
     c.set('logger', logger);
+    c.set('traceId', 'a'.repeat(32));
+    c.set('spanId', 'b'.repeat(16));
+    c.set('parentSpanId', 'c'.repeat(16));
     await next();
   });
   app.use('*', callerContext());
   app.get('/', async (c) => {
     await Promise.resolve();
-    return c.json({ callerMatches: getCaller() === apiKeyCaller, loggerMatches: getLogger() === logger });
+    return c.json({
+      callerMatches: getCaller() === apiKeyCaller,
+      loggerMatches: getLogger() === logger,
+      trace: getTraceContext(),
+    });
   });
 
   const response = await app.request('/');
 
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ callerMatches: true, loggerMatches: true });
+  expect(await response.json()).toEqual({
+    callerMatches: true,
+    loggerMatches: true,
+    trace: {
+      traceId: 'a'.repeat(32),
+      spanId: 'b'.repeat(16),
+      parentSpanId: 'c'.repeat(16),
+    },
+  });
 });

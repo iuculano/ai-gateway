@@ -15,6 +15,9 @@ const rateLimitPolicy = z
   });
 
 const headers = z.object({
+  traceparent: z.string().optional(),
+  tracestate: z.string().optional(),
+
   // Bring-your-own-key.
   'ai-api-key': z.string().min(1),
   'ai-base-url': z.url().optional(),
@@ -25,6 +28,11 @@ const headers = z.object({
   'ai-max-retries': z.coerce.number().int().min(0).max(10).optional(),
   'ai-timeout-ms': z.coerce.number().int().positive().optional(),
   'ai-webhook-id': z.uuidv7().optional(),
+});
+
+const responseHeaders = z.object({
+  'ai-log-id': z.uuid(),
+  'ai-trace-id': z.string().regex(/^[0-9a-f]{32}$/),
 });
 
 const textPart = z.object({
@@ -298,4 +306,5 @@ export type RateLimitPolicy = z.infer<typeof rateLimitPolicy>;
 export default {
   createChatCompletion,
   completionChunk,
+  responseHeaders,
 };
