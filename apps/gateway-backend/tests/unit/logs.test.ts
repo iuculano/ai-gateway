@@ -308,3 +308,19 @@ test('failLog stores the request and marks the row failed', async () => {
     request_object_reference: REQUEST_KEY,
   });
 });
+
+test('getLog exposes gateway cache hits', async () => {
+  database.respondTo(
+    'select',
+    'logs',
+    rows(logRow({ gateway_cache_hit: true, cached_input_tokens: 25, input_cost: '0', output_cost: '0' })),
+  );
+  expect(expectOk(await Services.getLog(LOG_ID))).toMatchObject({
+    gateway_cache_hit: true,
+    cached_input_tokens: 25,
+    input_tokens: 100,
+    output_tokens: 50,
+    input_cost: 0,
+    output_cost: 0,
+  });
+});

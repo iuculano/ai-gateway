@@ -62,6 +62,9 @@ export function forCaller<T extends object>(services: T, caller: Caller = caller
 // Redis
 
 export const cache = {
+  responses: {} as Record<string, string>,
+  responseReads: [] as string[],
+  responseWrites: [] as { key: string; value: string; options?: unknown }[],
   /** Keyed by api key id: the usage hash as redis would hand it back. */
   usage: {} as Record<string, Record<string, string>>,
 
@@ -75,6 +78,9 @@ export const cache = {
   deleted: [] as string[],
 
   reset() {
+    cache.responses = {};
+    cache.responseReads = [];
+    cache.responseWrites = [];
     cache.usage = {};
     cache.quota = {};
     cache.failure = null;
@@ -99,6 +105,17 @@ function idFromKey(key: string): string {
 }
 
 const redis = {
+  async get(key: string) {
+    if (cache.failure) throw cache.failure;
+    cache.responseReads.push(key);
+    return cache.responses[key] ?? null;
+  },
+  async set(key: string, value: string, options?: unknown) {
+    if (cache.failure) throw cache.failure;
+    cache.responseWrites.push({ key, value, options });
+    cache.responses[key] = value;
+    return 'OK';
+  },
   async eval(_script: string, options: { keys: string[]; arguments: string[] }) {
     if (cache.failure) {
       throw cache.failure;
@@ -542,6 +559,8 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
     // read back through this fixture describe the same actor.
     actor_type: 'user',
     actor_id: USER_ID,
+    gateway_cache_hit: false,
+    cached_input_tokens: null,
     input_tokens: 100,
     output_tokens: 50,
     input_cost: '0.001000000000',
