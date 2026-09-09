@@ -17,14 +17,14 @@
   },
   "dependencies": {
     "@hono/prometheus": "^1.0.3",
-    "@hono/zod-openapi": "^1.6.1",
+    "@hono/zod-openapi": "^1.6.3",
     "@repo/core": "workspace:*",
     "@repo/redis": "workspace:*",
-    "hono": "^4.13.5"
+    "hono": "^4.13.7"
   },
   "devDependencies": {
     "@repo/test-helpers": "workspace:*",
-    "@types/bun": "^1.4.0"
+    "@types/bun": "^1.4.1"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"

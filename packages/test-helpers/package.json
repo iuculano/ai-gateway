@@ -12,7 +12,7 @@
     "test:unit:coverage": "bun test --coverage tests/unit"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.0"
+    "@types/bun": "^1.4.1"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"

@@ -15,7 +15,7 @@
     "redis": "^6.2.1"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.0"
+    "@types/bun": "^1.4.1"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
