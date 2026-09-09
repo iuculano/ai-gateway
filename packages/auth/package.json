@@ -16,13 +16,13 @@
     "@repo/drizzle": "workspace:*",
     "@repo/hono": "workspace:*",
     "@repo/redis": "workspace:*",
-    "hono": "^4.13.5",
-    "jose": "^6.2.10",
+    "hono": "^4.13.7",
+    "jose": "^6.2.12",
     "lru-cache": "^11.5.2"
   },
   "devDependencies": {
     "@repo/test-helpers": "workspace:*",
-    "@types/bun": "^1.4.0"
+    "@types/bun": "^1.4.1"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
