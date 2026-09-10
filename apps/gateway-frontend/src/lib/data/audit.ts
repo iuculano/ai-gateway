@@ -49,16 +49,13 @@ function toAuditChanges(value: unknown): Record<string, AuditChange> | undefined
 /**
  * Maps a backend audit log row to the view model the audit table renders.
  *
- * The backend resolves actor_id to a display name; the shortened-id label
- * only remains as the fallback for actors that no longer exist.
+ * The API client resolves actor names through the batch actor endpoint.
  */
 export function toAuditEvent(log: AuditLog): AuditEvent {
-  const shortActor = log.actor_id ? log.actor_id.slice(0, 8) : null;
-
   const actorName =
     log.actor_type === 'system'
       ? 'System'
-      : (log.actor_name ?? `${log.actor_type === 'api_key' ? 'Key' : 'User'} ${shortActor ?? 'unknown'}`);
+      : (log.actor_name ?? (log.actor_type === 'api_key' ? 'Unknown API key' : 'Unknown user'));
 
   // The metadata JSON tab shows everything we know about the event; the
   // field-level diff arrives separately as `difference` and the row component
