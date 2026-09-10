@@ -15,7 +15,7 @@ import { requestId } from 'hono/request-id';
 import { secureHeaders } from 'hono/secure-headers';
 import { ROLE_SCOPES_MAP } from './authorization';
 import { environment } from './environment';
-import { apiRoutes } from './routes';
+import { apiRoutes, healthRoutes, internalRoutes } from './routes';
 
 export const app = new OpenAPIHono();
 
@@ -74,7 +74,7 @@ app.use('/v1/*', callerContext());
 
 const routes = app
   .route('/', healthRoutes) // internal health check routes
-  .route('/', healthHandlers) // internal health check routes
-  .route('/v1', apiRoutes); // public, versioned API routes
+  .route('/v1', apiRoutes) // public, versioned API routes
+  .route('/v1/internal', internalRoutes); // internal API routes
 
 export default routes;

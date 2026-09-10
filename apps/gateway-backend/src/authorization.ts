@@ -2,6 +2,7 @@
  * List of scopes for the API.
  */
 export const SCOPES = {
+  actorsRead: 'actors:read',
   apiKeysRead: 'api-keys:read',
   apiKeysWrite: 'api-keys:write',
   auditLogsRead: 'audit-logs:read',
@@ -30,6 +31,7 @@ export const SCOPES = {
 export const ROLE_SCOPES_MAP: Record<string, string[]> = {
   admin: Object.values(SCOPES), // Everything
   user: [
+    SCOPES.actorsRead,
     SCOPES.apiKeysRead,
     SCOPES.auditLogsRead,
     SCOPES.chatCompletionsWrite,

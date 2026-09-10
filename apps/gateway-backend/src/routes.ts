@@ -1,4 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import actorHandlers from './api/actors/actors.handlers';
 import analyticsHandlers from './api/analytics/analytics.handlers';
 import apiKeyHandlers from './api/api-keys/api-keys.handlers';
 import auditLogHandlers from './api/audit-logs/audit-logs.handlers';
@@ -35,5 +36,11 @@ export const apiRoutes = new OpenAPIHono()
 // biome-ignore format: looks nicer
 export const healthRoutes = new OpenAPIHono()
   .route('/', healthHandlers);
+
+// biome-ignore format: looks nicer
+export const internalRoutes = new OpenAPIHono()
+  .route('/', actorHandlers);
+
 export type ApiType = typeof apiRoutes;
 export type HealthApiType = typeof healthRoutes;
+export type InternalApiType = typeof internalRoutes;
