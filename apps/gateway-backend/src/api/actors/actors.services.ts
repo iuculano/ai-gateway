@@ -3,21 +3,23 @@ import { apiKeys, users } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
 import Schemas, { type ResolveActorsBody, type ResolveActorsResponse } from './actors.schemas';
 
-async function resolveUsers(ids: string[]): Promise<{ id: string, name: string }[]> {
+async function resolveUsers(ids: string[]): Promise<{ id: string; name: string }[]> {
+  // biome-ignore format: looks nicer
   const rows = await db
     .select({ id: users.id, name: sql<string>`coalesce(${users.name}, ${users.username})` })
     .from(users)
     .where(and(
       inArray(users.id, ids), // yes, no org currently
-      eq(users.status, 'active')
+      eq(users.status, 'active'),
     ));
 
   return rows;
 }
 
-async function resolveApiKeys(ids: string[]): Promise<{ id: string, name: string }[]> {
+async function resolveApiKeys(ids: string[]): Promise<{ id: string; name: string }[]> {
   const caller = getCaller();
 
+  // biome-ignore format: looks nicer
   const rows = await db
     .select({ id: apiKeys.id, name: apiKeys.name })
     .from(apiKeys)
@@ -38,17 +40,11 @@ async function resolveActors(body: ResolveActorsBody): Promise<ResolveActorsResp
   // The payload is a union, break  it down to the actual respective types
   // and filter duplicates if any.
   const userIds = [
-    ...new Set(body.actors
-      .filter((actor) => actor.actor_type === 'user')
-      .map((actor) => actor.actor_id)
-    ),
+    ...new Set(body.actors.filter((actor) => actor.actor_type === 'user').map((actor) => actor.actor_id)),
   ];
 
   const keyIds = [
-    ...new Set(body.actors
-      .filter((actor) => actor.actor_type === 'api_key')
-      .map((actor) => actor.actor_id)
-    ),
+    ...new Set(body.actors.filter((actor) => actor.actor_type === 'api_key').map((actor) => actor.actor_id)),
   ];
 
   // Try to save some time and just query concurrently.
@@ -78,5 +74,5 @@ async function resolveActors(body: ResolveActorsBody): Promise<ResolveActorsResp
 }
 
 export default {
-  resolveActors
+  resolveActors,
 };

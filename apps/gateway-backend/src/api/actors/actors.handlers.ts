@@ -17,8 +17,6 @@ const resolveActors = defineOpenAPIRoute({
   },
 });
 
-const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
-  resolveActors,
-] as const);
+const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([resolveActors] as const);
 
 export default app;

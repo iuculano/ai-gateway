@@ -24,13 +24,13 @@ const resolveActors = createRoute({
       description: 'Resolves actor references to their corresponding names',
       content: {
         'application/json': {
-          schema: Schemas.resolveActors.response
-        }
+          schema: Schemas.resolveActors.response,
+        },
       },
     },
   },
 });
 
-export default { 
-  resolveActors 
+export default {
+  resolveActors,
 };
