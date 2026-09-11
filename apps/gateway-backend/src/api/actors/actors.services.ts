@@ -8,10 +8,7 @@ async function resolveUsers(ids: string[]): Promise<{ id: string; name: string }
   const rows = await db
     .select({ id: users.id, name: sql<string>`coalesce(${users.name}, ${users.username})` })
     .from(users)
-    .where(and(
-      inArray(users.id, ids), // yes, no org currently
-      eq(users.status, 'active'),
-    ));
+    .where(inArray(users.id, ids));
 
   return rows;
 }
