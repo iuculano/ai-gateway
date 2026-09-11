@@ -1,4 +1,5 @@
 import type { AnalyticsSeriesResponse } from 'gateway-backend/schemas/analytics';
+import { resolveActorNames } from './actors';
 import { client } from './client';
 
 export type AnalyticsInterval = 'hour' | 'day' | 'none';
@@ -30,7 +31,10 @@ export interface SeriesRequest {
  */
 export async function fetchSeries(request: SeriesRequest) {
   const response = await client.analytics.series.$post({ json: request });
-  return response.json();
+  const result = await response.json();
+  if (!request.group_by?.includes('actor')) return result;
+  const actorName = await resolveActorNames(result.points);
+  return { ...result, points: result.points.map((point) => ({ ...point, actor_label: actorName(point) })) };
 }
 
 // Taken from the backend's own schema rather than inferred off the client.

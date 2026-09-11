@@ -49,7 +49,6 @@ const detailItems: DetailItem[] = $derived([
   { label: 'Status', value: statusLabel, tone: statusColor, mono: false },
   { label: 'Request ID', value: e.requestId },
   { label: `Actor · ${actorTypeLabel}`, value: e.actorName, mono: false },
-  { label: 'Actor ID', value: e.actorId ?? '—' },
   { label: 'Target type', value: e.targetType ?? '—' },
   { label: 'Target ID', value: e.targetId ?? '—' },
   { label: 'Occurred at', value: occ.full },

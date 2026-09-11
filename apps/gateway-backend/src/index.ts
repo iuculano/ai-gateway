@@ -13,10 +13,9 @@ import { createObjectStorage } from '@repo/object-storage';
 import { connectRedis } from '@repo/redis';
 import { requestId } from 'hono/request-id';
 import { secureHeaders } from 'hono/secure-headers';
-import healthHandlers from './api/health/health.handlers';
 import { ROLE_SCOPES_MAP } from './authorization';
 import { environment } from './environment';
-import { apiRoutes } from './routes';
+import { apiRoutes, healthRoutes, internalRoutes } from './routes';
 
 export const app = new OpenAPIHono();
 
@@ -40,13 +39,16 @@ app.use('*', requestMetrics());
 app.use('*', requestLogger());
 app.get('/metrics', exposeMetrics());
 
-app.doc31('/open-api.json', {
-  openapi: '3.1.0',
-  info: {
-    version: '1.0.0',
-    title: 'gateway-api',
-  },
-});
+// Only public API routes contribute to the published document.
+const docs = new OpenAPIHono().route('/v1', apiRoutes);
+app.get('/open-api.json', (c) =>
+  c.json(
+    docs.getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { version: '1.0.0', title: 'gateway-api' },
+    }),
+  ),
+);
 
 app.use(
   '/v1/*',
@@ -70,12 +72,9 @@ app.use(
 // from the previous middleware.
 app.use('/v1/*', callerContext());
 
-// Note, this being method-chained is very intentional here!  We need to
-// preserve the type of the entire route tree in AppType for the typed Hono
-// client to work. The frontend relies on this!
 const routes = app
-  .route('/', healthHandlers) // internal health check routes
-  .route('/v1', apiRoutes); // public, versioned API routes
+  .route('/', healthRoutes) // internal health check routes
+  .route('/v1', apiRoutes) // public, versioned API routes
+  .route('/v1/internal', internalRoutes); // internal API routes
 
-export type AppType = typeof routes;
 export default routes;

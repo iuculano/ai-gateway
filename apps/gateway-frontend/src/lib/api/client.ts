@@ -1,4 +1,4 @@
-import type { ApiType } from 'gateway-backend/routes';
+import type { ApiType, InternalApiType } from 'gateway-backend/routes';
 import { hc, type PickResponseByStatusCode } from 'hono/client';
 
 export class ApiError extends Error {
@@ -44,3 +44,4 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
 type SuccessfulApiType = PickResponseByStatusCode<ApiType, 200 | 201 | 204>;
 
 export const client = hc<SuccessfulApiType>('/api', { fetch: apiFetch });
+export const internalClient = hc<PickResponseByStatusCode<InternalApiType, 200>>('/api/internal', { fetch: apiFetch });
