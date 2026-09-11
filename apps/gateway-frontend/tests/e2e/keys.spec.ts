@@ -3,8 +3,22 @@ import { API_KEY, CREATED_API_KEY, IDS, registerEmptyApp } from './fixtures';
 
 test('an API key can be created, revealed once, and revoked', async ({ page, api }) => {
   registerEmptyApp(api);
-  api.post('/api/api-keys', { status: 201, json: CREATED_API_KEY });
-  api.delete(`/api/api-keys/${IDS.apiKey}`);
+  let created = false;
+  let revoked = false;
+  api.get('/api/api-keys', () => ({
+    json: {
+      data: created ? [{ ...API_KEY, revoked_at: revoked ? '2026-01-01T00:00:00Z' : null }] : [],
+      meta: { oldest_id: null, more_data: false },
+    },
+  }));
+  api.post('/api/api-keys', () => {
+    created = true;
+    return { status: 201, json: CREATED_API_KEY };
+  });
+  api.delete(`/api/api-keys/${IDS.apiKey}`, () => {
+    revoked = true;
+    return { status: 204 };
+  });
 
   await page.goto('/keys');
   await expect(page.getByText('No API keys yet')).toBeVisible();

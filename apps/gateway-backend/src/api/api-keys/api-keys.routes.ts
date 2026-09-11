@@ -10,7 +10,7 @@ const countApiKeys = createRoute({
   security: bearerSecurity,
   middleware: [authorize({ scopes: [SCOPES.apiKeysRead] })],
   request: {
-    query: Schemas.countApiKeys.query
+    query: Schemas.countApiKeys.query,
   },
   responses: {
     ...validatedProtectedRouteErrors,
@@ -18,7 +18,7 @@ const countApiKeys = createRoute({
       description: 'The API key count, exact or estimated',
       content: {
         'application/json': {
-          schema: Schemas.getApiKey.response,
+          schema: Schemas.countApiKeys.response,
         },
       },
     },

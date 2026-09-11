@@ -169,7 +169,7 @@ async function getTotalRequests(ids: string[]): Promise<Map<string, number>> {
   return new Map(ids.map((id, index) => [id, Number(counts[index] ?? 0)]));
 }
 
-// Just a simple helper so we don't need to repeat ourselves for countiing.
+// Just a simple helper so we don't need to repeat ourselves for counting.
 function apiKeyConditions(query: CountApiKeysQuery) {
   const caller = getCaller();
 
