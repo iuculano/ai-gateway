@@ -1,10 +1,12 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
 import { copyToClipboard } from '$lib/clipboard';
+import Panel from '$lib/components/app/panel.svelte';
 import * as Dialog from '$lib/components/ui/dialog';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
+import { Switch } from '$lib/components/ui/switch';
 import { SCOPE_OPTIONS } from '$lib/data/scopes';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
@@ -12,9 +14,12 @@ let { open = $bindable(false) }: { open?: boolean } = $props();
 
 const EXPIRY_OPTIONS: Record<string, number | null> = {
   Never: null,
+  '1 day': 1,
+  '7 days': 7,
   '30 days': 30,
   '90 days': 90,
   '1 year': 365,
+  'Custom date & time': null,
 };
 
 let step: 'form' | 'done' = $state('form');
@@ -22,6 +27,10 @@ let name = $state('');
 let description = $state('');
 let scopes: Record<string, boolean> = $state({});
 let expiry = $state('Never');
+let customExpiry = $state('');
+let rateLimitEnabled = $state(false);
+let rateLimitRequests: number | undefined = $state(100);
+let rateLimitWindow: number | undefined = $state(60);
 let generatedKey = $state('');
 let copied = $state(false);
 let creating = $state(false);
@@ -33,6 +42,10 @@ $effect(() => {
     description = '';
     scopes = { 'api-keys:read': true };
     expiry = 'Never';
+    customExpiry = '';
+    rateLimitEnabled = false;
+    rateLimitRequests = 100;
+    rateLimitWindow = 60;
     generatedKey = '';
     copied = false;
     creating = false;
@@ -47,6 +60,26 @@ async function create() {
   }
 
   const days = EXPIRY_OPTIONS[expiry];
+  const expiresAt =
+    expiry === 'Custom date & time' ? new Date(customExpiry) : days ? new Date(Date.now() + days * 86_400_000) : null;
+  if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
+    toast.error('Choose an expiration date and time in the future.');
+    return;
+  }
+  if (
+    rateLimitEnabled &&
+    (!Number.isInteger(rateLimitRequests) ||
+      !rateLimitRequests ||
+      rateLimitRequests < 1 ||
+      rateLimitRequests > 2_147_483_647 ||
+      !Number.isInteger(rateLimitWindow) ||
+      !rateLimitWindow ||
+      rateLimitWindow < 1 ||
+      rateLimitWindow > 2_147_483_647)
+  ) {
+    toast.error('Enter whole numbers between 1 and 2,147,483,647 for requests and window seconds.');
+    return;
+  }
   creating = true;
 
   try {
@@ -56,7 +89,9 @@ async function create() {
       scopes: Object.keys(scopes)
         .filter((s) => scopes[s])
         .join(' '),
-      expires_at: days ? new Date(Date.now() + days * 86_400_000).toISOString() : undefined,
+      expires_at: expiresAt?.toISOString(),
+      rate_limit_requests: rateLimitEnabled ? rateLimitRequests : undefined,
+      rate_limit_window: rateLimitEnabled ? rateLimitWindow : undefined,
     });
 
     generatedKey = created.key;
@@ -78,7 +113,7 @@ async function copyGenerated() {
 
 <Dialog.Root bind:open>
 	<Dialog.Content
-		class="flex max-h-[calc(100dvh-4rem)] w-[480px] flex-col gap-0 overflow-hidden rounded-[14px] border border-line-strong bg-surface-2 p-0 shadow-[0_24px_70px_rgba(0,0,0,.6)] sm:max-w-[480px]"
+		class="flex max-h-[calc(100dvh-4rem)] w-[calc(100vw-2rem)] max-w-[640px] flex-col gap-0 overflow-hidden rounded-[14px] border border-line-strong bg-surface-2 p-0 shadow-[0_24px_70px_rgba(0,0,0,.6)] sm:max-w-[640px]"
 		showCloseButton={false}
 		escapeKeydownBehavior={creating ? 'ignore' : 'close'}
 		interactOutsideBehavior={creating ? 'ignore' : 'close'}
@@ -116,50 +151,74 @@ async function copyGenerated() {
 					/>
 				</div>
 
-				<div>
-					<span class="mb-2 block text-[12.5px] font-medium text-zinc-200">Scopes</span>
-					<div class="flex flex-wrap gap-2">
-						{#each SCOPE_OPTIONS as scope (scope.id)}
-							{@const on = !!scopes[scope.id]}
-							<button
-								type="button"
-								class="inline-flex h-[34px] items-center gap-2 rounded-lg border px-[13px] text-[12.5px] font-medium {on
-									? 'border-emerald-500/33 bg-emerald-500/10 text-zinc-200'
-									: 'border-line-strong bg-surface-3 text-zinc-400'}"
-								onclick={() => (scopes[scope.id] = !on)}
-							>
-								<span
-									class="flex size-3.5 items-center justify-center rounded border-[1.4px] {on
-										? 'border-emerald-500 bg-emerald-500'
-										: 'border-zinc-700 bg-transparent'}"
-								>
-									{#if on}
-										<svg width="9" height="9" viewBox="0 0 12 12" fill="none"><path d="M2 6.5l2.5 2.5L10 3" stroke="#04130d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
-									{/if}
-								</span>
-								{scope.label}
-							</button>
-						{/each}
-					</div>
+				<div class="shrink-0">
+					<Panel title="Permissions &amp; scopes">
+						<div class="grid max-h-64 grid-cols-[max-content_minmax(0,1fr)_36px] content-start gap-x-3 overflow-y-auto overscroll-contain px-[13px]">
+							{#each SCOPE_OPTIONS as scope (scope.id)}
+								<div class="col-span-3 grid grid-cols-subgrid items-center border-b border-line py-2.5 last:border-b-0">
+									<span class="whitespace-nowrap text-[13px] font-medium text-zinc-200">{scope.label}</span>
+									<span class="min-w-0 truncate text-[11.5px] text-zinc-500" title={scope.desc}>{scope.desc}</span>
+									<Switch
+										checked={!!scopes[scope.id]}
+										disabled={creating}
+										onCheckedChange={(on) => (scopes[scope.id] = on)}
+										aria-label={scope.label}
+										class="h-5 w-9 shrink-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
+									/>
+								</div>
+							{/each}
+						</div>
+					</Panel>
 				</div>
 
-				<div class="flex items-center justify-between rounded-lg border border-line-strong bg-surface-3 px-[13px] py-[11px]">
-					<div>
-						<div class="text-[13px] font-medium text-zinc-200">Expiration</div>
-						<div class="text-[11.5px] text-zinc-600">Key auto-revokes after this period</div>
-					</div>
-					<Select.Root type="single" bind:value={expiry}>
-						<Select.Trigger
-							class="h-8 rounded-[7px] border-line-strong bg-surface-5 px-2.5 text-[12.5px] text-zinc-200 dark:bg-surface-5 dark:hover:bg-surface-6"
-						>
-							{expiry}
-						</Select.Trigger>
-						<Select.Content>
-							{#each Object.keys(EXPIRY_OPTIONS) as option (option)}
-								<Select.Item value={option} label={option} />
-							{/each}
-						</Select.Content>
-					</Select.Root>
+				<div class="shrink-0">
+					<Panel title="Rate limit">
+						{#snippet actions()}
+							<Switch
+								bind:checked={rateLimitEnabled}
+								disabled={creating}
+								aria-label="Enable rate limit"
+								class="h-5 w-9 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
+							/>
+						{/snippet}
+						<div class="space-y-3 px-[13px] py-3">
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<Label for="key-rate-requests" class="mb-2 block text-[12.5px] text-zinc-200">Requests</Label>
+									<Input id="key-rate-requests" type="number" min={1} max={2147483647} step={1} bind:value={rateLimitRequests} disabled={!rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+								</div>
+								<div>
+									<Label for="key-rate-window" class="mb-2 block text-[12.5px] text-zinc-200">Window (seconds)</Label>
+									<Input id="key-rate-window" type="number" min={1} max={2147483647} step={1} bind:value={rateLimitWindow} disabled={!rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+								</div>
+							</div>
+							<p class="text-[11.5px] text-zinc-500">{rateLimitEnabled ? 'Maximum requests allowed in each rate limit window.' : 'Unlimited requests while the rate limit is off.'}</p>
+						</div>
+					</Panel>
+				</div>
+
+				<div class="shrink-0">
+					<Panel title="Expiration">
+						<div class="space-y-3 px-[13px] py-3">
+							<Select.Root type="single" bind:value={expiry} disabled={creating}>
+								<Select.Trigger aria-label="Expiration" class="h-9 w-full border-line-strong bg-surface-3 text-[12.5px] text-zinc-200 dark:bg-surface-3">
+									{expiry}
+								</Select.Trigger>
+								<Select.Content>
+									{#each Object.keys(EXPIRY_OPTIONS) as option (option)}
+										<Select.Item value={option} label={option} />
+									{/each}
+								</Select.Content>
+							</Select.Root>
+							{#if expiry === 'Custom date & time'}
+								<div>
+									<Label for="key-expiration" class="mb-2 block text-[12.5px] text-zinc-200">Expiration date &amp; time</Label>
+									<Input id="key-expiration" type="datetime-local" bind:value={customExpiry} disabled={creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+								</div>
+							{/if}
+							<p class="text-[11.5px] text-zinc-500">{expiry === 'Custom date & time' ? 'Uses your local time zone. The key stops working at this time.' : expiry === 'Never' ? 'This key will not expire.' : 'The key stops working after this period, measured from creation.'}</p>
+						</div>
+					</Panel>
 				</div>
 			</div>
 
