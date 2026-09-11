@@ -96,6 +96,20 @@ function toRevokeApiKeyHttpException(failure: RevokeApiKeyFailure): HTTPExceptio
 }
 
 /**
+ * GET /api-keys/count
+ * Count API keys matching the status filter.
+ */
+const countApiKeys = defineOpenAPIRoute({
+  route: Routes.countApiKeys,
+  handler: async (c) => {
+    const query = c.req.valid('query');
+    const result = await Services.countApiKeys(query);
+
+    return c.json(result, 200);
+  },
+});
+
+/**
  * GET /api-keys/:id
  * Retrieve a specific API key by id.
  */
@@ -141,8 +155,6 @@ const listApiKeys = defineOpenAPIRoute({
   route: Routes.listApiKeys,
   handler: async (c) => {
     const query = c.req.valid('query');
-
-    // Plain promise: listing has no outcome the caller could correct.
     const result = await Services.listApiKeys(query);
 
     return c.json(result, 200);
@@ -211,6 +223,7 @@ const revokeApiKey = defineOpenAPIRoute({
 });
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
+  countApiKeys,
   getApiKey,
   getApiKeyStats,
   listApiKeys,

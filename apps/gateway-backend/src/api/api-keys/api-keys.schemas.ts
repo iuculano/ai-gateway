@@ -38,11 +38,19 @@ const getApiKeyStats = createSchema({
   }),
 });
 
+const apiKeyFilters = z.object({
+  status: z.enum(['all', 'active', 'expired', 'revoked']).optional().default('all'),
+});
+
+const countApiKeys = createSchema({
+  query: apiKeyFilters,
+  response: z.object({ count: z.number().int().nonnegative(), estimated: z.boolean() }),
+});
+
 const listApiKeys = createSchema({
-  query: z.object({
+  query: apiKeyFilters.extend({
     limit: z.coerce.number().int().min(1).max(250).optional().default(50),
     after_id: z.uuidv7().optional(),
-    status: z.enum(['all', 'active']).optional().default('all'), // 'active' is served by the api_keys_org_active_idx partial index.
   }),
 
   response: z.object({
@@ -123,6 +131,8 @@ const revokeApiKey = createSchema({
   response: z.void(),
 });
 
+export type CountApiKeysQuery = z.infer<typeof countApiKeys.query>;
+export type CountApiKeysResponse = z.infer<typeof countApiKeys.response>;
 export type GetApiKeyParams = z.infer<typeof getApiKey.params>;
 export type GetApiKeyResponse = z.infer<typeof getApiKey.response>;
 export type GetApiKeyStatsParams = z.infer<typeof getApiKeyStats.params>;
@@ -138,6 +148,7 @@ export type RevokeApiKeyParams = z.infer<typeof revokeApiKey.params>;
 export type RevokeApiKeyResponse = z.infer<typeof revokeApiKey.response>;
 
 export default {
+  countApiKeys,
   getApiKey,
   getApiKeyStats,
   listApiKeys,

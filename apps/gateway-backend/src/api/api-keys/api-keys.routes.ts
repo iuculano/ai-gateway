@@ -4,6 +4,27 @@ import { authorize, bearerSecurity, validatedProtectedRouteErrors } from '@repo/
 import { SCOPES } from '../../authorization';
 import Schemas from './api-keys.schemas';
 
+const countApiKeys = createRoute({
+  method: 'get' as const,
+  path: '/api-keys/count',
+  security: bearerSecurity,
+  middleware: [authorize({ scopes: [SCOPES.apiKeysRead] })],
+  request: {
+    query: Schemas.countApiKeys.query
+  },
+  responses: {
+    ...validatedProtectedRouteErrors,
+    200: {
+      description: 'The API key count, exact or estimated',
+      content: {
+        'application/json': {
+          schema: Schemas.getApiKey.response,
+        },
+      },
+    },
+  },
+});
+
 const getApiKey = createRoute({
   method: 'get' as const,
   path: '/api-keys/{id}',
@@ -199,6 +220,7 @@ const revokeApiKey = createRoute({
 });
 
 export default {
+  countApiKeys,
   getApiKey,
   getApiKeyStats,
   listApiKeys,
