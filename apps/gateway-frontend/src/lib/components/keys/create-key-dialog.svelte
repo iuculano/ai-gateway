@@ -1,5 +1,8 @@
 <script lang="ts">
+import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
+import type { UpdateApiKeyInput } from '$lib/api/api-keys';
+import type { ApiKey } from '$lib/api/types';
 import { copyToClipboard } from '$lib/clipboard';
 import Panel from '$lib/components/app/panel.svelte';
 import * as Dialog from '$lib/components/ui/dialog';
@@ -10,7 +13,15 @@ import { Switch } from '$lib/components/ui/switch';
 import { SCOPE_OPTIONS } from '$lib/data/scopes';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
-let { open = $bindable(false) }: { open?: boolean } = $props();
+let {
+  open = $bindable(false),
+  apiKey,
+  onsaved,
+}: {
+  open?: boolean;
+  apiKey?: ApiKey;
+  onsaved?: () => void;
+} = $props();
 
 const EXPIRY_OPTIONS: Record<string, number | null> = {
   Never: null,
@@ -34,35 +45,51 @@ let rateLimitWindow: number | undefined = $state(60);
 let generatedKey = $state('');
 let copied = $state(false);
 let creating = $state(false);
+let original: ApiKey | undefined = $state();
+let originalExpiry = $state('');
 
 $effect(() => {
-  if (open) {
+  if (!open) return;
+  untrack(() => {
+    original = apiKey;
     step = 'form';
-    name = '';
-    description = '';
-    scopes = { 'api-keys:read': true };
-    expiry = 'Never';
-    customExpiry = '';
-    rateLimitEnabled = false;
-    rateLimitRequests = 100;
-    rateLimitWindow = 60;
+    name = original?.name ?? '';
+    description = original?.description ?? '';
+    scopes = original
+      ? Object.fromEntries(
+          original.scopes
+            .split(' ')
+            .filter(Boolean)
+            .map((scope) => [scope, true]),
+        )
+      : { 'api-keys:read': true };
+    expiry = original?.expires_at ? 'Custom date & time' : 'Never';
+    const date = original?.expires_at ? new Date(original.expires_at) : null;
+    customExpiry = date ? new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '';
+    originalExpiry = customExpiry;
+    rateLimitEnabled = original?.rate_limit_requests != null;
+    rateLimitRequests = original?.rate_limit_requests ?? 100;
+    rateLimitWindow = original?.rate_limit_window ?? 60;
     generatedKey = '';
     copied = false;
     creating = false;
-  }
+  });
 });
 
-async function create() {
-  if (creating) return;
+async function save() {
+  if (creating || apiKey?.revoked_at) return;
   if (!name.trim()) {
     toast.error('Give the key a name first.');
     return;
   }
 
   const days = EXPIRY_OPTIONS[expiry];
+  const expiryUnchanged =
+    original &&
+    (original.expires_at ? expiry === 'Custom date & time' && customExpiry === originalExpiry : expiry === 'Never');
   const expiresAt =
     expiry === 'Custom date & time' ? new Date(customExpiry) : days ? new Date(Date.now() + days * 86_400_000) : null;
-  if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
+  if (!expiryUnchanged && expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
     toast.error('Choose an expiration date and time in the future.');
     return;
   }
@@ -83,21 +110,40 @@ async function create() {
   creating = true;
 
   try {
-    const created = await dashboard.create({
+    const input = {
       name: name.trim(),
-      description: description.trim() || undefined,
+      description: description.trim() || null,
       scopes: Object.keys(scopes)
-        .filter((s) => scopes[s])
+        .filter((scope) => scopes[scope])
         .join(' '),
-      expires_at: expiresAt?.toISOString(),
-      rate_limit_requests: rateLimitEnabled ? rateLimitRequests : undefined,
-      rate_limit_window: rateLimitEnabled ? rateLimitWindow : undefined,
-    });
-
-    generatedKey = created.key;
-    step = 'done';
+      expires_at: expiryUnchanged ? (original?.expires_at ?? null) : (expiresAt?.toISOString() ?? null),
+      rate_limit_requests: rateLimitEnabled ? Number(rateLimitRequests) : null,
+      rate_limit_window: rateLimitEnabled ? Number(rateLimitWindow) : null,
+    };
+    if (original) {
+      const updates: UpdateApiKeyInput = {};
+      if (input.name !== original.name) updates.name = input.name;
+      if (input.description !== original.description) updates.description = input.description;
+      if (input.scopes !== original.scopes) updates.scopes = input.scopes;
+      if (input.expires_at !== original.expires_at) updates.expires_at = input.expires_at;
+      if (
+        input.rate_limit_requests !== original.rate_limit_requests ||
+        input.rate_limit_window !== original.rate_limit_window
+      ) {
+        updates.rate_limit_requests = input.rate_limit_requests;
+        updates.rate_limit_window = input.rate_limit_window;
+      }
+      await dashboard.update(original.id, updates);
+      toast.success('Key updated');
+      open = false;
+      onsaved?.();
+    } else {
+      const created = await dashboard.create(input);
+      generatedKey = created.key;
+      step = 'done';
+    }
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : 'Failed to create key.');
+    toast.error(error instanceof Error ? error.message : original ? 'Failed to update key.' : 'Failed to create key.');
   } finally {
     creating = false;
   }
@@ -121,10 +167,10 @@ async function copyGenerated() {
 		{#if step === 'form'}
 			<div class="flex-none border-b border-line px-6 pt-[22px] pb-[18px]">
 				<Dialog.Title class="mb-[5px] text-[17px] font-semibold tracking-[-0.01em]">
-					Create a new API key
+					{original ? 'Edit API key' : 'Create a new API key'}
 				</Dialog.Title>
 				<Dialog.Description class="text-[13px] text-zinc-500">
-					Generate a secret key to authenticate requests from your application.
+					{original ? 'Update this key’s details, permissions, and limits.' : 'Generate a secret key to authenticate requests from your application.'}
 				</Dialog.Description>
 			</div>
 
@@ -153,7 +199,7 @@ async function copyGenerated() {
 
 				<div class="shrink-0">
 					<Panel title="Permissions &amp; scopes">
-						<div class="grid max-h-64 grid-cols-[max-content_minmax(0,1fr)_36px] content-start gap-x-3 overflow-y-auto overscroll-contain px-[13px]">
+						<div class="grid h-60 shrink-0 grid-cols-[max-content_minmax(0,1fr)_36px] content-start gap-x-3 overflow-y-auto overscroll-contain px-[13px]">
 							{#each SCOPE_OPTIONS as scope (scope.id)}
 								<div class="col-span-3 grid grid-cols-subgrid items-center border-b border-line py-2.5 last:border-b-0">
 									<span class="whitespace-nowrap text-[13px] font-medium text-zinc-200">{scope.label}</span>
@@ -171,7 +217,7 @@ async function copyGenerated() {
 					</Panel>
 				</div>
 
-				<div class="shrink-0">
+				<div class="grid shrink-0 gap-3.5 sm:grid-cols-2">
 					<Panel title="Rate limit">
 						{#snippet actions()}
 							<Switch
@@ -192,31 +238,30 @@ async function copyGenerated() {
 									<Input id="key-rate-window" type="number" min={1} max={2147483647} step={1} bind:value={rateLimitWindow} disabled={!rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
 								</div>
 							</div>
-							<p class="text-[11.5px] text-zinc-500">{rateLimitEnabled ? 'Maximum requests allowed in each rate limit window.' : 'Unlimited requests while the rate limit is off.'}</p>
+							<p class="text-[11.5px] text-zinc-500">The first request starts the window. Once the limit is reached, further requests are blocked until the window resets.</p>
 						</div>
 					</Panel>
-				</div>
 
-				<div class="shrink-0">
 					<Panel title="Expiration">
 						<div class="space-y-3 px-[13px] py-3">
-							<Select.Root type="single" bind:value={expiry} disabled={creating}>
-								<Select.Trigger aria-label="Expiration" class="h-9 w-full border-line-strong bg-surface-3 text-[12.5px] text-zinc-200 dark:bg-surface-3">
-									{expiry}
-								</Select.Trigger>
-								<Select.Content>
-									{#each Object.keys(EXPIRY_OPTIONS) as option (option)}
-										<Select.Item value={option} label={option} />
-									{/each}
-								</Select.Content>
-							</Select.Root>
-							{#if expiry === 'Custom date & time'}
-								<div>
-									<Label for="key-expiration" class="mb-2 block text-[12.5px] text-zinc-200">Expiration date &amp; time</Label>
-									<Input id="key-expiration" type="datetime-local" bind:value={customExpiry} disabled={creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
-								</div>
-							{/if}
-							<p class="text-[11.5px] text-zinc-500">{expiry === 'Custom date & time' ? 'Uses your local time zone. The key stops working at this time.' : expiry === 'Never' ? 'This key will not expire.' : 'The key stops working after this period, measured from creation.'}</p>
+							<div>
+								<Label for="key-expiry-preset" class="mb-2 block text-[12.5px] text-zinc-200">Expires after</Label>
+								<Select.Root type="single" bind:value={expiry} disabled={creating}>
+									<Select.Trigger id="key-expiry-preset" aria-label="Expiration" class="data-[size=default]:h-9 w-full border-line-strong bg-surface-3 text-[12.5px] text-zinc-200 dark:bg-surface-3">
+										{expiry}
+									</Select.Trigger>
+									<Select.Content>
+										{#each Object.keys(EXPIRY_OPTIONS) as option (option)}
+											<Select.Item value={option} label={option} />
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+							<div>
+								<Label for="key-expiration" class="mb-2 block text-[12.5px] text-zinc-200">Custom date &amp; time</Label>
+								<Input id="key-expiration" type="datetime-local" bind:value={customExpiry} disabled={creating || expiry !== 'Custom date & time'} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+							</div>
+							<p class="text-[11.5px] text-zinc-500">Custom dates use your local time zone. Presets start when you save.</p>
 						</div>
 					</Panel>
 				</div>
@@ -235,9 +280,9 @@ async function copyGenerated() {
 					type="button"
 					class="h-[38px] rounded-lg bg-emerald-500 px-[18px] text-[13.5px] font-semibold text-[#04130d] shadow-[0_1px_0_rgba(255,255,255,.15)_inset] hover:bg-[#13c98d] disabled:opacity-60"
 					disabled={creating}
-					onclick={create}
+					onclick={save}
 				>
-					{creating ? 'Creating…' : 'Create key'}
+					{creating ? (original ? 'Saving…' : 'Creating…') : (original ? 'Save changes' : 'Create key')}
 				</button>
 			</div>
 		{:else}

@@ -83,10 +83,10 @@ let {
 		</div>
 	{:else}
 		{@render children()}
-		{#if footer && showFooter}
-			<div class="border-t border-line px-[18px] py-3 text-center">
-				{@render footer()}
-			</div>
-		{/if}
+	{/if}
+	{#if footer && showFooter && !loading && !error}
+		<div class="border-t border-line px-[18px] py-3 text-center">
+			{@render footer()}
+		</div>
 	{/if}
 </div>

@@ -10,7 +10,7 @@ import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { Switch } from '$lib/components/ui/switch';
+import CreateKeyDialog from '$lib/components/keys/create-key-dialog.svelte';
 import { fmtTs, formatDate, timeUntil } from '$lib/data/format';
 import { SCOPE_OPTIONS } from '$lib/data/scopes';
 import { dashboard } from '$lib/state/dashboard.svelte';
@@ -44,21 +44,31 @@ const tone = $derived(
 );
 // Scopes travel space-delimited; the UI works with the array form.
 const scopeList = $derived(k.scopes.split(' ').filter(Boolean));
+const sortedScopes = $derived([
+  ...SCOPE_OPTIONS.filter((scope) => scopeList.includes(scope.id)),
+  ...SCOPE_OPTIONS.filter((scope) => !scopeList.includes(scope.id)),
+]);
 
 let creatorName: string | null = $state(null);
+let revokerName: string | null = $state(null);
 
 $effect(() => {
   const creatorId = k.creator_id;
-  if (!expanded || !creatorId) return;
+  const revokerId = k.revoked_by;
+  if (!expanded) return;
   let cancelled = false;
   creatorName = null;
-  const actor = { actor_type: 'user', actor_id: creatorId };
-  resolveActorNames([actor])
+  revokerName = null;
+  const creator = { actor_type: 'user', actor_id: creatorId };
+  const revoker = { actor_type: 'user', actor_id: revokerId };
+  resolveActorNames([creator, revoker])
     .then((name) => {
-      if (!cancelled) creatorName = name(actor);
+      if (cancelled) return;
+      creatorName = creatorId ? name(creator) : null;
+      revokerName = revokerId ? name(revoker) : null;
     })
     .catch(() => {
-      // Keep the creator ID visible if name resolution is unavailable.
+      // Keep the user IDs visible if name resolution is unavailable.
     });
   return () => {
     cancelled = true;
@@ -66,13 +76,36 @@ $effect(() => {
 });
 
 const detailItems: DetailItem[] = $derived([
-  { label: 'Key ID', value: k.id, title: k.id, copyable: true },
+  {
+    label: 'Key ID',
+    value: k.id,
+    title: k.id,
+    copyable: true,
+    auditHref: `/audit?target_type=api_key&target_id=${encodeURIComponent(k.id)}`,
+  },
   { label: 'Created', value: fmtTs(new Date(k.created_at).toISOString()).full, mono: false },
   { label: 'Created by', value: creatorName ?? k.creator_id ?? '—', title: k.creator_id ?? undefined, mono: false },
+  {
+    label: 'Last updated',
+    value: fmtTs(new Date(k.updated_at).toISOString()).full,
+    title: fmtTs(new Date(k.updated_at).toISOString()).full,
+    mono: false,
+  },
+]);
+
+const revocationItems: DetailItem[] = $derived([
+  { label: 'Revoked', value: k.revoked_at ? fmtTs(new Date(k.revoked_at).toISOString()).full : '—', mono: false },
+  {
+    label: 'Revoked by',
+    value: revoked ? (revokerName ?? k.revoked_by ?? 'Unknown user') : '—',
+    title: k.revoked_by ?? undefined,
+    mono: false,
+  },
 ]);
 
 let busy = $state(false);
 let confirmRevokeOpen = $state(false);
+let editOpen = $state(false);
 
 // Usage counters live in redis, behind their own endpoint - the list response
 // carries none of this. Fetched on first expand rather than with the page, so
@@ -83,18 +116,24 @@ let statsLoading = $state(false);
 let statsLoaded = $state(false);
 let statsError: string | null = $state(null);
 
-async function loadStats() {
-  if (statsLoaded || statsLoading) return;
+let statsRequest = 0;
+
+async function loadStats(force = false) {
+  if (!force && (statsLoaded || statsLoading)) return;
+  const request = ++statsRequest;
   statsLoading = true;
   statsError = null;
 
   try {
-    stats = await getApiKeyStats(k.id);
+    const result = await getApiKeyStats(k.id);
+    if (request !== statsRequest) return;
+    stats = result;
     statsLoaded = true;
   } catch (error) {
+    if (request !== statsRequest) return;
     statsError = error instanceof Error ? error.message : 'Failed to load usage.';
   } finally {
-    statsLoading = false;
+    if (request === statsRequest) statsLoading = false;
   }
 }
 
@@ -144,23 +183,6 @@ const windowView = $derived.by(() => {
     resetsTitle: undefined,
   };
 });
-
-async function toggleScope(scopeId: string, on: boolean) {
-  // Drop scope names the backend no longer recognizes (keys created before
-  // scope validation existed) - resending them would fail the whole update.
-  const known = new Set(SCOPE_OPTIONS.map((s) => s.id));
-  const current = scopeList.filter((s) => known.has(s));
-
-  const next = on ? [...current, scopeId] : current.filter((s) => s !== scopeId);
-  busy = true;
-  try {
-    await dashboard.setScopes(k.id, next);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : 'Failed to update scopes.');
-  } finally {
-    busy = false;
-  }
-}
 
 async function revoke() {
   busy = true;
@@ -214,6 +236,17 @@ async function revoke() {
 		<div class="flex items-center justify-end gap-1.5">
 			<button
 				type="button"
+				class="h-7 rounded-md border border-line-strong bg-surface-3 px-2.5 text-[11.5px] font-semibold text-zinc-300 hover:bg-surface-4 disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={revoked || busy}
+				onclick={(event) => {
+					event.stopPropagation();
+					editOpen = true;
+				}}
+			>
+				Edit
+			</button>
+			<button
+				type="button"
 				class="h-7 rounded-md border border-red-500/30 bg-red-500/8 px-2.5 text-[11.5px] font-semibold text-red-400 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:border-line-strong disabled:bg-surface-3 disabled:text-zinc-600"
 				disabled={revoked || busy}
 				onclick={(e) => {
@@ -227,7 +260,7 @@ async function revoke() {
 	{/snippet}
 
 	{#snippet details()}
-		<DetailGrid items={detailItems} cols={3} />
+		<DetailGrid items={[...detailItems, ...revocationItems]} cols={6} />
 
 		<div class="grid gap-3.5 md:grid-cols-2">
 			<Panel title="Usage &amp; limits">
@@ -275,7 +308,7 @@ async function revoke() {
 				     rendered: windowView falls back to the key's own configuration when
 				     nothing is counting, so the section never collapses to nothing. The
 				     Usage section above carries the loading and error states. -->
-				<div class="border-t border-line px-3.5 py-[13px]">
+				<div class="px-3.5 py-[13px]">
 					<div class="grid grid-cols-2 gap-x-8 gap-y-3">
 						<div>
 							<div class="mb-0.5 text-[10.5px] text-zinc-600">Used</div>
@@ -301,18 +334,14 @@ async function revoke() {
 
 			<Panel title="Permissions &amp; scopes">
 				<!-- The list takes the adjacent panel's height without stretching the row. -->
-				<div class="grid max-h-80 flex-1 grid-cols-[max-content_minmax(0,1fr)_36px] content-start gap-x-3 overflow-y-auto overscroll-contain px-[13px] md:max-h-none md:[contain:size]">
-					{#each SCOPE_OPTIONS as scope (scope.id)}
+				<div class="grid max-h-80 flex-1 grid-cols-[max-content_minmax(0,1fr)_max-content] content-start gap-x-3 overflow-y-auto overscroll-contain px-[13px] md:max-h-none md:[contain:size]">
+					{#each sortedScopes as scope (scope.id)}
 						<div class="col-span-3 grid grid-cols-subgrid items-center border-b border-line py-2.5 last:border-b-0">
 							<span class="whitespace-nowrap text-[13px] font-medium text-zinc-200">{scope.label}</span>
 							<span class="min-w-0 truncate text-[11.5px] text-zinc-500" title={scope.desc}>{scope.desc}</span>
-							<Switch
-								checked={scopeList.includes(scope.id)}
-								disabled={revoked || busy}
-								onCheckedChange={(on) => toggleScope(scope.id, on)}
-								aria-label={scope.label}
-								class="h-5 w-9 shrink-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
-							/>
+							<span class="text-right text-[11.5px] font-medium {scopeList.includes(scope.id) ? 'text-emerald-400' : 'text-zinc-500'}">
+								{scopeList.includes(scope.id) ? 'Enabled' : 'Disabled'}
+							</span>
 						</div>
 					{/each}
 				</div>
@@ -330,3 +359,12 @@ async function revoke() {
 		{busy}
 		onconfirm={revoke}
 	/>
+
+{#if editOpen}
+	<CreateKeyDialog bind:open={editOpen} apiKey={k} onsaved={() => {
+		stats = null;
+		statsLoaded = false;
+		statsError = null;
+		if (expanded) void loadStats(true);
+	}} />
+{/if}

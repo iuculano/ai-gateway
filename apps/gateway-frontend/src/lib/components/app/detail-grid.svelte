@@ -16,16 +16,18 @@ export interface DetailItem {
   title?: string;
   /** Adds a button to copy the full value. */
   copyable?: boolean;
+  /** Adds a link to the audit history for this value. */
+  auditHref?: string;
 }
 </script>
 
 <script lang="ts">
 import { copyToClipboard } from '$lib/clipboard';
-let { items, cols = 4 }: { items: DetailItem[]; cols?: 2 | 3 | 4 } = $props();
+let { items, cols = 4 }: { items: DetailItem[]; cols?: 2 | 3 | 4 | 5 | 6 } = $props();
 
 // Spelled out rather than interpolated - Tailwind only compiles classes it can
 // find in source.
-const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4' } as const;
+const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-cols-5', 6: 'grid-cols-6' } as const;
 </script>
 
 <div class="grid gap-px overflow-hidden rounded-[9px] border border-line bg-line {COLS[cols]}">
@@ -52,6 +54,16 @@ const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4' } as const;
 					>
 						<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 5.5v-2a1 1 0 00-1-1h-6a1 1 0 00-1 1v6a1 1 0 001 1h2" stroke="currentColor" stroke-width="1.3" /></svg>
 					</button>
+				{/if}
+				{#if item.auditHref}
+					<a
+						href={item.auditHref}
+						class="shrink-0 rounded text-zinc-500 hover:text-zinc-200"
+						aria-label="View audit history"
+						title="View audit history"
+					>
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 5.5A5.5 5.5 0 118 13.5M2.5 2.5v3h3M8 4.5V8l2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+					</a>
 				{/if}
 			</div>
 		</div>
