@@ -1,26 +1,24 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listLogs } from '$lib/api/logs';
+import { getLogStats, listLogs } from '$lib/api/logs';
 import type { Log, LogListMeta } from '$lib/api/types';
 import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import type { PayloadView } from '$lib/components/logs/log-row.svelte';
 import LogRow from '$lib/components/logs/log-row.svelte';
-import { fmt, fmtCostTotal, fmtLatency } from '$lib/data/format';
 import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
-type StatusFilter = 'all' | 'success' | 'errors';
+type StatusFilter = 'all' | 'complete' | 'failed' | 'incomplete';
 
 const PAGE_SIZE = 20;
 
 // Shared with LogRow so the header and the rows sit in one grid.
-const COLS = '24px 150px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 76px 100px 96px 104px 100px 92px 84px';
+const COLS =
+  '24px 150px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 76px 100px 96px 104px 100px 92px 84px 180px';
 
 const COLUMNS = [
   { label: '' },
@@ -36,12 +34,14 @@ const COLUMNS = [
   { label: 'Throughput', align: 'right' as const },
   { label: 'Cost', align: 'right' as const },
   { label: 'Latency', align: 'right' as const },
+  { label: 'Actions', align: 'right' as const },
 ];
 
 const TABS = [
   { id: 'all' as const, label: 'All' },
-  { id: 'success' as const, label: 'Success' },
-  { id: 'errors' as const, label: 'Errors' },
+  { id: 'complete' as const, label: 'Success', color: '#34d399' },
+  { id: 'incomplete' as const, label: 'Incomplete', color: '#fbbf24' },
+  { id: 'failed' as const, label: 'Failed', color: '#f87171' },
 ];
 
 const VIEW_TABS = [
@@ -59,6 +59,23 @@ let payloadView: PayloadView = $state('simple');
 const auto = new AutoRefresh();
 
 let logs: Log[] = $state([]);
+let stats: Awaited<ReturnType<typeof getLogStats>> | null = $state(null);
+let statsError = $state(false);
+
+async function refreshStats() {
+  try {
+    stats = await getLogStats();
+    statsError = false;
+  } catch {
+    stats = null;
+    statsError = true;
+  }
+}
+
+function displayCount(count: number | undefined) {
+  return count === undefined ? '—' : `${stats?.estimated ? '~' : ''}${count.toLocaleString()}`;
+}
+
 let meta: LogListMeta | null = $state(null);
 let loading = $state(false);
 let error: string | null = $state(null);
@@ -81,6 +98,18 @@ let pageIndex = $state(0);
  * moment Next needs to know whether there are older ones.
  */
 let cursors: string[] = $state([]);
+let requestId = 0;
+
+function setStatus(value: StatusFilter) {
+  tab = value;
+  pageIndex = 0;
+  cursors = [];
+  meta = null;
+  expandedLog = null;
+  load({ index: 0 });
+}
+
+const matchingCount = $derived.by(() => (tab === 'all' ? stats?.total : stats?.by_status[tab]));
 
 /**
  * Loads one page.
@@ -90,12 +119,7 @@ let cursors: string[] = $state([]);
  * every few seconds.
  */
 async function load({ index = pageIndex, silent = false }: { index?: number; silent?: boolean } = {}) {
-  // Deliberately does NOT test auto.refreshing. AutoRefresh sets that flag
-  // before it calls this, so testing it here made every tick return without
-  // fetching - the timer fired and nothing happened. Overlapping ticks are
-  // already prevented inside AutoRefresh; this only has to guard against
-  // colliding with a load the reader started.
-  if (loading) return;
+  const request = ++requestId;
 
   if (!silent) {
     loading = true;
@@ -104,8 +128,9 @@ async function load({ index = pageIndex, silent = false }: { index?: number; sil
 
   try {
     const after = index === 0 ? undefined : cursors[index - 1];
-    const result = await listLogs({ limit: PAGE_SIZE, after_id: after });
+    const result = await listLogs({ limit: PAGE_SIZE, after_id: after, status: tab === 'all' ? undefined : tab });
 
+    if (request !== requestId) return;
     logs = result.data;
     meta = result.meta;
     pageIndex = index;
@@ -116,6 +141,7 @@ async function load({ index = pageIndex, silent = false }: { index?: number; sil
       expandedLog = null;
     }
   } catch (err) {
+    if (request !== requestId) return;
     const message = err instanceof Error ? err.message : 'Failed to load logs.';
 
     // A background refresh that fails must not throw away the rows the reader
@@ -128,7 +154,7 @@ async function load({ index = pageIndex, silent = false }: { index?: number; sil
 
     error = message;
   } finally {
-    loading = false;
+    if (request === requestId) loading = false;
   }
 }
 
@@ -155,6 +181,7 @@ function previousPage() {
 // mutates loading state and hammer the endpoint on any error.
 onMount(() => {
   load();
+  refreshStats();
 });
 
 // The timer lives in an $effect purely so its cleanup runs on both halves of
@@ -166,28 +193,16 @@ onMount(() => {
 // rows however much traffic lands meanwhile. Ticking there would spend a request
 // per interval to redraw identical data. Reading pageIndex here also
 // re-subscribes the effect, so the timer restarts on the page that needs it.
-$effect(() => auto.schedule(pageIndex === 0, () => load({ silent: true })));
-
-// Stats are computed over the CURRENT PAGE, not the whole table, and the labels
-// say so. There is no aggregate endpoint yet, and captioning a sample of 20 rows
-// as "30d" would put a fabricated number in front of somebody making a spend
-// decision.
-const succeeded = $derived(logs.filter((l) => l.status === 'complete').length);
-const failed = $derived(logs.filter((l) => l.status === 'failed').length);
-const successRate = $derived(logs.length === 0 ? null : (succeeded / logs.length) * 100);
-const totalSpend = $derived(logs.reduce((sum, l) => sum + Number(l.input_cost) + Number(l.output_cost), 0));
-const totalTokens = $derived(logs.reduce((sum, l) => sum + (l.input_tokens ?? 0) + (l.output_tokens ?? 0), 0));
-
-const timed = $derived(logs.filter((l) => l.response_time_ms !== null));
-const avgLatency = $derived(
-  timed.length === 0 ? null : timed.reduce((sum, l) => sum + (l.response_time_ms ?? 0), 0) / timed.length,
+$effect(() =>
+  auto.schedule(pageIndex === 0, async () => {
+    // refreshStats handles its own failures so counts cannot stop row refreshes.
+    await Promise.all([load({ silent: true }), refreshStats()]);
+  }),
 );
 
 const filtered = $derived.by(() => {
   const q = dashboard.search.trim().toLowerCase();
   return logs.filter((l) => {
-    if (tab === 'success' && l.status !== 'complete') return false;
-    if (tab === 'errors' && l.status === 'complete') return false;
     if (q && !`${l.model} ${l.provider} ${l.id}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -197,33 +212,7 @@ const filtered = $derived.by(() => {
 <PageHeader
 	title="Logs"
 	description="Every model request routed through Relay, with full request and response payloads."
->
-	{#snippet actions()}
-		<ToolbarButton>
-			<span class="size-[7px] rounded-full bg-emerald-500"></span>
-			Live · last 24h
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="ml-0.5"><path d="M5 6.5L8 9.5L11 6.5" stroke="#71717a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-		</ToolbarButton>
-		<ToolbarButton>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Export
-		</ToolbarButton>
-	{/snippet}
-</PageHeader>
-
-<StatGrid>
-	<!-- '· page' rather than '· loaded': the window these are computed over is
-	     now one page of 20, and the previous caption would read as a running
-	     total across everything paged through. -->
-	<StatCard label="Logs · page" value={fmt(logs.length)} />
-	<StatCard
-		label="Success rate · page"
-		value={successRate === null ? '—' : `${successRate.toFixed(1)}%`}
-		hint={failed > 0 ? `${failed} failed` : undefined}
-	/>
-	<StatCard label="Spend · page" value={fmtCostTotal(totalSpend)} hint="{fmt(totalTokens)} tok" />
-	<StatCard label="Avg latency · page" value={fmtLatency(avgLatency)} />
-</StatGrid>
+/>
 
 <TableCard
 	cols={COLS}
@@ -237,30 +226,31 @@ const filtered = $derived.by(() => {
 	showFooter={pageIndex > 0 || (meta?.more_data ?? false)}
 >
 	{#snippet toolbar()}
-		<FilterTabs tabs={TABS} bind:value={tab} equalWidth />
-		<span class="text-[12.5px] text-zinc-600">
-			<!-- The filter runs over this page only - it is client-side, and the
-			     endpoint has no filter that maps onto 'errors' (which spans both
-			     failed and incomplete). Saying 'on this page' keeps a page showing
-			     3 of 20 from reading as 3 errors in total. -->
-			{filtered.length} of {logs.length} on this page
-		</span>
-		<span class="ml-auto flex items-center gap-[7px] text-[12.5px] text-zinc-600">
-			<span class="size-[5px] rounded-full bg-zinc-700"></span>
-			Click a row to expand payloads
-		</span>
-
-		<!-- Labelled, unlike the same control inside a panel would be: up here it
-		     is detached from the payloads it governs, so 'Simple / JSON' alone
-		     would not say what it switches. -->
-		<span class="flex items-center gap-2 text-[12.5px] text-zinc-500">
-			Payloads
+		<FilterTabs tabs={TABS} bind:value={() => tab, setStatus} />
+		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
+      <span class="inline-grid text-right font-medium text-zinc-100 tabular-nums">
+        <span class="invisible col-start-1 row-start-1" aria-hidden="true">{logs.length}</span>
+        <span class="col-start-1 row-start-1">{filtered.length}</span>
+      </span>
+      of <span class="font-medium text-zinc-200 tabular-nums">{displayCount(matchingCount)}</span> matching logs
+      <span class="mx-1 text-zinc-600">·</span>
+      <span class="font-medium text-emerald-400 tabular-nums">{displayCount(stats?.by_status.complete)}</span> success
+      <span class="mx-1 text-zinc-600">·</span>
+      <span class="font-medium text-amber-400 tabular-nums">{displayCount(stats?.by_status.incomplete)}</span> incomplete
+      <span class="mx-1 text-zinc-600">·</span>
+      <span class="font-medium text-red-400 tabular-nums">{displayCount(stats?.by_status.failed)}</span> failed
+      {#if dashboard.search.trim()}<span class="text-zinc-600">(page filtered)</span>{/if}
+    </span>
+    {#if statsError}
+      <ToolbarButton onclick={refreshStats}>Retry counts</ToolbarButton>
+    {/if}
+		<span class="ml-auto flex items-center gap-2 text-[12.5px] text-zinc-500">
 			<FilterTabs tabs={VIEW_TABS} bind:value={payloadView} />
 		</span>
 
 		<AutoRefreshToggle {auto} active={pageIndex === 0} pausedLabel="paused off page 1" />
 
-		<ToolbarButton disabled={loading} onclick={() => load()}>
+		<ToolbarButton disabled={loading} onclick={() => { load(); refreshStats(); }}>
 			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
 			Refresh
 		</ToolbarButton>

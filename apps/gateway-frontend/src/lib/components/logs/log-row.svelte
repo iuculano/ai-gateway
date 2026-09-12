@@ -1,9 +1,12 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
+import { resolveActorNames } from '$lib/api/actors';
 import { getLogRequest, getLogResponse } from '$lib/api/logs';
 import type { Log, LogPayload } from '$lib/api/types';
 import { copyToClipboard } from '$lib/clipboard';
+import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
+import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
@@ -42,10 +45,10 @@ const totalCost = $derived(Number(log.input_cost) + Number(log.output_cost));
 
 const STATUS = {
   complete: { label: 'Success', color: '#10b981' },
-  failed: { label: 'Error', color: '#f87171' },
+  failed: { label: 'Failed', color: '#f87171' },
   // Written before the provider is called and never resolved - the request
   // died in flight. Not the same as a failure the gateway actually observed.
-  incomplete: { label: 'Pending', color: '#f59e0b' },
+  incomplete: { label: 'Incomplete', color: '#f59e0b' },
 } as const;
 
 const status = $derived(STATUS[log.status] ?? { label: log.status, color: '#71717a' });
@@ -108,6 +111,34 @@ const finishReason = $derived.by(() => {
   const reason = asRecord(choices[0]).finish_reason;
   return typeof reason === 'string' ? reason : '—';
 });
+
+let creatorName: string | null = $state(null);
+
+$effect(() => {
+  const actor = { actor_type: log.actor_type, actor_id: log.actor_id };
+  if (!expanded) return;
+  let cancelled = false;
+  creatorName = null;
+  resolveActorNames([actor])
+    .then((name) => {
+      if (!cancelled) creatorName = name(actor);
+    })
+    .catch(() => {
+      // Keep the actor ID visible if name resolution is unavailable.
+    });
+  return () => {
+    cancelled = true;
+  };
+});
+
+const detailItems: DetailItem[] = $derived([
+  { label: 'Log ID', value: log.id, title: log.id, copyable: true },
+  { label: 'Created at', value: fmtTs(new Date(log.created_at).toISOString()).full, mono: false },
+  { label: 'Created by', value: creatorName ?? log.actor_id, title: log.actor_id, mono: false },
+  { label: 'Endpoint', value: '/v1/chat/completions' },
+  { label: 'Throughput', value: throughput },
+  { label: 'Finish reason', value: finishReason },
+]);
 
 const panels = $derived([
   {
@@ -203,31 +234,25 @@ function copy(text: string, label: string) {
 		>
 			{fmtLatency(log.response_time_ms)}
 		</span>
-	{/snippet}
-
-	{#snippet details()}
-		<div class="flex items-center gap-4 overflow-x-auto whitespace-nowrap text-xs">
-			<div class="flex items-center gap-3 text-zinc-500">
-				<span>Log ID <span class="font-mono text-zinc-300">{log.id}</span></span>
-				<span aria-hidden="true" class="text-zinc-700">|</span>
-				<span>Endpoint <span class="font-mono text-zinc-300">/v1/chat/completions</span></span>
-				<span aria-hidden="true" class="text-zinc-700">|</span>
-				<span>Throughput <span class="font-mono text-zinc-300">{throughput}</span></span>
-				<span aria-hidden="true" class="text-zinc-700">|</span>
-				<span>Finish reason <span class="font-mono text-zinc-300">{finishReason}</span></span>
-			</div>
+    <div class="flex items-center justify-end">
 			{#if log.has_request}
 				<a
 					href="/playground?from={log.id}"
-					class="ml-auto flex h-8 shrink-0 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
+          onclick={(event) => event.stopPropagation()}
+          onkeydown={(event) => event.stopPropagation()}
+					class="ml-auto flex h-7 shrink-0 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
 				>
-					<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
 					Replay in Playground
 				</a>
 			{/if}
 		</div>
+	{/snippet}
 
-		<div class="grid grid-cols-2 gap-3.5">
+	{#snippet details()}
+		<DetailGrid items={detailItems} cols={6} />
+
+
+		<div class="grid min-w-0 grid-cols-2 gap-3.5">
 			{#each panels as panel (panel.title)}
 				<Panel title={panel.title}>
 					{#snippet actions()}
@@ -257,7 +282,7 @@ function copy(text: string, label: string) {
 								No messages in this payload — switch to JSON to see it.
 							</div>
 						{:else}
-							<MessageList turns={panel.turns} />
+							<MessageList markdown turns={panel.turns} />
 						{/if}
 					{:else}
 						<JsonView json={panel.json} />

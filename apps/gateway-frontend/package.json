@@ -11,6 +11,7 @@
     "prepare": "svelte-kit sync || echo ''",
     "check-types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "test:unit": "bun test tests/unit",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
@@ -18,7 +19,8 @@
   "dependencies": {
     "@repo/redis": "workspace:*",
     "gateway-backend": "workspace:*",
-    "hono": "^4.13.7"
+    "hono": "^4.13.7",
+    "markdown-it": "^15.0.2"
   },
   "devDependencies": {
     "@fontsource-variable/geist": "^5.3.0",
@@ -30,6 +32,7 @@
     "@sveltejs/kit": "^2.70.3",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/markdown-it": "^14.2.0",
     "bits-ui": "^2.19.0",
     "clsx": "^2.1.1",
     "mode-watcher": "^1.1.0",
