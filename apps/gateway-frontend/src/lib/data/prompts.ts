@@ -1,5 +1,3 @@
-import { BUILTIN_CATALOGUE, BUILTIN_PREFIX } from 'gateway-backend/prompts/builtins';
-
 /**
  * Template parsing for the dashboard.
  *
@@ -7,36 +5,17 @@ import { BUILTIN_CATALOGUE, BUILTIN_PREFIX } from 'gateway-backend/prompts/built
  * endpoint so the text on screen is the text the gateway would send. What this
  * file does is read a template well enough to build a form for it: which tags
  * exist, and which of them the caller is expected to fill in.
- *
- * The list of built-ins is imported from the backend rather than copied. It was
- * copied at first, with a comment asking whoever changed one to change the
- * other - which is a rule nobody gets to enforce. The catalogue is plain data
- * and carries no resolvers, so importing it pulls in no server code.
  */
 
 /** Mirrors SUBSTITUTION_PATTERN. Case-sensitive, whitespace inside the braces optional. */
 const TEMPLATE_PATTERN = /\{\{\s*([A-Za-z0-9._-]+)\s*\}\}/g;
 
-export { BUILTIN_CATALOGUE };
-
-/** Built-ins by name, for looking up a description while rendering the form. */
-export const BUILTINS = new Map(BUILTIN_CATALOGUE.map((builtin) => [builtin.name, builtin]));
-
 export interface TemplateVariables {
-  /** Recognised `aig.*` tags. Filled by the server; the form shows them read-only. */
+  /** Reserved `aig.*` tags. The backend validates and resolves these. */
   builtins: string[];
 
-  /** Everything else - the tags the caller has to supply values for. */
+  /** Tags the caller has to supply values for. */
   inputs: string[];
-
-  /**
-   * `aig.*` tags that are not a known built-in.
-   *
-   * Called out separately because they are almost always a typo, and the
-   * reserved prefix means supplying one as an input will not help - the
-   * renderer never falls through to `inputs` for them.
-   */
-  unknownBuiltins: string[];
 }
 
 /**
@@ -47,7 +26,6 @@ export interface TemplateVariables {
 export function extractVariables(template: string): TemplateVariables {
   const builtins: string[] = [];
   const inputs: string[] = [];
-  const unknownBuiltins: string[] = [];
   const seen = new Set<string>();
 
   // matchAll clones the regex internally, so the shared global instance above
@@ -58,16 +36,14 @@ export function extractVariables(template: string): TemplateVariables {
 
     seen.add(name);
 
-    if (!name.startsWith(BUILTIN_PREFIX)) {
+    if (!name.startsWith('aig.')) {
       inputs.push(name);
-    } else if (BUILTINS.has(name)) {
-      builtins.push(name);
     } else {
-      unknownBuiltins.push(name);
+      builtins.push(name);
     }
   }
 
-  return { builtins, inputs, unknownBuiltins };
+  return { builtins, inputs };
 }
 
 /** Distinct tag keys across every loaded prompt, for the stat strip. */
