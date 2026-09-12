@@ -3,7 +3,12 @@ import { FAILED_LOG, IDS, LOG_META, registerEmptyApp, SUCCESS_LOG, TRACE_IDS } f
 
 test('a stored request can be inspected and replayed in the playground', async ({ page, api }) => {
   registerEmptyApp(api);
-  api.get('/api/logs', { json: { data: [SUCCESS_LOG, FAILED_LOG], meta: LOG_META } });
+  api.get('/api/logs', (request) => {
+    const status = new URLSearchParams(request.search).get('status');
+    return {
+      json: { data: [SUCCESS_LOG, FAILED_LOG].filter((log) => !status || log.status === status), meta: LOG_META },
+    };
+  });
   api.get(`/api/logs/${IDS.successLog}/request`, {
     json: {
       model: 'gpt-5',
@@ -45,7 +50,7 @@ test('a stored request can be inspected and replayed in the playground', async (
   await expect(page.getByText('Recovered answer.', { exact: true })).toBeVisible();
   await expect(page.getByText('Finish reason', { exact: false })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Replay in playground' }).click();
+  await page.locator(`a[href="/playground?from=${IDS.successLog}"]`).click();
   await expect(page).toHaveURL(`/playground?from=${IDS.successLog}`);
   await expect(page.getByPlaceholder('What do you want to ask?')).toHaveValue('Investigate this production incident.');
   await expect(page.locator('#playground-model-0')).toHaveValue('gpt-5');
