@@ -15,6 +15,7 @@ export interface ScopeOption {
 // api-key actors. It stays listed because the same options drive the UI for
 // user-held permissions.
 export const SCOPE_OPTIONS: ScopeOption[] = [
+  { id: 'actors:read', label: 'Actors · Read', desc: 'Resolve user and API key names' },
   { id: 'api-keys:read', label: 'API keys · Read', desc: 'List and inspect API keys' },
   { id: 'api-keys:write', label: 'API keys · Write', desc: 'Create, update, and revoke API keys' },
   { id: 'audit-logs:read', label: 'Audit logs · Read', desc: 'Read the organization audit trail' },
@@ -39,6 +40,8 @@ export const SCOPE_OPTIONS: ScopeOption[] = [
   { id: 'models:write', label: 'Models · Write', desc: 'Add, update, and remove models' },
   { id: 'prompts:read', label: 'Prompts · Read', desc: 'List and inspect stored prompts' },
   { id: 'prompts:write', label: 'Prompts · Write', desc: 'Create, update, and delete prompts' },
+  { id: 'traces:read', label: 'Traces · Read', desc: 'List and inspect traces' },
+  { id: 'traces:write', label: 'Traces · Write', desc: 'Send traces to the gateway' },
   {
     id: 'webhooks:read',
     label: 'Webhooks · Read',

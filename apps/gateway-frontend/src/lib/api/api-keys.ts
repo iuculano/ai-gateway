@@ -7,8 +7,17 @@ type ApiKeyClient = ApiKeysClient[':id'];
 export type CreateApiKeyInput = InferRequestType<ApiKeysClient['$post']>['json'];
 export type UpdateApiKeyInput = InferRequestType<ApiKeyClient['$patch']>['json'];
 
-export async function listApiKeys(status: 'all' | 'active' = 'all') {
-  const response = await client['api-keys'].$get({ query: { status } });
+export async function listApiKeys(
+  status: 'all' | 'active' | 'expired' | 'revoked' = 'all',
+  query: { limit?: number; after_id?: string } = {},
+) {
+  const response = await client['api-keys'].$get({ query: { status, ...query } });
+  return response.json();
+}
+
+export type ApiKeyStatus = 'all' | 'active' | 'expired' | 'revoked';
+export async function countApiKeys(status: ApiKeyStatus = 'all') {
+  const response = await client['api-keys'].count.$get({ query: { status } });
   return response.json();
 }
 

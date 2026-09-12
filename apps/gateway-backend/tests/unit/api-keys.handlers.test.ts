@@ -284,3 +284,10 @@ test('an expected refusal is logged as a warning, not an error', async () => {
   expect(log.warn).toHaveBeenCalled();
   expect(log.error).not.toHaveBeenCalled();
 });
+
+test('GET /api-keys/count uses the count route rather than treating count as a key ID', async () => {
+  database.respondTo('execute', null, rows({ count: '5' }));
+  const response = await request('/api-keys/count?status=revoked');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ count: 5, estimated: false });
+});

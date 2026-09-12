@@ -1,12 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { diffFields, probe, toPage } from '@repo/core';
-import { and, db, desc, eq, isNull, lt } from '@repo/drizzle';
+import { and, countRows, db, desc, eq, gt, isNotNull, isNull, lt, lte, or } from '@repo/drizzle';
 import { apiKeys } from '@repo/drizzle/schemas';
 import { type Caller, getAccountableUserId, getCaller } from '@repo/hono';
 import { redis } from '@repo/redis';
 import { err, ok, type Result } from 'neverthrow';
 import AuditLogServices from '../audit-logs/audit-logs.services';
 import Schemas, {
+  type CountApiKeysQuery,
+  type CountApiKeysResponse,
   type CreateApiKeyBody,
   type CreateApiKeyResponse,
   type GetApiKeyResponse,
@@ -167,6 +169,33 @@ async function getTotalRequests(ids: string[]): Promise<Map<string, number>> {
   return new Map(ids.map((id, index) => [id, Number(counts[index] ?? 0)]));
 }
 
+// Just a simple helper so we don't need to repeat ourselves for counting.
+function apiKeyConditions(query: CountApiKeysQuery) {
+  const caller = getCaller();
+
+  const now = new Date();
+  const conditions = [
+    eq(apiKeys.organization_id, caller.organization.id),
+    query.status === 'active'
+      ? and(isNull(apiKeys.revoked_at), or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, now)))
+      : undefined,
+    query.status === 'expired' ? and(isNull(apiKeys.revoked_at), lte(apiKeys.expires_at, now)) : undefined,
+    query.status === 'revoked' ? isNotNull(apiKeys.revoked_at) : undefined,
+  ];
+
+  return conditions;
+}
+
+/**
+ * Count API keys, filtered by the given criteria.
+ *
+ * @param query
+ * The request object containing the filter criteria.
+ */
+async function countApiKeys(query: CountApiKeysQuery): Promise<CountApiKeysResponse> {
+  return countRows(db, apiKeys, { where: and(...apiKeyConditions(query)) });
+}
+
 /**
  * Retrieves a list of API keys, filtered by the given criteria.
  *
@@ -176,13 +205,7 @@ async function getTotalRequests(ids: string[]): Promise<Map<string, number>> {
  * The request object containing the filter criteria.
  */
 async function listApiKeys(query: ListApiKeysQuery): Promise<ListApiKeysResponse> {
-  const caller = getCaller();
-
-  const conditions = [
-    eq(apiKeys.organization_id, caller.organization.id),
-    query.after_id ? lt(apiKeys.id, query.after_id) : undefined,
-    query.status === 'active' ? isNull(apiKeys.revoked_at) : undefined,
-  ];
+  const conditions = [...apiKeyConditions(query), query.after_id ? lt(apiKeys.id, query.after_id) : undefined];
 
   // biome-ignore format: looks nicer
   const rows = await db
@@ -476,6 +499,7 @@ async function revokeApiKey(id: string): Promise<Result<RevokeApiKeyResponse, Re
 }
 
 export default {
+  countApiKeys,
   getApiKey,
   getApiKeyStats,
   listApiKeys,

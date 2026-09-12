@@ -50,7 +50,7 @@ services:
       retries:  5
 
   minio:
-    image:   minio/minio:latest
+    image:   quay.io/minio/minio:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
@@ -70,7 +70,7 @@ services:
   # Creates the bucket and exits. MinIO has no declarative bucket config, so
   # without this the first log write fails against an empty server.
   minio-init:
-    image:      minio/mc:latest
+    image:      quay.io/minio/mc:latest
     depends_on:
       minio:
         condition: service_healthy

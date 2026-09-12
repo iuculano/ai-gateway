@@ -257,3 +257,20 @@ test('a caller cannot grant scopes it does not hold', async () => {
   const rows = await asTenant(acme, () => Services.listApiKeys({ limit: 50, status: 'all' }));
   expect(rows.data).toHaveLength(0);
 });
+
+test('status filtering precedes pagination and expired keys are not active', async () => {
+  const active = await createKey(acme, 'active');
+  const expired = await createKey(acme, 'expired');
+  const revoked = await createKey(acme, 'revoked');
+  await admin`update api_keys set expires_at = now() - interval '1 day' where id in (${expired.id}, ${revoked.id})`;
+  await asTenant(acme, () => Services.revokeApiKey(revoked.id));
+  for (const [status, id] of [
+    ['active', active.id],
+    ['expired', expired.id],
+    ['revoked', revoked.id],
+  ] as const) {
+    const result = await asTenant(acme, () => Services.listApiKeys({ limit: 1, status }));
+    expect(result.data.map((key) => key.id)).toEqual([id]);
+    expect(result.meta.more_data).toBe(false);
+  }
+});

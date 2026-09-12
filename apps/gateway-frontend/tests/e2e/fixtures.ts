@@ -270,6 +270,7 @@ export function emptySeries(request: RecordedApiRequest): SeriesResponse {
 
 /** Responses needed to visit every page with no application data. */
 export function registerEmptyApp(api: ApiMock): void {
+  api.get('/api/api-keys/count', { json: { count: 0, estimated: false } });
   api.get('/api/api-keys', { json: { data: [], meta: PAGE_META } });
   api.get('/api/providers', { json: { data: [] } });
   api.get('/api/prompts', { json: { data: [], meta: PAGE_META } });

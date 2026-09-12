@@ -3,8 +3,22 @@ import { API_KEY, CREATED_API_KEY, IDS, registerEmptyApp } from './fixtures';
 
 test('an API key can be created, revealed once, and revoked', async ({ page, api }) => {
   registerEmptyApp(api);
-  api.post('/api/api-keys', { status: 201, json: CREATED_API_KEY });
-  api.delete(`/api/api-keys/${IDS.apiKey}`);
+  let created = false;
+  let revoked = false;
+  api.get('/api/api-keys', () => ({
+    json: {
+      data: created ? [{ ...API_KEY, revoked_at: revoked ? '2026-01-01T00:00:00Z' : null }] : [],
+      meta: { oldest_id: null, more_data: false },
+    },
+  }));
+  api.post('/api/api-keys', () => {
+    created = true;
+    return { status: 201, json: CREATED_API_KEY };
+  });
+  api.delete(`/api/api-keys/${IDS.apiKey}`, () => {
+    revoked = true;
+    return { status: 204 };
+  });
 
   await page.goto('/keys');
   await expect(page.getByText('No API keys yet')).toBeVisible();
@@ -24,7 +38,9 @@ test('an API key can be created, revealed once, and revoked', async ({ page, api
   const confirmDialog = page.getByRole('dialog');
   await expect(confirmDialog.getByRole('heading', { name: 'Revoke this API key?' })).toBeVisible();
   await confirmDialog.getByRole('button', { name: 'Revoke key' }).click();
-  await expect(page.getByText('Revoked', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: new RegExp(API_KEY.name) }).getByText('Revoked', { exact: true }),
+  ).toBeVisible();
 
   const createCall = api.matching('POST', '/api/api-keys');
   expect(createCall).toHaveLength(1);
@@ -39,6 +55,9 @@ test('an API key can be created, revealed once, and revoked', async ({ page, api
 
 test('failed key usage stays idle until retry and successful usage is cached', async ({ page, api }) => {
   registerEmptyApp(api);
+  api.post('/api/internal/actors/resolve', {
+    json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },
+  });
   api.get('/api/api-keys', { json: { data: [API_KEY], meta: { oldest_id: null, more_data: false } } });
   const statsPath = `/api/api-keys/${IDS.apiKey}/stats`;
   let attempts = 0;
@@ -172,3 +191,81 @@ for (const succeeds of [true, false]) {
     await expect(dialog).toBeHidden();
   });
 }
+
+test('key edits are saved through the modal while expanded details stay read-only', async ({ page, api }) => {
+  registerEmptyApp(api);
+  const key = {
+    ...API_KEY,
+    creator_id: null,
+    expires_at: '2020-01-01T12:34:56.789Z',
+    rate_limit_requests: 5,
+    rate_limit_window: 60,
+  };
+  api.get('/api/api-keys', { json: { data: [key], meta: { oldest_id: null, more_data: false } } });
+  api.get(`/api/api-keys/${IDS.apiKey}/stats`, {
+    json: { id: IDS.apiKey, total_requests: 0, last_used_at: null, current_window: null },
+  });
+  api.on('PATCH', `/api/api-keys/${IDS.apiKey}`, (request) => ({ json: { ...key, ...(request.body as object) } }));
+  await page.goto('/keys');
+  await page.getByText(key.name, { exact: true }).click();
+  await expect(
+    page.getByText('Permissions & scopes', { exact: true }).locator('..').locator('..').getByRole('switch'),
+  ).toHaveCount(0);
+  await expect(page.getByText('Enabled', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Requests', { exact: true })).toHaveValue('5');
+  await dialog.getByLabel('Requests', { exact: true }).fill('10');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(api.matching('PATCH', `/api/api-keys/${IDS.apiKey}`)).toHaveLength(0);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(dialog.getByLabel('Requests', { exact: true })).toHaveValue('5');
+  await dialog.getByRole('switch', { name: 'Enable rate limit', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(api.matching('PATCH', `/api/api-keys/${IDS.apiKey}`)[0]?.body).toEqual({
+    rate_limit_requests: null,
+    rate_limit_window: null,
+  });
+  await expect(
+    page.getByText('Permissions & scopes', { exact: true }).locator('..').locator('..').getByRole('switch'),
+  ).toHaveCount(0);
+});
+
+test('API key status filters reset pagination and only page through matching keys', async ({ page, api }) => {
+  registerEmptyApp(api);
+  api.get('/api/api-keys', (request) => {
+    const query = new URLSearchParams(request.search);
+    expect(query.get('limit')).toBe('20');
+    if (query.get('status') === 'revoked') {
+      expect(query.has('after_id')).toBe(false);
+      return {
+        json: {
+          data: [{ ...API_KEY, name: 'Revoked key', revoked_at: '2026-01-01T00:00:00Z' }],
+          meta: { oldest_id: IDS.apiKey, more_data: false },
+        },
+      };
+    }
+    const older = query.has('after_id');
+    return {
+      json: {
+        data: [{ ...API_KEY, creator_id: null, name: older ? 'Older key' : 'Newest key' }],
+        meta: { oldest_id: IDS.apiKey, more_data: !older },
+      },
+    };
+  });
+  await page.goto('/keys');
+  await expect(page.getByText('Newest key', { exact: true })).toBeVisible();
+  await expect(page.getByText('Page 1', { exact: true })).toBeVisible();
+  await expect.poll(() => api.matching('GET', '/api/api-keys/count').length).toBe(4);
+  await page.getByRole('button', { name: 'Older', exact: true }).click();
+  await expect(page.getByText('Older key', { exact: true })).toBeVisible();
+  await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
+  expect(api.matching('GET', '/api/api-keys/count')).toHaveLength(4);
+  expect(new URLSearchParams(api.matching('GET', '/api/api-keys')[1]?.search).get('after_id')).toBe(IDS.apiKey);
+  await page.getByRole('button', { name: 'Revoked', exact: true }).click();
+  await expect(page.getByText('Revoked key', { exact: true })).toBeVisible();
+  await expect.poll(() => api.matching('GET', '/api/api-keys/count').length).toBe(5);
+  await expect(page.getByRole('button', { name: 'Older', exact: true })).not.toBeVisible();
+  expect(new URLSearchParams(api.matching('GET', '/api/api-keys')[2]?.search).has('after_id')).toBe(false);
+});
