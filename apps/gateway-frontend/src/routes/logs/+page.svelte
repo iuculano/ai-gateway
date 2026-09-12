@@ -193,10 +193,12 @@ onMount(() => {
 // rows however much traffic lands meanwhile. Ticking there would spend a request
 // per interval to redraw identical data. Reading pageIndex here also
 // re-subscribes the effect, so the timer restarts on the page that needs it.
-$effect(() => auto.schedule(pageIndex === 0, async () => {
-  // refreshStats handles its own failures so counts cannot stop row refreshes.
-  await Promise.all([load({ silent: true }), refreshStats()]);
-}));
+$effect(() =>
+  auto.schedule(pageIndex === 0, async () => {
+    // refreshStats handles its own failures so counts cannot stop row refreshes.
+    await Promise.all([load({ silent: true }), refreshStats()]);
+  }),
+);
 
 const filtered = $derived.by(() => {
   const q = dashboard.search.trim().toLowerCase();

@@ -45,7 +45,7 @@ const totalCost = $derived(Number(log.input_cost) + Number(log.output_cost));
 
 const STATUS = {
   complete: { label: 'Success', color: '#10b981' },
-  failed: { label: 'Error', color: '#f87171' },
+  failed: { label: 'Failed', color: '#f87171' },
   // Written before the provider is called and never resolved - the request
   // died in flight. Not the same as a failure the gateway actually observed.
   incomplete: { label: 'Incomplete', color: '#f59e0b' },
