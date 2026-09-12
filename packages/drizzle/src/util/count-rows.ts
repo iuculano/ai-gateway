@@ -63,6 +63,6 @@ export async function countRows(
 
   return {
     count: Math.max(count, estimate), // don't return lower than what we already counted
-    estimated: true
+    estimated: true,
   };
 }
