@@ -1,5 +1,6 @@
 <script lang="ts">
 import { ROLE_COLORS, type Turn } from '$lib/data/conversation';
+import MarkdownText from './markdown-text.svelte';
 
 /**
  * The 'Simple' rendering of a stored payload: the conversation, without the
@@ -12,6 +13,7 @@ let {
   turns,
   class: className = 'max-h-72',
   autoscroll = false,
+  markdown = false,
 }: {
   turns: Turn[];
   /**
@@ -25,6 +27,7 @@ let {
    * moving a reader's scroll position under them would be wrong.
    */
   autoscroll?: boolean;
+  markdown?: boolean;
 } = $props();
 
 let container: HTMLDivElement | null = $state(null);
@@ -45,7 +48,7 @@ $effect(() => {
 
 <div bind:this={container} class="flex flex-col gap-3 overflow-auto px-[13px] py-3 {className}">
 	{#each turns as turn, index (index)}
-		<div class="flex flex-col gap-1">
+		<div class="flex min-w-0 flex-col gap-1">
 			<span
 				class="text-[10.5px] font-medium tracking-[.05em] uppercase"
 				style:color={ROLE_COLORS[turn.role]}
@@ -54,7 +57,11 @@ $effect(() => {
 			</span>
 
 			{#if turn.text}
-				<p class="m-0 text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap text-zinc-300">{turn.text}</p>
+				{#if markdown}
+          <MarkdownText text={turn.text} />
+        {:else}
+        <p class="m-0 text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap text-zinc-300">{turn.text}</p>
+        {/if}
 			{/if}
 
 			{#if turn.note}

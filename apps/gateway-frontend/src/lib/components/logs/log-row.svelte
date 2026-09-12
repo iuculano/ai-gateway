@@ -252,7 +252,7 @@ function copy(text: string, label: string) {
 		<DetailGrid items={detailItems} cols={6} />
 
 
-		<div class="grid grid-cols-2 gap-3.5">
+		<div class="grid min-w-0 grid-cols-2 gap-3.5">
 			{#each panels as panel (panel.title)}
 				<Panel title={panel.title}>
 					{#snippet actions()}
@@ -282,7 +282,7 @@ function copy(text: string, label: string) {
 								No messages in this payload — switch to JSON to see it.
 							</div>
 						{:else}
-							<MessageList turns={panel.turns} />
+							<MessageList markdown turns={panel.turns} />
 						{/if}
 					{:else}
 						<JsonView json={panel.json} />
