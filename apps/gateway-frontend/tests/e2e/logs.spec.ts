@@ -1,6 +1,54 @@
 import { expect, test } from './api-mock';
 import { FAILED_LOG, IDS, LOG_META, registerEmptyApp, SUCCESS_LOG, TRACE_IDS } from './fixtures';
 
+test('auto-refresh updates counts and continues after a stats failure', async ({ page, api }) => {
+  await page.clock.install();
+  registerEmptyApp(api);
+  let count = 1;
+  let failStats = false;
+  api.get('/api/logs', () => ({
+    json: { data: [{ ...SUCCESS_LOG, model: `refreshed-model-${count}` }], meta: LOG_META },
+  }));
+  api.get('/api/logs/stats', () =>
+    failStats
+      ? { status: 503, json: { error: { message: 'Counts unavailable' } } }
+      : {
+          json: {
+            total: count,
+            estimated: false,
+            by_status: { complete: count, failed: 0, incomplete: 0 },
+            tokens: { input: 0, output: 0, total: 0 },
+            cost: { input: 0, output: 0, total: 0 },
+          },
+        },
+  );
+
+  await page.goto('/logs');
+  const counts = page.getByText(/matching logs/);
+  await expect(counts).toContainText('1 success');
+  const toggle = page.getByRole('switch', { name: 'Auto-refresh' });
+  await toggle.click();
+
+  count = 2;
+  await page.clock.fastForward(10_000);
+  await expect(page.getByText('refreshed-model-2', { exact: true })).toBeVisible();
+  await expect(counts).toContainText('2 success');
+
+  count = 3;
+  failStats = true;
+  await page.clock.fastForward(10_000);
+  await expect(page.getByText('refreshed-model-3', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry counts' })).toBeVisible();
+  await expect(toggle).toBeChecked();
+
+  count = 4;
+  failStats = false;
+  await page.clock.fastForward(10_000);
+  await expect(page.getByText('refreshed-model-4', { exact: true })).toBeVisible();
+  await expect(counts).toContainText('4 success');
+  await expect(page.getByRole('button', { name: 'Retry counts' })).toBeHidden();
+});
+
 test('a stored request can be inspected and replayed in the playground', async ({ page, api }) => {
   registerEmptyApp(api);
   api.get('/api/logs', (request) => {
@@ -40,7 +88,7 @@ test('a stored request can be inspected and replayed in the playground', async (
   await expect(trace).toHaveAttribute('href', `/traces?trace=${TRACE_IDS.workflow}`);
   await expect(trace).toHaveText(TRACE_IDS.workflow.slice(0, 8));
 
-  await page.getByRole('button', { name: 'Errors' }).click();
+  await page.getByRole('button', { name: 'Failed', exact: true }).click();
   await expect(page.getByText(FAILED_LOG.model, { exact: true })).toBeVisible();
   await expect(page.getByText(SUCCESS_LOG.model, { exact: true })).toBeHidden();
   await page.getByRole('button', { name: 'All', exact: true }).click();
@@ -164,7 +212,7 @@ test('log status filters reach the backend and reset pagination', async ({ page,
   await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
   for (const [label, status] of [
     ['Incomplete', 'incomplete'],
-    ['Errors', 'failed'],
+    ['Failed', 'failed'],
     ['Success', 'complete'],
     ['All', null],
   ] as const) {
