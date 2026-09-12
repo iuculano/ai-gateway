@@ -48,3 +48,8 @@ export async function getLogResponseBatch(ids: string[]) {
 export async function deleteLog(id: string): Promise<void> {
   await client.logs[':id'].$delete({ param: { id } });
 }
+
+export async function getLogStats() {
+  const response = await client.logs.stats.$get();
+  return response.json();
+}
