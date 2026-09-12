@@ -274,7 +274,19 @@ export function registerEmptyApp(api: ApiMock): void {
   api.get('/api/api-keys', { json: { data: [], meta: PAGE_META } });
   api.get('/api/providers', { json: { data: [] } });
   api.get('/api/prompts', { json: { data: [], meta: PAGE_META } });
+  api.post('/api/internal/actors/resolve', {
+    json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },
+  });
   api.get('/api/logs', { json: { data: [], meta: LOG_META } });
+  api.get('/api/logs/stats', {
+    json: {
+      total: 0,
+      estimated: false,
+      by_status: { complete: 0, failed: 0, incomplete: 0 },
+      tokens: { input: 0, output: 0, total: 0 },
+      cost: { input: 0, output: 0, total: 0 },
+    },
+  });
   api.get('/api/traces', { json: { data: [], meta: LOG_META } });
   api.get('/api/audit-logs', { json: { data: [], meta: PAGE_META } });
   api.get('/api/webhooks', { json: { data: [], meta: PAGE_META } });

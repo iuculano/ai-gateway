@@ -142,3 +142,34 @@ for (const scenario of [
     }
   });
 }
+
+test('log status filters reach the backend and reset pagination', async ({ page, api }) => {
+  registerEmptyApp(api);
+  api.get('/api/logs', (request) => {
+    const query = new URLSearchParams(request.search);
+    return {
+      json: {
+        data: [{ ...SUCCESS_LOG, status: query.get('status') ?? 'complete' }],
+        meta: { ...LOG_META, oldest_id: IDS.successLog, more_data: !query.has('after_id') },
+      },
+    };
+  });
+  await page.goto('/logs');
+  await page.getByRole('button', { name: 'Older', exact: true }).click();
+  await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
+  for (const [label, status] of [
+    ['Incomplete', 'incomplete'],
+    ['Errors', 'failed'],
+    ['Success', 'complete'],
+    ['All', null],
+  ] as const) {
+    await page.getByRole('button', { name: label, exact: true }).click();
+    await expect
+      .poll(() => {
+        const query = new URLSearchParams(api.matching('GET', '/api/logs').at(-1)?.search);
+        return { status: query.get('status'), cursor: query.get('after_id') };
+      })
+      .toEqual({ status, cursor: null });
+    await expect(page.getByText('Page 1', { exact: true })).toBeVisible();
+  }
+});
