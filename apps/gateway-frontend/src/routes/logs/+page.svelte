@@ -207,19 +207,7 @@ const filtered = $derived.by(() => {
 <PageHeader
 	title="Logs"
 	description="Every model request routed through Relay, with full request and response payloads."
->
-	{#snippet actions()}
-		<ToolbarButton>
-			<span class="size-[7px] rounded-full bg-emerald-500"></span>
-			Live · last 24h
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="ml-0.5"><path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-		</ToolbarButton>
-		<ToolbarButton>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Export
-		</ToolbarButton>
-	{/snippet}
-</PageHeader>
+/>
 
 <TableCard
 	cols={COLS}
