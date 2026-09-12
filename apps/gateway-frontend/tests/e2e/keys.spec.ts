@@ -38,7 +38,9 @@ test('an API key can be created, revealed once, and revoked', async ({ page, api
   const confirmDialog = page.getByRole('dialog');
   await expect(confirmDialog.getByRole('heading', { name: 'Revoke this API key?' })).toBeVisible();
   await confirmDialog.getByRole('button', { name: 'Revoke key' }).click();
-  await expect(page.getByText('Revoked', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: new RegExp(API_KEY.name) }).getByText('Revoked', { exact: true }),
+  ).toBeVisible();
 
   const createCall = api.matching('POST', '/api/api-keys');
   expect(createCall).toHaveLength(1);
@@ -53,6 +55,9 @@ test('an API key can be created, revealed once, and revoked', async ({ page, api
 
 test('failed key usage stays idle until retry and successful usage is cached', async ({ page, api }) => {
   registerEmptyApp(api);
+  api.post('/api/internal/actors/resolve', {
+    json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },
+  });
   api.get('/api/api-keys', { json: { data: [API_KEY], meta: { oldest_id: null, more_data: false } } });
   const statsPath = `/api/api-keys/${IDS.apiKey}/stats`;
   let attempts = 0;
