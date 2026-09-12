@@ -42,8 +42,6 @@ services:
     volumes:
       - victoria_traces_data:/victoria-traces-data
     healthcheck:
-      # The hardened image has no shell or HTTP client. If the server process
-      # exits, the container stops.
       test:     ["CMD", "/victoria-traces-prod", "-version"]
       interval: 5s
       timeout:  5s
