@@ -7,8 +7,7 @@
     ".": "./src/index.ts",
     "./routes": "./src/routes.ts",
     "./schemas/analytics": "./src/api/analytics/analytics.schemas.ts",
-    "./schemas/chat-completions": "./src/api/chat-completions/chat-completions.schemas.ts",
-    "./prompts/builtins": "./src/api/prompts/prompts.builtins.ts"
+    "./schemas/chat-completions": "./src/api/chat-completions/chat-completions.schemas.ts"
   },
   "scripts": {
     "dev": "bun run --inspect --hot src/index.ts",

@@ -14,7 +14,7 @@ import type { Prompt } from '$lib/api/types';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import * as Select from '$lib/components/ui/select';
 import { Input } from '$lib/components/ui/input';
-import { BUILTINS, extractVariables } from '$lib/data/prompts';
+import { extractVariables } from '$lib/data/prompts';
 import { prompts } from '$lib/state/prompts.svelte';
 
 /**
@@ -245,7 +245,6 @@ const missing = $derived(variables.inputs.filter((name) => (values[name] ?? '').
 					{#each variables.builtins as name (name)}
 						<span
 							class="rounded-[6px] border border-sky-500/25 bg-sky-500/10 px-2 py-1 font-mono text-[11.5px] text-sky-300"
-							title={BUILTINS.get(name)?.description}
 						>
 							{name}
 						</span>
