@@ -155,10 +155,10 @@ const listLogs = defineOpenAPIRoute({
  * GET /logs/count
  * Totals for the organization, counted or estimated depending on size.
  */
-const getLogStats = defineOpenAPIRoute({
-  route: Routes.getLogStats,
+const countLogs = defineOpenAPIRoute({
+  route: Routes.countLogs,
   handler: async (c) => {
-    const result = await Services.getLogStats();
+    const result = await Services.countLogs();
 
     return c.json(result, 200);
   },
@@ -185,7 +185,7 @@ const deleteLog = defineOpenAPIRoute({
 });
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
-  getLogStats,
+  countLogs,
   getLog,
   getLogRequest,
   getLogResponse,

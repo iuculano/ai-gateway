@@ -169,17 +169,18 @@ const listLogs = createRoute({
 });
 
 
+const countLogs = createRoute({
   method: 'get' as const,
-  path: '/logs/stats',
+  path: '/logs/count',
   security: bearerSecurity,
   middleware: [authorize({ scopes: [SCOPES.logsRead] })],
   responses: {
     ...protectedRouteErrors,
     200: {
-      description: 'Totals for the organization. Estimated above 100,000 logs.',
+      description: 'Totals for the organization',
       content: {
         'application/json': {
-          schema: Schemas.stats.response,
+          schema: Schemas.countLogs.response,
         },
       },
     },
@@ -217,6 +218,6 @@ export default {
   getLogRequestBatch,
   getLogResponseBatch,
   listLogs,
-  getLogStats,
+  countLogs,
   deleteLog,
 };

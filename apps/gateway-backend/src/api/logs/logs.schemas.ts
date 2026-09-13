@@ -93,12 +93,9 @@ const deleteLog = createSchema({
   response: z.void(), // 204 no content
 });
 
+const countLogs = createSchema({
   response: z.object({
-    // The sum of by_status, so the three always add up to it - see getLogStats
-    // for why that is built rather than asserted.
     total: z.number().int().nonnegative(),
-
-    // False when every number was counted, true when they were sampled.
     estimated: z.boolean(),
 
     by_status: z.object({
@@ -106,32 +103,18 @@ const deleteLog = createSchema({
       failed: z.number().int().nonnegative(),
       incomplete: z.number().int().nonnegative(),
     }),
-
-    tokens: z.object({
-      // Coerced for the same reason the costs below are: these are summed in
-      // postgres as bigint, and the driver hands bigint back as a string.
-      input: z.coerce.number().int().nonnegative(),
-      output: z.coerce.number().int().nonnegative(),
-      total: z.coerce.number().int().nonnegative(),
-    }),
-
-    cost: z.object({
-      input: z.coerce.number().nonnegative(),
-      output: z.coerce.number().nonnegative(),
-      total: z.coerce.number().nonnegative(),
-    }),
   }),
 });
 
 export type LogShape = z.infer<typeof logShape>;
 export type GetLogResponse = z.infer<typeof getLog.response>;
-export type GetLogPayloadResponse = z.infer<typeof payload>;
+export type GetLogPayloadResponse = z.infer<typeof z.unknown>;
 export type BatchBody = z.infer<typeof batch.body>;
 export type BatchResponse = z.infer<typeof batch.response>;
 export type ListLogsQuery = z.infer<typeof listLogs.query>;
 export type ListLogsResponse = z.infer<typeof listLogs.response>;
 export type DeleteLogResponse = z.infer<typeof deleteLog.response>;
-export type LogStatsResponse = z.infer<typeof stats.response>;
+export type CountLogsResponse = z.infer<typeof countLogs.response>;
 
 export default {
   getLog,
@@ -140,5 +123,5 @@ export default {
   batch,
   listLogs,
   deleteLog,
-  stats,
+  countLogs,
 };
