@@ -4,7 +4,7 @@ import { getPromptVersion } from '$lib/api/prompts';
 import * as Dialog from '$lib/components/ui/dialog';
 import { Label } from '$lib/components/ui/label';
 import { Textarea } from '$lib/components/ui/textarea';
-import { BUILTIN_CATALOGUE, BUILTINS, extractVariables } from '$lib/data/prompts';
+import { extractVariables } from '$lib/data/prompts';
 import { prompts } from '$lib/state/prompts.svelte';
 
 /**
@@ -128,8 +128,6 @@ async function save() {
 				</p>
 			</div>
 
-			<!-- Shown as you type rather than only on preview: a mistyped tag is
-			     otherwise invisible until the render comes back with it unresolved. -->
 			<div>
 				<span class="mb-2.5 block text-[12.5px] font-medium text-zinc-200">
 					Variables detected
@@ -138,7 +136,7 @@ async function save() {
 					</span>
 				</span>
 
-				{#if variables.inputs.length === 0 && variables.builtins.length === 0 && variables.unknownBuiltins.length === 0}
+				{#if variables.inputs.length === 0 && variables.builtins.length === 0}
 					<p class="text-[12.5px] text-zinc-600">
 						None — this template renders as written, with nothing to supply.
 					</p>
@@ -147,7 +145,6 @@ async function save() {
 						{#each variables.builtins as name (name)}
 							<span
 								class="rounded-[6px] border border-sky-500/25 bg-sky-500/10 px-2 py-1 font-mono text-[11.5px] text-sky-300"
-								title={BUILTINS.get(name)?.description}
 							>
 								{name}
 							</span>
@@ -157,63 +154,9 @@ async function save() {
 								{name}
 							</span>
 						{/each}
-						{#each variables.unknownBuiltins as name (name)}
-							<span
-								class="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-mono text-[11.5px] text-amber-300"
-								title="Not a known built-in. The aig. prefix is reserved, so this cannot be supplied as an input either."
-							>
-								{name}
-							</span>
-						{/each}
 					</div>
-
-					{#if variables.unknownBuiltins.length > 0}
-						<p class="mt-2.5 text-[11.5px] leading-normal text-amber-400/80">
-							{variables.unknownBuiltins.length}
-							{variables.unknownBuiltins.length === 1 ? 'tag uses' : 'tags use'} the reserved
-							<code class="font-mono">aig.</code> prefix but {variables.unknownBuiltins.length === 1 ? 'is' : 'are'}
-							not a built-in — {variables.unknownBuiltins.length === 1 ? 'it' : 'they'} will never resolve. Check the
-							reference below for the spelling.
-						</p>
-					{/if}
 				{/if}
 			</div>
-
-			<details class="group rounded-[10px] border border-line bg-surface-1">
-				<summary
-					class="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] font-medium text-zinc-300 hover:text-zinc-100"
-				>
-					<svg
-						width="12"
-						height="12"
-						viewBox="0 0 16 16"
-						fill="none"
-						class="text-zinc-600 transition-transform duration-150 group-open:rotate-90"
-					>
-						<path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-					</svg>
-					Built-in reference
-					<span class="font-normal text-zinc-600">{BUILTIN_CATALOGUE.length} available</span>
-				</summary>
-
-				<div class="border-t border-line">
-					{#each BUILTIN_CATALOGUE as builtin, index (builtin.name)}
-						<div class="grid grid-cols-[minmax(140px,max-content)_1fr_max-content] items-baseline gap-3 px-3.5 py-2 {index > 0 ? 'border-t border-line' : ''}">
-							<code class="font-mono text-[11.5px] text-sky-300">{builtin.name}</code>
-							<span class="text-[11.5px] text-zinc-500">{builtin.description}</span>
-							<!-- 'instant' is the one worth flagging while authoring: it is
-							     what makes two renders of the same prompt differ. -->
-							{#if builtin.stability === 'instant'}
-								<span class="rounded-[5px] bg-amber-500/10 px-1.5 py-px text-[10.5px] text-amber-400/90">
-									changes every render
-								</span>
-							{:else}
-								<code class="font-mono text-[11px] text-zinc-600">{builtin.example}</code>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</details>
 		</div>
 
 		<div class="flex flex-none gap-2.5 border-t border-line bg-surface-1 px-6 py-4">

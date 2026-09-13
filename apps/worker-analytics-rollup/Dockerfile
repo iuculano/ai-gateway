@@ -1,44 +1,50 @@
-# syntax=docker/dockerfile:1.7
-
-# Build from the repository root:
-# docker build -f apps/worker-analytics-rollup/Dockerfile -t ai-gateway-worker-analytics-rollup .
-ARG BUN_VERSION=1.4.0
-# Chainguard's free tier publishes :latest only and rebuilds it daily, so this
-# tag moves under us - two builds a week apart can sit on different glibc. Mirror
-# a digest into GHCR and point this at that if builds need to be reproducible.
+ARG BUN_VERSION=1.4.2
 ARG RUNTIME_IMAGE=cgr.dev/chainguard/glibc-dynamic:latest
 
+#-------------------------------------------------------------------------------
+# Prune the repository to only include the necessary files for the
+# worker-analytics-rollup app.
+#
+# https://turborepo.dev/docs/reference/prune
+#-------------------------------------------------------------------------------
 FROM oven/bun:${BUN_VERSION}-slim AS pruner
-ARG TURBO_VERSION=2.10.11
-ENV TURBO_TELEMETRY_DISABLED=1
+ARG  TURBO_VERSION=2.10.11
+ENV  TURBO_TELEMETRY_DISABLED=1
 WORKDIR /repo
 
 COPY . .
-RUN --mount=type=cache,target=/root/.bun/install/cache \
-    bunx turbo@${TURBO_VERSION} prune worker-analytics-rollup --docker
+RUN bunx turbo@${TURBO_VERSION} prune worker-analytics-rollup --docker
 
+#-------------------------------------------------------------------------------
+# Install runtime dependencies and compile the app into an executable
+# containing the application code and Bun runtime.
+#
+# https://turborepo.dev/docs/guides/tools/docker#example
+#-------------------------------------------------------------------------------
 FROM oven/bun:${BUN_VERSION}-slim AS builder
 ENV NODE_ENV=production
 WORKDIR /repo
 
-# The manifests first, so a change to application source does not reinstall the
-# dependency tree. turbo prune emits out/json for exactly this.
+# Copies are split so Docker can reuse dependencies when only source changes.
 COPY --from=pruner /repo/out/json/ .
-RUN --mount=type=cache,target=/root/.bun/install/cache \
-    bun install --frozen-lockfile --production
+RUN bun install --frozen-lockfile --production
 
 COPY --from=pruner /repo/out/full/ .
 RUN bun run --cwd apps/worker-analytics-rollup build
 
-FROM ${RUNTIME_IMAGE} AS runtime
-ENV NODE_ENV=production \
-    PORT=8084
+#-------------------------------------------------------------------------------
+# The final image - runs as non-root.
+#-------------------------------------------------------------------------------
+FROM ${RUNTIME_IMAGE} AS runner
+ENV NODE_ENV=production
+ENV PORT=8084
+
 WORKDIR /app
 
 COPY --from=builder --chown=65532:65532 --chmod=0555 \
-    /repo/apps/worker-analytics-rollup/dist/worker-analytics-rollup /app/worker-analytics-rollup
+  /repo/apps/worker-analytics-rollup/dist/worker-analytics-rollup /app/worker-analytics-rollup
 
-USER 65532:65532
-EXPOSE 8084
+USER       65532:65532
+EXPOSE     8084
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/app/worker-analytics-rollup"]

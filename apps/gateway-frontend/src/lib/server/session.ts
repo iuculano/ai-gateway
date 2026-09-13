@@ -5,6 +5,14 @@ import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { refreshTokens } from './oidc';
 
+// The Bun adapter stops HTTP on shutdown; close the session connection too
+// so the container can exit without waiting for Docker's SIGKILL timeout.
+if (!dev) {
+  process.once('sveltekit:shutdown', () => {
+    if (redis.isOpen) redis.destroy();
+  });
+}
+
 // Sessions live server-side in Valkey; the browser only ever holds an opaque
 // random id. No token of any kind leaves the server.
 //

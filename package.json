@@ -2,7 +2,7 @@
   "name": "ai-gateway-workspace",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",

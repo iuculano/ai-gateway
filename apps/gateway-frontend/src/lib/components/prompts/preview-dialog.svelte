@@ -4,7 +4,7 @@ import { copyToClipboard } from '$lib/clipboard';
 import Panel from '$lib/components/app/panel.svelte';
 import * as Dialog from '$lib/components/ui/dialog';
 import { Input } from '$lib/components/ui/input';
-import { BUILTINS, extractVariables, segmentTemplate } from '$lib/data/prompts';
+import { extractVariables, segmentTemplate } from '$lib/data/prompts';
 import { prompts } from '$lib/state/prompts.svelte';
 
 /**
@@ -248,21 +248,10 @@ const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').l
 										class="flex items-baseline gap-3 px-3.5 py-2.5 {index > 0 ? 'border-t border-line' : ''}"
 									>
 										<code class="flex-none font-mono text-[11.5px] text-sky-300">{name}</code>
-										<span class="text-[11.5px] text-zinc-600">{BUILTINS.get(name)?.description}</span>
 									</div>
 								{/each}
 							</div>
 						</Panel>
-					{/if}
-
-					{#if variables.unknownBuiltins.length > 0}
-						<div class="rounded-[10px] border border-amber-500/25 bg-amber-500/8 px-3.5 py-3 text-[11.5px] leading-normal text-amber-300">
-							<code class="font-mono">{variables.unknownBuiltins.join(', ')}</code>
-							{variables.unknownBuiltins.length === 1 ? 'uses' : 'use'} the reserved
-							<code class="font-mono">aig.</code> prefix but {variables.unknownBuiltins.length === 1 ? 'is' : 'are'}
-							not a built-in, so {variables.unknownBuiltins.length === 1 ? 'it' : 'they'} cannot be supplied here
-							either. Edit the template to fix the name.
-						</div>
 					{/if}
 				</div>
 
