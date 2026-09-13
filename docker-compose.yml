@@ -30,8 +30,6 @@ services:
       timeout:  5s
       retries:  5
 
-  # Local storage for customer application traces. The gateway-facing OTLP
-  # endpoint is http://victoria-traces:10428/insert/opentelemetry/v1/traces.
   victoria-traces:
     image:   victoriametrics/victoria-traces:v0.10.0
     restart: unless-stopped
@@ -65,8 +63,8 @@ services:
       timeout:  5s
       retries:  5
 
-  # Creates the bucket and exits. MinIO has no declarative bucket config, so
-  # without this the first log write fails against an empty server.
+  # MinIO has no declarative bucket config, so without this the first log write
+  # fails against an empty server.
   minio-init:
     image:      quay.io/minio/mc:latest
     depends_on:
