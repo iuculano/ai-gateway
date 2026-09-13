@@ -518,12 +518,8 @@ async function startLog(
 /**
  * Stores the payloads for a finished inference and marks the log complete.
  *
- * Non-omitted payloads are written concurrently before their references are
- * published on the row, preventing a completed log from advertising an object
- * that is not yet readable.
- *
  * @param organizationId
- * The tenant the log belongs to. Passed explicitly - see startLog.
+ * The tenant the log belongs to.
  *
  * @param id
  * The log to complete, from startLog.
@@ -535,8 +531,8 @@ async function completeLog(
   organizationId: string,
   id: string,
   entry: {
-    request?: unknown;
-    response?: unknown;
+    request: unknown;
+    response: unknown;
     omitRequest?: boolean;
     omitResponse?: boolean;
     gateway_cache_hit?: boolean;
@@ -548,11 +544,8 @@ async function completeLog(
     response_time_ms?: number;
   },
 ): Promise<void> {
-  const writeRequest = entry.request !== undefined && !entry.omitRequest;
-  const writeResponse = entry.response !== undefined && !entry.omitResponse;
-
-  const requestKey = writeRequest ? objectKey(organizationId, id, 'request') : null;
-  const responseKey = writeResponse ? objectKey(organizationId, id, 'response') : null;
+  const requestKey = entry.omitRequest ? null : objectKey(organizationId, id, 'request');
+  const responseKey = entry.omitResponse ? null : objectKey(organizationId, id, 'response');
 
   await Promise.all([
     requestKey ? objectStorage.putJson(requestKey, entry.request) : Promise.resolve(),
@@ -573,43 +566,45 @@ async function completeLog(
       ...(entry.output_cost != null ? { output_cost: entry.output_cost } : {}),
       ...(entry.response_time_ms != null ? { response_time_ms: entry.response_time_ms } : {}),
     })
-    .where(and(eq(logs.organization_id, organizationId), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, organizationId),
+      eq(logs.id, id)
+    ));
 }
 
 /**
  * Marks a log failed.
  *
- * The request payload remains useful for diagnosing the failure and is retained
- * unless explicitly omitted.
- *
  * @param organizationId
- * The tenant the log belongs to. Passed explicitly - see startLog.
+ * The tenant the log belongs to.
  *
  * @param id
  * The log to fail, from startLog.
  *
  * @param entry
- * The request payload, if there is one worth keeping.
+ * The request payload and its storage-omission control.
  */
 async function failLog(
   organizationId: string,
   id: string,
-  entry: { request?: unknown; omitRequest?: boolean } = {},
+  entry: { request: unknown; omitRequest?: boolean },
 ): Promise<void> {
-  const writeRequest = entry.request !== undefined && !entry.omitRequest;
-  const requestKey = writeRequest ? objectKey(organizationId, id, 'request') : null;
-
-  if (requestKey) {
-    await objectStorage.putJson(requestKey, entry.request);
+  const key = entry.omitRequest ? null : objectKey(organizationId, id, 'request');
+  if (key) {
+    await objectStorage.putJson(key, entry.request);
   }
 
+  // biome-ignore format: looks nicer
   await db
     .update(logs)
     .set({
       status: 'failed',
-      ...(requestKey ? { request_object_reference: requestKey } : {}),
+      ...(key ? { request_object_reference: key } : {}),
     })
-    .where(and(eq(logs.organization_id, organizationId), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, organizationId),
+      eq(logs.id, id)
+    ));
 }
 
 export default {
