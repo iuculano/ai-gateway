@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { getLogStats, listLogs } from '$lib/api/logs';
+import { countLogs, listLogs } from '$lib/api/logs';
 import type { Log, LogListMeta } from '$lib/api/types';
 import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
@@ -59,12 +59,12 @@ let payloadView: PayloadView = $state('simple');
 const auto = new AutoRefresh();
 
 let logs: Log[] = $state([]);
-let stats: Awaited<ReturnType<typeof getLogStats>> | null = $state(null);
+let stats: Awaited<ReturnType<typeof countLogs>> | null = $state(null);
 let statsError = $state(false);
 
 async function refreshStats() {
   try {
-    stats = await getLogStats();
+    stats = await countLogs();
     statsError = false;
   } catch {
     stats = null;
