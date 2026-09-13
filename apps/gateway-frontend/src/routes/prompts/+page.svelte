@@ -2,9 +2,8 @@
 import { onMount } from 'svelte';
 import type { Prompt } from '$lib/api/types';
 import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import PreviewDialog from '$lib/components/prompts/preview-dialog.svelte';
@@ -16,6 +15,7 @@ import { tagKeys } from '$lib/data/prompts';
 import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
 import { dashboard } from '$lib/state/dashboard.svelte';
 import { prompts } from '$lib/state/prompts.svelte';
+import type { PromptStatus } from '$lib/state/prompt-list.svelte';
 
 // One grid, shared with the row component so the header and the rows sit in
 // the same grid - the same contract the other tables use.
@@ -31,7 +31,23 @@ const COLUMNS = [
   { label: 'Actions', align: 'right' as const },
 ];
 
+const TABS = [
+  { id: 'all' as const, label: 'All' },
+  { id: 'versioned' as const, label: 'Versioned', color: '#10b981' },
+  { id: 'unversioned' as const, label: 'Unversioned', color: '#f59e0b' },
+];
+
 let expandedRow: string | null = $state(null);
+
+function setStatus(status: PromptStatus) {
+  expandedRow = null;
+  void prompts.list.filterByStatus(status);
+}
+
+$effect(() => {
+  prompts.list.pageIndex;
+  expandedRow = null;
+});
 
 let promptDialogOpen = $state(false);
 
@@ -57,9 +73,8 @@ let editingVersion: number | null = $state(null);
 // its own loading flag and hammer the endpoint on any error.
 const auto = new AutoRefresh();
 
-// Paused once the reader has paged past the head: refresh() re-reads the first
-// page only, so tailing would drop everything Load more appended.
-$effect(() => auto.schedule(!prompts.list.appended, () => prompts.list.refresh()));
+// Auto-refresh follows only the newest page, matching API Keys.
+$effect(() => auto.schedule(prompts.list.pageIndex === 0, () => prompts.list.refresh()));
 
 onMount(() => {
   prompts.ensureLoaded();
@@ -133,19 +148,6 @@ const subjectRow = $derived.by(() => {
 	{/snippet}
 </PageHeader>
 
-<StatGrid>
-	<StatCard
-		label="Prompts"
-		value={prompts.list.rows.length}
-		hint={prompts.list.hasMore ? 'first page' : undefined}
-	/>
-	<StatCard label="Versioned" value={versioned} accent="#10b981" />
-	<!-- A prompt with no active version cannot be resolved by a caller at all, so
-	     this is a count of things that are configured but not yet usable. -->
-	<StatCard label="Unversioned" value={unversioned} accent="#f59e0b" />
-	<StatCard label="Tag keys" value={distinctTags} />
-</StatGrid>
-
 <TableCard
 	cols={COLS}
 	columns={COLUMNS}
@@ -153,24 +155,29 @@ const subjectRow = $derived.by(() => {
 	error={prompts.list.error}
 	isEmpty={filtered.length === 0}
 	loadingLabel="Loading prompts…"
-	emptyTitle={prompts.list.rows.length === 0 ? 'No prompts yet' : 'No prompts match your search'}
-	emptyHint={prompts.list.rows.length === 0
+	emptyTitle={prompts.list.rows.length === 0 && prompts.list.pageIndex === 0 && prompts.list.status === 'all' ? 'No prompts yet' : 'No prompts match on this page'}
+	emptyHint={prompts.list.rows.length === 0 && prompts.list.pageIndex === 0 && prompts.list.status === 'all'
 		? 'Create a prompt, then add a version to give it text.'
 		: undefined}
 	onretry={() => prompts.list.load()}
-	showFooter={prompts.list.hasMore}
+	showFooter={prompts.list.pageIndex > 0 || prompts.list.hasMore}
 >
 	{#snippet toolbar()}
-		<span class="text-[12.5px] text-zinc-600">
-			{filtered.length} of {prompts.list.rows.length} prompts{prompts.list.hasMore ? ' loaded' : ''}
+		<FilterTabs tabs={TABS} bind:value={() => prompts.list.status, setStatus} />
+		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
+			<span class="font-medium text-zinc-100 tabular-nums">{filtered.length.toLocaleString()}</span>
+			of <span class="font-medium text-zinc-200 tabular-nums">{prompts.list.rows.length.toLocaleString()}</span> prompts on this page
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-emerald-400 tabular-nums">{versioned.toLocaleString()}</span> versioned
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-amber-400 tabular-nums">{unversioned.toLocaleString()}</span> unversioned
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-zinc-200 tabular-nums">{distinctTags.toLocaleString()}</span> tag keys
 		</span>
 
-		<span class="ml-auto flex items-center gap-[7px] text-[12.5px] text-zinc-600">
-			<span class="size-[5px] rounded-full bg-zinc-700"></span>
-			Callers resolve the active version unless they name one
-		</span>
+		<span class="ml-auto"></span>
 
-		<AutoRefreshToggle {auto} active={!prompts.list.appended} pausedLabel="paused past page 1" />
+		<AutoRefreshToggle {auto} active={prompts.list.pageIndex === 0} pausedLabel="paused past page 1" />
 
 		<ToolbarButton disabled={prompts.list.loading} onclick={() => prompts.refresh()}>
 			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
@@ -192,9 +199,17 @@ const subjectRow = $derived.by(() => {
 	{/each}
 
 	{#snippet footer()}
-		<ToolbarButton disabled={prompts.list.loadingMore} onclick={() => prompts.list.loadMore()}>
-			{prompts.list.loadingMore ? 'Loading…' : 'Load older prompts'}
-		</ToolbarButton>
+		<div class="flex items-center justify-center gap-3">
+			<ToolbarButton disabled={prompts.list.pageIndex === 0 || prompts.list.loading} onclick={() => prompts.list.previousPage()}>
+				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9.5 4L6 8l3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+				Newer
+			</ToolbarButton>
+			<span class="min-w-[64px] text-center text-[12.5px] text-zinc-500">Page {prompts.list.pageIndex + 1}</span>
+			<ToolbarButton disabled={!prompts.list.hasMore || prompts.list.loading} onclick={() => prompts.list.nextPage()}>
+				Older
+				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M6.5 4L10 8l-3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			</ToolbarButton>
+		</div>
 	{/snippet}
 </TableCard>
 

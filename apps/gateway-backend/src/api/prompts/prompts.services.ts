@@ -1,5 +1,5 @@
 import { diffFields, parseTags, probe, toPage } from '@repo/core';
-import { and, db, desc, eq, lt, sql } from '@repo/drizzle';
+import { and, db, desc, eq, isNotNull, isNull, lt, sql } from '@repo/drizzle';
 import { type PromptRow, type PromptVersionRow, prompts, promptVersions } from '@repo/drizzle/schemas';
 import { getAccountableUserId, getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
@@ -180,6 +180,8 @@ async function listPrompts(query: ListPromptsQuery): Promise<ListPromptsResponse
 
   const conditions = [
     eq(prompts.organization_id, caller.organization.id),
+    query.status === 'versioned' ? isNotNull(prompts.active_version) : undefined,
+    query.status === 'unversioned' ? isNull(prompts.active_version) : undefined,
     tagsToFilter ? sql`${prompts.tags} @> ${JSON.stringify(tagsToFilter)}::jsonb` : undefined,
     query.after_id !== undefined ? lt(prompts.id, query.after_id) : undefined,
   ];

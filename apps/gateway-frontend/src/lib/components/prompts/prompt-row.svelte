@@ -1,12 +1,13 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
+import { resolveActorNames } from '$lib/api/actors';
 import type { Prompt } from '$lib/api/types';
 import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
 import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
-import { fmtTs, formatDate, initialsOf, pairSummary } from '$lib/data/format';
+import { fmtTs, formatDate, pairSummary } from '$lib/data/format';
 import { prompts as store } from '$lib/state/prompts.svelte';
 
 let {
@@ -41,17 +42,39 @@ const versions = $derived(store.versionsFor(p.id));
 const created = $derived(fmtTs(p.created_at));
 const updated = $derived(fmtTs(p.updated_at));
 
+let creatorName: string | null = $state(null);
+
+$effect(() => {
+  const creatorId = p.creator_id;
+  creatorName = null;
+  if (!expanded || !creatorId) return;
+
+  let cancelled = false;
+  const creator = { actor_type: 'user', actor_id: creatorId };
+  resolveActorNames([creator])
+    .then((name) => {
+      if (!cancelled) creatorName = name(creator).trim() || null;
+    })
+    .catch(() => {
+      // Keep the creator ID visible if name resolution is unavailable.
+    });
+
+  return () => {
+    cancelled = true;
+  };
+});
+
 const detailItems: DetailItem[] = $derived([
-  { label: 'Prompt ID', value: p.id },
-  { label: 'Created', value: created.full },
-  { label: 'Last updated', value: updated.full },
-  { label: 'Description', value: p.description ?? '—', mono: false },
-  { label: 'Tags', value: pairSummary(p.tags), title: pairSummary(p.tags) },
   {
-    label: 'Active version',
-    value: p.active_version == null ? 'none' : `v${p.active_version}`,
-    mono: false,
+    label: 'Prompt ID',
+    value: p.id,
+    title: p.id,
+    copyable: true,
+    auditHref: `/audit?target_type=prompt&target_id=${encodeURIComponent(p.id)}`,
   },
+  { label: 'Created', value: created.full, title: created.full, mono: false },
+  { label: 'Created by', value: creatorName ?? p.creator_id ?? '—', title: p.creator_id ?? undefined, mono: false },
+  { label: 'Last updated', value: updated.full, title: updated.full, mono: false },
 ]);
 
 // Fetched when the row opens rather than with the page: a page of prompts
@@ -144,7 +167,9 @@ async function activate(version: number) {
 		<!-- A prompt with no active version cannot be resolved by a caller at all,
 		     which is worth saying outright rather than leaving the cell blank. -->
 		{#if p.active_version == null}
-			<span class="text-[12.5px] text-amber-400/90">Unversioned</span>
+			<span class="rounded-[5px] bg-amber-500/12 px-1.5 py-px text-center text-[11.5px] font-medium text-amber-400">
+				Unversioned
+			</span>
 		{:else}
 			<span class="rounded-[5px] bg-emerald-500/12 px-1.5 py-px text-center text-[11.5px] font-medium text-emerald-500">
 				v{p.active_version}
@@ -191,7 +216,7 @@ async function activate(version: number) {
 	{/snippet}
 
 	{#snippet details()}
-		<DetailGrid items={detailItems} cols={3} />
+		<DetailGrid items={detailItems} cols={4} />
 
 		<Panel title="Versions">
 			{#snippet actions()}

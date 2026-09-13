@@ -41,6 +41,7 @@ const getPrompt = createSchema({
 
 const listPrompts = createSchema({
   query: z.object({
+    status: z.enum(['all', 'versioned', 'unversioned']).optional(),
     tags: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(250).optional().default(25),
     after_id: z.uuidv7().optional(),
