@@ -41,18 +41,18 @@ const itemClass = (active: boolean) =>
 
 	<nav class="flex flex-1 flex-col gap-px overflow-auto p-3">
 		<a href="/overview" class={itemClass(isActive('/overview'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="9" y="9" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /></svg>
+			<svg class="text-sky-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /><rect x="9" y="9" width="5.5" height="5.5" rx="1.3" stroke="currentColor" stroke-width="1.4" /></svg>
 			<span>Overview</span>
 		</a>
 
 		{@render section('Build')}
 
 		<a href="/playground" class={itemClass(isActive('/playground'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M6.2 5.2L9.4 8l-3.2 2.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /></svg>
+			<svg class="text-violet-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M6.2 5.2L9.4 8l-3.2 2.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /></svg>
 			<span>Playground</span>
 		</a>
 		<a href="/prompts" class={itemClass(isActive('/prompts'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="1.8" width="11.6" height="12.4" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.9 5.4h6.2M4.9 8h6.2M4.9 10.6h3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<svg class="text-amber-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="1.8" width="11.6" height="12.4" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.9 5.4h6.2M4.9 8h6.2M4.9 10.6h3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
 			<span>Prompts</span>
 			{#if prompts.list.rows.length > 0}
 				<span class="ml-auto rounded-[5px] bg-emerald-500/12 px-1.5 py-px text-[10.5px] font-medium text-emerald-500">
@@ -61,33 +61,33 @@ const itemClass = (active: boolean) =>
 			{/if}
 		</a>
 		<a href="/models" class={itemClass(isActive('/models'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.8l6 3-6 3-6-3 6-3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /><path d="M2 8l6 3 6-3M2 11.2l6 3 6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			<svg class="text-indigo-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.8l6 3-6 3-6-3 6-3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /><path d="M2 8l6 3 6-3M2 11.2l6 3 6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
 			<span>Models</span>
 		</a>
 
 		{@render section('Monitor')}
 
 		<a href="/logs" class={itemClass(isActive('/logs'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.8 8h2.6l1.5-3.6 2.3 7.2 1.6-4.3 1.1 2.1h3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			<svg class="text-teal-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.8 8h2.6l1.5-3.6 2.3 7.2 1.6-4.3 1.1 2.1h3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
 			<span>Logs</span>
 		</a>
 		<a href="/traces" class={itemClass(isActive('/traces'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="3" cy="3.2" r="1.5" stroke="currentColor" stroke-width="1.3" /><circle cx="12.8" cy="8" r="1.5" stroke="currentColor" stroke-width="1.3" /><circle cx="3" cy="12.8" r="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M4.5 3.2h2A2.5 2.5 0 019 5.7v.8M4.5 12.8h2A2.5 2.5 0 009 10.3v-.8M9 8h2.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
+			<svg class="text-fuchsia-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="3" cy="3.2" r="1.5" stroke="currentColor" stroke-width="1.3" /><circle cx="12.8" cy="8" r="1.5" stroke="currentColor" stroke-width="1.3" /><circle cx="3" cy="12.8" r="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M4.5 3.2h2A2.5 2.5 0 019 5.7v.8M4.5 12.8h2A2.5 2.5 0 009 10.3v-.8M9 8h2.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
 			<span>Traces</span>
 		</a>
 		<a href="/analytics" class={itemClass(isActive('/analytics'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 14V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><rect x="4" y="8" width="2.6" height="4.5" rx=".8" fill="currentColor" /><rect x="7.7" y="5" width="2.6" height="7.5" rx=".8" fill="currentColor" /><rect x="11.4" y="2.5" width="2.6" height="10" rx=".8" fill="currentColor" /></svg>
+			<svg class="text-blue-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 14V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><rect x="4" y="8" width="2.6" height="4.5" rx=".8" fill="currentColor" /><rect x="7.7" y="5" width="2.6" height="7.5" rx=".8" fill="currentColor" /><rect x="11.4" y="2.5" width="2.6" height="10" rx=".8" fill="currentColor" /></svg>
 			<span>Analytics</span>
 		</a>
 		<a href="/audit" class={itemClass(isActive('/audit'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.3 6h7.4M4.3 8.4h7.4M4.3 10.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<svg class="text-orange-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M4.3 6h7.4M4.3 8.4h7.4M4.3 10.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
 			<span>Audit Log</span>
 		</a>
 
 		{@render section('Manage')}
 
 		<a href="/keys" class={itemClass(isActive('/keys'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="5" cy="8" r="3" stroke="#10b981" stroke-width="1.4" /><path d="M7.8 8H14.5M11.5 8v2.4M13.4 8v1.8" stroke="#10b981" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<svg class="text-emerald-500" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="5" cy="8" r="3" stroke="currentColor" stroke-width="1.4" /><path d="M7.8 8H14.5M11.5 8v2.4M13.4 8v1.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
 			<span>API Keys</span>
 			{#if dashboard.keys.length > 0}
 				<span class="ml-auto rounded-[5px] bg-emerald-500/12 px-1.5 py-px text-[10.5px] font-medium text-emerald-500">
@@ -95,12 +95,8 @@ const itemClass = (active: boolean) =>
 				</span>
 			{/if}
 		</a>
-		<button type="button" class={itemClass(false)}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.4" /><path d="M8 8L11 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-			<span>Rate Limits</span>
-		</button>
 		<a href="/webhooks" class={itemClass(isActive('/webhooks'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="3.7" r="2.2" stroke="currentColor" stroke-width="1.4" /><circle cx="3.6" cy="11.8" r="2.2" stroke="currentColor" stroke-width="1.4" /><circle cx="12.4" cy="11.8" r="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M6.9 5.6L4.7 9.9M9.1 5.6l2.2 4.3M5.8 11.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+			<svg class="text-rose-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="3.7" r="2.2" stroke="currentColor" stroke-width="1.4" /><circle cx="3.6" cy="11.8" r="2.2" stroke="currentColor" stroke-width="1.4" /><circle cx="12.4" cy="11.8" r="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M6.9 5.6L4.7 9.9M9.1 5.6l2.2 4.3M5.8 11.8h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
 			<span>Webhooks</span>
 			<!-- Pending rather than a total, and only when there are any: a queue
 			     that is draining normally sits at zero, so a figure here means work
@@ -113,7 +109,7 @@ const itemClass = (active: boolean) =>
 			{/if}
 		</a>
 		<a href="/settings" class={itemClass(isActive('/settings'))}>
-			<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.4" stroke="currentColor" stroke-width="1.4" /><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
+			<svg class="text-slate-400" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.4" stroke="currentColor" stroke-width="1.4" /><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
 			<span>Settings</span>
 		</a>
 	</nav>
