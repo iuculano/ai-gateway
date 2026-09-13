@@ -1,11 +1,18 @@
 <script lang="ts">
 import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
+import { outcomes, outcomeBuckets } from '$lib/data/chart-series';
+import SpendChart from '$lib/components/analytics/spend-chart.svelte';
+import ModelComparison from '$lib/components/analytics/model-comparison.svelte';
+import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
+import FilterTabs from '$lib/components/app/filter-tabs.svelte';
+import { rankCallers, type CallerMetric } from '$lib/data/caller-ranking';
 import ChartCard from '$lib/components/app/chart-card.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
 import StatGrid from '$lib/components/app/stat-grid.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import { fmt, fmtCostTotal } from '$lib/data/format';
+import { periodComparison } from '$lib/data/analytics-comparison';
 
 // Chart ink. Chrome comes from the app's own tokens so the cards match the rest
 // of the dashboard; only the DATA colours come from the validated palette.
@@ -50,56 +57,127 @@ let rangeId = $state<(typeof RANGES)[number]['id']>(DEFAULT_RANGE.id);
 let rangeOpen = $state(false);
 const range = $derived(RANGES.find((r) => r.id === rangeId) ?? DEFAULT_RANGE);
 
+let providerFilter = $state('');
+let modelFilter = $state('');
+let filterPoints = $state<SeriesPoint[]>([]);
+let filtersLoading = $state(true);
+let filtersError = $state(false);
+let filterRequest = 0;
+const providerOptions = $derived([...new Set(filterPoints.flatMap((point) => point.provider ? [point.provider] : []))].sort());
+const modelOptions = $derived([...new Set(filterPoints
+  .filter((point) => !providerFilter || point.provider === providerFilter)
+  .flatMap((point) => point.model ? [point.model] : []))].sort());
+
+function setProvider(value: string) {
+  providerFilter = value;
+  modelFilter = '';
+}
+
+/** Keep options independent of the selected filters, including prior-period activity. */
+async function loadFilterOptions() {
+  const request = ++filterRequest;
+  filtersLoading = true;
+  filtersError = false;
+  const end = Date.now();
+  const days = range.days;
+  try {
+    const result = await fetchSeries({
+      start_date: new Date(end - 2 * days * 86_400_000).toISOString(),
+      end_date: new Date(end).toISOString(),
+      interval: 'none',
+      group_by: ['provider', 'model'],
+    });
+    if (request === filterRequest) filterPoints = result.points;
+  } catch {
+    if (request === filterRequest) filtersError = true;
+  } finally {
+    if (request === filterRequest) filtersLoading = false;
+  }
+}
+
+$effect(() => {
+  void range.id;
+  void loadFilterOptions();
+});
+
 let loading = $state(true);
 let loadError = $state<string | null>(null);
 
 let totals = $state<SeriesPoint | null>(null);
 let byStatus: SeriesPoint[] = $state([]);
 let timeline: SeriesPoint[] = $state([]);
+let outcomePoints = $state<SeriesPoint[]>([]);
+const outcomeCounts = $derived(outcomeBuckets(timeline, outcomePoints));
 let providerPoints: SeriesPoint[] = $state([]);
-let topModels: SeriesPoint[] = $state([]);
-let topCallers: SeriesPoint[] = $state([]);
+let modelPoints: SeriesPoint[] = $state([]);
+let modelFailures: SeriesPoint[] = $state([]);
+let callerPoints: SeriesPoint[] = $state([]);
+let callerMetric = $state<CallerMetric>('requests');
+const callerViews = [{ id: 'requests', label: 'Requests' }, { id: 'cost_total', label: 'Spend' }] satisfies { id: CallerMetric; label: string }[];
+const topCallers = $derived(rankCallers(callerPoints, callerMetric));
+let previousTotals = $state<SeriesPoint | null>(null);
+let previousStatuses = $state<SeriesPoint[]>([]);
+let comparisonError = $state(false);
+let loadRequest = 0;
 
-/**
- * Loads every panel for the current range.
- *
- * Six requests rather than one composite endpoint, issued together. Each is a
- * different pivot of the same rollup and costs about 10 ms, so the round trip
- * dominates - and one panel failing to shape its query does not take the page
- * down with it.
- */
+/** Load the current range and an adjacent, equally long comparison window. */
 async function load() {
+  const request = ++loadRequest;
   loading = true;
   loadError = null;
+  comparisonError = false;
+  previousTotals = null;
+  previousStatuses = [];
 
-  const start = new Date(Date.now() - range.days * 86_400_000).toISOString();
-  const common = { start_date: start };
+  const end = Date.now();
+  const duration = range.days * 86_400_000;
+  const start = new Date(end - duration).toISOString();
+  const filters = { provider: providerFilter || undefined, model: modelFilter || undefined };
+  const common = { ...filters, start_date: start, end_date: new Date(end).toISOString() };
+  const previous = { ...filters, start_date: new Date(end - 2 * duration).toISOString(), end_date: start };
 
   try {
-    const [totalsResponse, statusResponse, series, providers, models, callers] = await Promise.all([
+    const [totalsResponse, statusResponse, series, providers, models, callers, comparison, failuresByModel, statusTimeline] = await Promise.all([
       fetchSeries({ ...common, interval: 'none' }),
       fetchSeries({ ...common, interval: 'none', group_by: ['status'] }),
       fetchSeries({ ...common, interval: range.interval }),
       fetchSeries({ ...common, interval: range.interval, group_by: ['provider'] }),
-      fetchSeries({ ...common, interval: 'none', group_by: ['model'], limit: 6 }),
-      fetchSeries({ ...common, interval: 'none', group_by: ['actor'], limit: 6 }),
+      fetchSeries({ ...common, interval: 'none', group_by: ['provider', 'model'] }),
+      fetchSeries({ ...common, interval: 'none', group_by: ['actor'] }),
+      // A failed comparison must not hide the current charts.
+      Promise.allSettled([
+        fetchSeries({ ...previous, interval: 'none' }),
+        fetchSeries({ ...previous, interval: 'none', group_by: ['status'] }),
+      ]),
+      fetchSeries({ ...common, interval: 'none', group_by: ['provider', 'model'], status: 'failed' }),
+      fetchSeries({ ...common, interval: range.interval, group_by: ['status'] }),
     ]);
-
+    if (request !== loadRequest) return;
     totals = totalsResponse.points[0] ?? null;
     byStatus = statusResponse.points;
     timeline = series.points;
+    outcomePoints = statusTimeline.points;
     providerPoints = providers.points;
-    topModels = models.points;
-    topCallers = callers.points;
+    modelPoints = models.points;
+    modelFailures = failuresByModel.points;
+    callerPoints = callers.points;
+    const [previousTotalResult, previousStatusResult] = comparison;
+    if (previousTotalResult.status === 'fulfilled' && previousStatusResult.status === 'fulfilled') {
+      previousTotals = previousTotalResult.value.points[0] ?? null;
+      previousStatuses = previousStatusResult.value.points;
+    } else {
+      comparisonError = true;
+    }
   } catch (error) {
+    if (request !== loadRequest) return;
     loadError = error instanceof Error ? error.message : 'Failed to load analytics.';
   } finally {
-    loading = false;
+    if (request === loadRequest) loading = false;
   }
 }
 
 $effect(() => {
-  // Referenced so the effect re-runs when the range changes.
+  // load() also tracks the provider and model selections.
   void range.id;
   void load();
 });
@@ -121,6 +199,24 @@ const inFlight = $derived(statusCount('incomplete'));
  */
 const errorRate = $derived(requestTotal > 0 ? (failed / requestTotal) * 100 : 0);
 const inFlightRate = $derived(requestTotal > 0 ? (inFlight / requestTotal) * 100 : 0);
+
+const comparisons = $derived.by(() => {
+  if (loading || loadError) return undefined;
+  const label = `the previous ${range.days === 1 ? '24 hours' : `${range.days} days`}`;
+  if (comparisonError) {
+    const unavailable = { text: 'Unavailable', color: '#a1a1aa', title: `Could not load ${label}.` };
+    return { requests: unavailable, spend: unavailable, latency: unavailable, errors: unavailable };
+  }
+  const previousRequests = previousTotals?.requests ?? null;
+  const previousFailed = previousStatuses.find((point) => point.status === 'failed')?.requests ?? 0;
+  const previousErrorRate = previousRequests ? (previousFailed / previousRequests) * 100 : null;
+  return {
+    requests: periodComparison(requestTotal, previousRequests, { label }),
+    spend: periodComparison(totals?.cost_total ?? 0, previousTotals?.cost_total ?? null, { label, lowerIsBetter: true }),
+    latency: periodComparison(totals?.average_latency_ms ?? null, previousTotals?.average_latency_ms ?? null, { label, lowerIsBetter: true }),
+    errors: periodComparison(requestTotal > 0 ? errorRate : null, previousErrorRate, { label, lowerIsBetter: true, percentagePoints: true }),
+  };
+});
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -162,12 +258,12 @@ const areaInnerH = AREA_H - AREA_PAD.top - AREA_PAD.bottom;
 const areaX = (i: number) => AREA_PAD.left + (i / Math.max(1, timeline.length - 1)) * areaInnerW;
 const areaY = (v: number) => AREA_PAD.top + areaInnerH - (v / requestsMax) * areaInnerH;
 
-const areaLine = $derived(timeline.map((d, i) => `${i === 0 ? 'M' : 'L'}${areaX(i)},${areaY(d.requests)}`).join(' '));
-const areaFill = $derived(
-  timeline.length === 0
-    ? ''
-    : `${areaLine} L${areaX(timeline.length - 1)},${AREA_PAD.top + areaInnerH} L${areaX(0)},${AREA_PAD.top + areaInnerH} Z`,
-);
+const outcomeAreas = $derived(outcomes.map((outcome, index) => {
+  const upper = timeline.map((_, i) => `${i === 0 ? 'M' : 'L'}${areaX(i)},${areaY(outcomeCounts[i]!.slice(0, index + 1).reduce((a, b) => a + b, 0))}`);
+  const lower = timeline.map((_, i) => `L${areaX(i)},${areaY(outcomeCounts[i]!.slice(0, index).reduce((a, b) => a + b, 0))}`).reverse();
+  return { ...outcome, path: [...upper, ...lower, 'Z'].join(' ') };
+}));
+$effect(() => { void timeline; areaHover = null; });
 
 function onAreaMove(event: MouseEvent) {
   if (timeline.length === 0) return;
@@ -184,6 +280,8 @@ const SEGMENT_GAP = 2;
 
 let barWidth = $state(360);
 let barHover = $state<number | null>(null);
+let providerView = $state<'volume' | 'share'>('volume');
+const providerViews = [{ id: 'volume', label: 'Volume' }, { id: 'share', label: 'Share' }] satisfies { id: typeof providerView; label: string }[];
 
 /** Buckets on the x axis, in time order. */
 const providerBuckets = $derived([...new Set(providerPoints.map((p) => p.bucket ?? ''))].sort());
@@ -219,7 +317,7 @@ const providerTotals = $derived(
     providerSeries.reduce((sum, series) => sum + (providerLookup.get(`${bucket}|${series.id}`) ?? 0), 0),
   ),
 );
-const providerMax = $derived(niceMax(Math.max(1, ...providerTotals)));
+const providerMax = $derived(providerView === 'share' ? 100 : niceMax(Math.max(1, ...providerTotals)));
 const barInnerW = $derived(Math.max(1, barWidth - BAR_PAD.left - BAR_PAD.right));
 const barInnerH = BAR_H - BAR_PAD.top - BAR_PAD.bottom;
 const barSlot = $derived(barInnerW / Math.max(1, providerBuckets.length));
@@ -227,14 +325,15 @@ const barThickness = $derived(Math.min(28, barSlot * 0.62));
 
 /** Segment rectangles per bucket, stacked from the baseline up. */
 const stacks = $derived(
-  providerBuckets.map((bucket) => {
+  providerBuckets.map((bucket, bucketIndex) => {
     let cursor = 0;
     return providerSeries.map((series) => {
       const value = providerLookup.get(`${bucket}|${series.id}`) ?? 0;
-      const height = (value / providerMax) * barInnerH;
+      const share = providerTotals[bucketIndex]! > 0 ? value / providerTotals[bucketIndex]! * 100 : 0;
+      const height = ((providerView === 'share' ? share : value) / providerMax) * barInnerH;
       const y = BAR_PAD.top + barInnerH - cursor - height;
       cursor += height;
-      return { series, value, y, height: Math.max(0, height - SEGMENT_GAP) };
+      return { series, value, share, y, height: Math.max(0, height - (providerView === 'share' ? 0 : SEGMENT_GAP)) };
     });
   }),
 );
@@ -250,18 +349,33 @@ const LAT_PAD = { top: 12, right: 12, bottom: 24, left: 46 };
 
 let latWidth = $state(360);
 let latHover = $state<number | null>(null);
+let latencyView = $state<'overall' | 'providers'>('overall');
+const latencyViews = [{ id: 'overall', label: 'Overall' }, { id: 'providers', label: 'By provider' }] satisfies { id: typeof latencyView; label: string }[];
 
-const latPoints = $derived(timeline.filter((d) => d.average_latency_ms !== null));
-const latMax = $derived(niceMax(Math.max(1, ...latPoints.map((d) => d.average_latency_ms ?? 0))));
+const latPoints = $derived(timeline);
+const latencySeries = $derived(latencyView === 'overall'
+  ? [{ id: 'overall', label: 'Overall', color: '#3987e5', values: timeline.map(point => point.average_latency_ms) }]
+  : providerSeries.map(series => ({ ...series, values: timeline.map(point => providerPoints.find(p => p.bucket === point.bucket && (p.provider ?? 'unknown') === series.id)?.average_latency_ms ?? null) })));
+const hasLatency = $derived(latencySeries.some(series => series.values.some(value => value !== null)));
+const latMax = $derived(niceMax(Math.max(1, ...latencySeries.flatMap(series => series.values.map(value => value ?? 0)))));
 const latInnerW = $derived(Math.max(1, latWidth - LAT_PAD.left - LAT_PAD.right));
 const latInnerH = LAT_H - LAT_PAD.top - LAT_PAD.bottom;
 
 const latX = (i: number) => LAT_PAD.left + (i / Math.max(1, latPoints.length - 1)) * latInnerW;
 const latY = (v: number) => LAT_PAD.top + latInnerH - (v / latMax) * latInnerH;
 
-const latPath = $derived(
-  latPoints.map((d, i) => `${i === 0 ? 'M' : 'L'}${latX(i)},${latY(d.average_latency_ms ?? 0)}`).join(' '),
-);
+const latencyPaths = $derived(latencySeries.map(series => {
+  let connected = false;
+  const path = series.values.map((value, i) => {
+    if (value === null) { connected = false; return ''; }
+    const command = connected ? 'L' : 'M';
+    connected = true;
+    return `${command}${latX(i)},${latY(value)}`;
+  }).join(' ');
+  return { ...series, path };
+}));
+$effect(() => { void timeline; void latencyView; latHover = null; });
+$effect(() => { void providerPoints; void providerView; barHover = null; });
 
 function onLatMove(event: MouseEvent) {
   if (latPoints.length === 0) return;
@@ -271,12 +385,15 @@ function onLatMove(event: MouseEvent) {
 }
 
 // ---- ranked lists (single hue - length already encodes the value) -------------
-const modelMax = $derived(Math.max(1, ...topModels.map((m) => m.requests)));
-const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
+
 </script>
 
 <PageHeader title="Analytics" description="Traffic, spend and latency across every model routed through Relay.">
 	{#snippet actions()}
+		<FilterPicker id="analytics-provider" label="Provider" options={providerOptions} bind:value={() => providerFilter, setProvider} class="w-40" />
+		<FilterPicker id="analytics-model" label="Model" options={modelOptions} bind:value={modelFilter} class="w-52" />
+		{#if filtersLoading}<span class="text-xs text-zinc-500" role="status">Loading filters…</span>{/if}
+		{#if filtersError}<ToolbarButton onclick={loadFilterOptions}>Retry filters</ToolbarButton>{/if}
 		<div class="relative">
 			<ToolbarButton onclick={() => (rangeOpen = !rangeOpen)}>
 				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M2 6h12M5.5 1.5v3M10.5 1.5v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
@@ -318,25 +435,29 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 {/if}
 
 <StatGrid>
-	<StatCard label="Requests · {range.label.replace('Last ', '')}" value={loading ? '—' : fmt(requestTotal)} />
-	<StatCard label="Spend" value={loading ? '—' : fmtCostTotal(totals?.cost_total ?? 0)} />
+	<StatCard label="Requests · {range.label.replace('Last ', '')}" value={loading ? '—' : fmt(requestTotal)} comparison={comparisons?.requests} />
+	<StatCard label="Spend" value={loading ? '—' : fmtCostTotal(totals?.cost_total ?? 0)} comparison={comparisons?.spend} />
 	<StatCard
 		label="Average latency"
+		comparison={comparisons?.latency}
 		value={loading || !totals?.average_latency_ms ? '—' : `${(totals.average_latency_ms / 1000).toFixed(2)}s`}
 	/>
 	<StatCard
 		label="Error rate"
+		comparison={comparisons?.errors}
 		value={loading ? '—' : `${errorRate.toFixed(2)}%`}
 		hint={loading ? undefined : `${inFlightRate.toFixed(2)}% in flight`}
 		accent={errorRate > 5 ? '#ef4444' : '#0ca30c'}
 	/>
 </StatGrid>
 
-<!-- requests over time -->
-<div class="mb-3.5">
-	<ChartCard title="Requests over time" hint="Totals across all providers. Hover for a breakdown.">
+<!-- Traffic and spend share a row for direct comparison. -->
+<div class="mb-3.5 grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2 [&>*]:min-w-0">
+	<ChartCard title="Requests over time" hint="Success · incomplete · failed">
 		<div class="relative" bind:clientWidth={areaWidth}>
-			{#if !loading && timeline.length === 0}
+			{#if loading}
+                <div class="flex h-[210px] items-center justify-center text-[12.5px] text-zinc-600">Loading requests…</div>
+            {:else if timeline.length === 0}
 				<div class="flex h-[210px] items-center justify-center text-[12.5px] text-zinc-600">
 					No requests in this window.
 				</div>
@@ -349,12 +470,6 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 					onmousemove={onAreaMove}
 					onmouseleave={() => (areaHover = null)}
 				>
-					<defs>
-						<linearGradient id="requests-fill" x1="0" y1="0" x2="0" y2="1">
-							<stop offset="0%" stop-color={ACCENT} stop-opacity="0.22" />
-							<stop offset="100%" stop-color={ACCENT} stop-opacity="0" />
-						</linearGradient>
-					</defs>
 
 					{#each [0, 0.25, 0.5, 0.75, 1] as tick (tick)}
 						{@const y = AREA_PAD.top + areaInnerH * tick}
@@ -364,11 +479,17 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 						</text>
 					{/each}
 
-					<path d={areaFill} fill="url(#requests-fill)" />
-					<path d={areaLine} fill="none" stroke={ACCENT} stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+                        {#each outcomeAreas as series, index (series.id)}
+                            {#if timeline.length === 1}
+                                {@const upper = outcomeCounts[0]!.slice(0, index + 1).reduce((a, b) => a + b, 0)}
+                                <rect x={AREA_PAD.left} y={areaY(upper)} width={Math.min(32, areaInnerW)} height={outcomeCounts[0]![index]! / requestsMax * areaInnerH} fill={series.color} />
+                            {:else}
+                                <path d={series.path} fill={series.color} fill-opacity="0.65" stroke={series.color} stroke-width="1" />
+                            {/if}
+                        {/each}
 
 					{#each timeline as point, i (point.bucket)}
-						{#if showTick(i, Math.max(1, Math.ceil(timeline.length / 8)), timeline.length)}
+						{#if showTick(i, Math.max(1, Math.ceil(timeline.length / Math.max(2, Math.floor(areaInnerW / 75)))), timeline.length)}
 							<text x={areaX(i)} y={AREA_H - 6} text-anchor="middle" font-size="10" fill={AXIS_INK}>
 								{bucketLabel(point.bucket)}
 							</text>
@@ -385,8 +506,6 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 							stroke="#3f3f46"
 							stroke-width="1"
 						/>
-						<!-- 2px surface ring so the marker stays separable from the line under it -->
-						<circle cx={areaX(areaHover)} cy={areaY(point.requests)} r="5" fill={ACCENT} stroke="#0a0a0c" stroke-width="2" />
 					{/if}
 				</svg>
 
@@ -402,7 +521,11 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 							<span class="tabular-nums">{point.requests.toLocaleString()}</span>
 							<span class="text-zinc-600">requests</span>
 						</div>
-						<div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">
+
+                            {#each outcomes as outcome, index (outcome.id)}
+                                <div class="mt-1 flex justify-between gap-4 text-[11.5px]" style:color={outcome.color}><span>{outcome.label}</span><span class="tabular-nums">{outcomeCounts[areaHover]?.[index]?.toLocaleString() ?? '0'}</span></div>
+                            {/each}
+                        <div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">
 							{fmtCostTotal(point.cost_total)}
 							{#if point.average_latency_ms !== null}
 								· {point.average_latency_ms}ms avg
@@ -413,12 +536,13 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 			{/if}
 		</div>
 	</ChartCard>
+	<SpendChart interval={range.interval} points={timeline} {loading} rangeLabel={range.label} {bucketLabel} />
 </div>
 
 <div class="mb-3.5 grid grid-cols-2 items-start gap-3.5">
 	<!-- provider split -->
-	<ChartCard title="Requests by provider" hint="Stacked per bucket.">
-		{#snippet actions()}
+	<ChartCard title="Requests by provider" hint={providerView === 'share' ? 'Percentage of requests per bucket.' : 'Stacked per bucket.'}>
+        {#snippet actions()}<FilterTabs tabs={providerViews} bind:value={providerView} />{/snippet}
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
 				{#each providerSeries as series (series.id)}
 					<span class="flex items-center gap-1.5 text-[11.5px] text-zinc-500">
@@ -427,7 +551,6 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 					</span>
 				{/each}
 			</div>
-		{/snippet}
 
 		<div class="relative" bind:clientWidth={barWidth}>
 			{#if !loading && providerBuckets.length === 0}
@@ -438,7 +561,7 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 						{@const y = BAR_PAD.top + barInnerH * tick}
 						<line x1={BAR_PAD.left} y1={y} x2={barWidth - BAR_PAD.right} y2={y} stroke={GRID} stroke-width="1" />
 						<text x={BAR_PAD.left - 8} y={y + 3.5} text-anchor="end" font-size="10" fill={AXIS_INK} class="tabular-nums">
-							{fmt(Math.round(providerMax * (1 - tick)))}
+							{providerView === 'share' ? `${Math.round(providerMax * (1 - tick))}%` : fmt(Math.round(providerMax * (1 - tick)))}
 						</text>
 					{/each}
 
@@ -461,7 +584,8 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 								y={segment.y}
 								width={barThickness}
 								height={segment.height}
-								rx="2"
+								rx={providerView === 'share' ? 0 : 2}
+                                pointer-events="none"
 								fill={segment.series.color}
 								opacity={barHover === null || barHover === bucketIndex ? 1 : 0.35}
 							/>
@@ -485,7 +609,7 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 							<div class="flex items-center gap-2 text-[11.5px] whitespace-nowrap">
 								<span class="size-[7px] flex-none rounded-full" style:background={segment.series.color}></span>
 								<span class="flex-1 text-zinc-500">{segment.series.label}</span>
-								<span class="text-zinc-200 tabular-nums">{segment.value.toLocaleString()}</span>
+								<span class="text-zinc-200 tabular-nums">{segment.value.toLocaleString()} <span class="text-zinc-500">· {segment.share.toFixed(1)}%</span></span>
 							</div>
 						{/each}
 					</div>
@@ -495,9 +619,17 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 	</ChartCard>
 
 	<!-- average latency -->
-	<ChartCard title="Average latency" hint="Milliseconds per bucket, reconstructed from stored sums.">
+	<ChartCard title="Average latency" hint="Average response time in milliseconds.">
+        {#snippet actions()}<FilterTabs tabs={latencyViews} bind:value={latencyView} />{/snippet}
+        {#if latencyView === 'providers'}
+            <div class="flex flex-wrap gap-x-3 gap-y-1.5">
+                {#each latencySeries as series (series.id)}<span class="flex items-center gap-1.5 text-[11.5px] text-zinc-400"><span class="size-[7px] rounded-full" style:background={series.color}></span>{series.label}</span>{/each}
+            </div>
+        {/if}
 		<div class="relative" bind:clientWidth={latWidth}>
-			{#if !loading && latPoints.length === 0}
+			{#if loading}
+                <div class="flex h-[200px] items-center justify-center text-[12.5px] text-zinc-600">Loading latency…</div>
+            {:else if !hasLatency}
 				<div class="flex h-[200px] items-center justify-center text-[12.5px] text-zinc-600">No latency recorded.</div>
 			{:else}
 				<svg
@@ -516,7 +648,12 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 						</text>
 					{/each}
 
-					<path d={latPath} fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+					{#each latencyPaths as series (series.id)}
+                        <path d={series.path} fill="none" stroke={series.color} stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+                        {#each series.values as value, i}
+                            {#if value !== null}<circle cx={latX(i)} cy={latY(value)} r={latHover === i ? 4 : 2} fill={series.color} />{/if}
+                        {/each}
+                    {/each}
 
 					{#each latPoints as point, i (point.bucket)}
 						{#if showTick(i, Math.max(1, Math.ceil(latPoints.length / 5)), latPoints.length)}
@@ -526,17 +663,6 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 						{/if}
 					{/each}
 
-					{#if latHover !== null && latPoints[latHover]}
-						{@const point = latPoints[latHover]!}
-						<circle
-							cx={latX(latHover)}
-							cy={latY(point.average_latency_ms ?? 0)}
-							r="5"
-							fill="#3987e5"
-							stroke="#0a0a0c"
-							stroke-width="2"
-						/>
-					{/if}
 				</svg>
 
 				{#if latHover !== null && latPoints[latHover]}
@@ -546,12 +672,12 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 						style:left="{Math.min(Math.max(latX(latHover), 80), latWidth - 80)}px"
 					>
 						<div class="mb-1 text-[10.5px] text-zinc-500">{bucketLabel(point.bucket)}</div>
-						<div class="text-[12.5px] whitespace-nowrap text-zinc-200 tabular-nums">
-							{point.average_latency_ms}ms average
-						</div>
-						<div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">
-							{point.minimum_latency_ms}–{point.maximum_latency_ms}ms range
-						</div>
+                        {#each latencySeries as series (series.id)}
+                            <div class="flex justify-between gap-4 text-[12px] whitespace-nowrap" style:color={series.color}><span>{series.label}</span><span class="tabular-nums">{series.values[latHover] == null ? '—' : `${series.values[latHover]!.toLocaleString('en-US', { maximumFractionDigits: 1 })}ms`}</span></div>
+                        {/each}
+                        {#if latencyView === 'overall' && point.minimum_latency_ms !== null && point.maximum_latency_ms !== null}
+                            <div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">{point.minimum_latency_ms}–{point.maximum_latency_ms}ms range</div>
+                        {/if}
 					</div>
 				{/if}
 			{/if}
@@ -559,38 +685,18 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 	</ChartCard>
 </div>
 
-<div class="grid grid-cols-2 items-start gap-3.5">
-	<!-- top models -->
-	<ChartCard title="Top models" hint="By request volume. Bar length is the value — one hue throughout.">
-		<div class="flex flex-col gap-2.5">
-			{#each topModels as model (model.model)}
-				<div class="grid grid-cols-[minmax(110px,1.1fr)_minmax(0,2fr)_70px_62px] items-center gap-3">
-					<code class="overflow-hidden font-mono text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-300">
-						{model.model}
-					</code>
-					<div class="h-[18px] w-full">
-						<!-- 4px rounded data-end, anchored flat to the baseline at the left -->
-						<div
-							class="h-full rounded-r-[4px]"
-							style:width="{Math.max(2, (model.requests / modelMax) * 100)}%"
-							style:background={ACCENT}
-							style:opacity={0.35 + 0.65 * (model.requests / modelMax)}
-						></div>
-					</div>
-					<span class="text-right text-[12.5px] text-zinc-300 tabular-nums">{fmt(model.requests)}</span>
-					<span class="text-right text-[12.5px] text-zinc-600 tabular-nums">{fmtCostTotal(model.cost_total)}</span>
-				</div>
-			{:else}
-				<div class="py-8 text-center text-[12.5px] text-zinc-600">No requests in this window.</div>
-			{/each}
-		</div>
-	</ChartCard>
+<div class="grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2 [&>*]:min-w-0">
+	<ModelComparison points={modelPoints} failures={modelFailures} {loading} />
 
 	<!-- top callers -->
-	<ChartCard title="Top callers" hint="By request volume, attributed to the authenticated key or user.">
+	<ChartCard title="Top callers" hint={callerMetric === 'requests' ? 'By request volume · share of all requests' : 'By spend · share of total spend'}>
+        {#snippet actions()}<FilterTabs tabs={callerViews} bind:value={callerMetric} />{/snippet}
 		<div class="flex flex-col gap-2.5">
-			{#each topCallers as caller (`${caller.actor_type}-${caller.actor_id}`)}
-				<div class="grid grid-cols-[minmax(110px,1.1fr)_minmax(0,2fr)_70px_62px] items-center gap-3">
+			{#if loading}
+                <div class="py-8 text-center text-[12.5px] text-zinc-600">Loading callers…</div>
+            {:else}
+            {#each topCallers as caller (`${caller.actor_type}-${caller.actor_id}`)}
+				<div class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_64px_50px] items-center gap-3">
 					<span class="flex min-w-0 items-center gap-1.5">
 						<!--
 							The kind of credential, not decoration: a key and a human are
@@ -602,26 +708,27 @@ const callerMax = $derived(Math.max(1, ...topCallers.map((c) => c.requests)));
 								? 'bg-sky-500/12 text-sky-300/80'
 								: 'bg-violet-500/12 text-violet-300/80'}"
 						>
-							{caller.actor_type === 'api_key' ? 'key' : 'user'}
+							{caller.actor_type === 'api_key' ? 'key' : caller.actor_type === 'user' ? 'user' : caller.actor_type === 'system' ? 'system' : 'unknown'}
 						</span>
 						<span class="overflow-hidden text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-300">
-							{caller.actor_label}
+							{caller.actor_label ?? 'Unknown actor'}
 						</span>
 					</span>
 					<div class="h-[18px] w-full">
 						<div
 							class="h-full rounded-r-[4px]"
-							style:width="{Math.max(2, (caller.requests / callerMax) * 100)}%"
-							style:background={ACCENT}
-							style:opacity={0.35 + 0.65 * (caller.requests / callerMax)}
+							style:width={`${caller.width}%`}
+							style:background={callerMetric === 'requests' ? ACCENT : '#a78bfa'}
+							style:opacity={0.35 + 0.65 * caller.width / 100}
 						></div>
 					</div>
-					<span class="text-right text-[12.5px] text-zinc-300 tabular-nums">{fmt(caller.requests)}</span>
-					<span class="text-right text-[12.5px] text-zinc-600 tabular-nums">{fmtCostTotal(caller.cost_total)}</span>
+					<span class="text-right text-[12.5px] text-zinc-300 tabular-nums" title={callerMetric === 'requests' ? `${caller.requests.toLocaleString()} requests` : `$${caller.cost_total.toLocaleString('en-US', { maximumFractionDigits: 6 })} spend`}>{callerMetric === 'requests' ? fmt(caller.requests) : fmtCostTotal(caller.cost_total)}</span>
+					<span class="text-right text-[12.5px] text-zinc-500 tabular-nums" title={callerMetric === 'requests' ? 'Share of all requests' : 'Share of total spend'}>{caller.share === null ? '—' : caller.share > 0 && caller.share < 0.1 ? '<0.1%' : `${caller.share.toFixed(1)}%`}</span>
 				</div>
 			{:else}
 				<div class="py-8 text-center text-[12.5px] text-zinc-600">No requests in this window.</div>
 			{/each}
+            {/if}
 		</div>
 	</ChartCard>
 </div>

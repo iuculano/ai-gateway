@@ -18,6 +18,7 @@ let {
   value,
   hint,
   accent,
+  comparison,
 }: {
   label: string;
   /** Pre-formatted. Callers own their own units and precision. */
@@ -26,6 +27,7 @@ let {
   hint?: string;
   /** Optional swatch colour, for cards that carry a status meaning. */
   accent?: string;
+  comparison?: { text: string; color: string; title: string };
 } = $props();
 </script>
 
@@ -35,6 +37,11 @@ let {
 			<span class="size-[7px] flex-none rounded-full" style:background={accent}></span>
 		{/if}
 		<span class="text-xs text-zinc-500">{label}</span>
+		{#if comparison}
+			<span class="ml-auto shrink-0 text-xs font-medium tabular-nums" style:color={comparison.color} title={comparison.title}>
+				{comparison.text}
+			</span>
+		{/if}
 	</div>
 	<div class="mt-2 flex items-end gap-2">
 		<span class="text-[25px] leading-none font-semibold tracking-[-0.02em] tabular-nums">{value}</span>
