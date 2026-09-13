@@ -1,6 +1,26 @@
 import { expect, test } from 'bun:test';
 import type { SeriesPoint } from '../../src/lib/api/analytics';
-import { rankCallers } from '../../src/lib/data/caller-ranking';
+import { rankCallers, topCallerReferences } from '../../src/lib/data/caller-ranking';
+
+test('name resolution is bounded to both leaderboards and deduplicates their overlap', () => {
+  const points = Array.from(
+    { length: 500 },
+    (_, index) =>
+      ({
+        actor_type: 'api_key',
+        actor_id: String(index),
+        requests: 500 - index,
+        cost_total: index,
+      }) as SeriesPoint,
+  );
+  const references = topCallerReferences(points);
+  expect(references).toHaveLength(12);
+  expect(new Set(references.map((point) => point.actor_id))).toEqual(
+    new Set(['0', '1', '2', '3', '4', '5', '494', '495', '496', '497', '498', '499']),
+  );
+  expect(topCallerReferences(points.slice(0, 3))).toHaveLength(3);
+  expect(topCallerReferences([])).toEqual([]);
+});
 
 test('spend ranking includes callers outside the top six by requests and shares include all callers', () => {
   const points = Array.from(
