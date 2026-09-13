@@ -61,16 +61,22 @@ function toLogShape(row: typeof logs.$inferSelect): LogShape {
  */
 async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>> {
   const caller = getCaller();
+
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select()
     .from(logs)
-    .where(and(eq(logs.organization_id, caller.organization.id), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, caller.organization.id),
+      eq(logs.id, id)
+    ));
 
   if (!row) {
     return err({ code: 'LOG_NOT_FOUND', id });
   }
 
-  return ok(toLogShape(row));
+  const parsed = toLogShape(row);
+  return ok(parsed);
 }
 
 /**
@@ -87,10 +93,15 @@ async function getLogPayload(
   side: PayloadSide,
 ): Promise<Result<GetLogPayloadResponse, GetLogPayloadFailure>> {
   const caller = getCaller();
+
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select()
     .from(logs)
-    .where(and(eq(logs.organization_id, caller.organization.id), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, caller.organization.id),
+      eq(logs.id, id)
+    ));
 
   if (!row) {
     return err({ code: 'LOG_NOT_FOUND', id });
@@ -104,8 +115,6 @@ async function getLogPayload(
   // Have a reference saved but the object is missing, somehow.
   const payload = await objectStorage.getJson(key);
   if (payload === null) {
-    // Distinguish a missing referenced object from a payload that was never
-    // stored.
     return err({ code: 'PAYLOAD_UNAVAILABLE', id, side });
   }
 
@@ -279,9 +288,14 @@ async function countLogs(): Promise<CountLogsResponse> {
  */
 async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLogFailure>> {
   const caller = getCaller();
+
+  // biome-ignore format: looks nicer
   const [row] = await db
     .delete(logs)
-    .where(and(eq(logs.organization_id, caller.organization.id), eq(logs.id, id)))
+    .where(and(
+      eq(logs.organization_id, caller.organization.id),
+      eq(logs.id, id)
+    ))
     .returning();
 
   if (!row) {
@@ -289,11 +303,9 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
   }
 
   const keys = [row.request_object_reference, row.response_object_reference].filter((key) => key !== null);
-
-  // Surface storage failures because they leave orphaned objects after row deletion.
   await objectStorage.deleteMany(keys);
 
-  return ok(undefined);
+  return ok(undefined); // 204 no content
 }
 
 /**
