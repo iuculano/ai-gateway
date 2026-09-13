@@ -17,7 +17,7 @@ export class ApiError extends Error {
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const response = await fetch(input, init);
 
-  if (response.status === 401) {
+  if (response.status === 401 && response.headers.get('ai-error-source') !== 'upstream') {
     if (typeof window !== 'undefined') {
       window.location.href = '/auth/login';
     }
