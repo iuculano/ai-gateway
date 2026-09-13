@@ -449,7 +449,7 @@ export default {
   getLogPayload,
   getLogPayloadBatch,
   listLogs,
-  getLogStats,
+  countLogs,
   deleteLog,
 
   startLog,
