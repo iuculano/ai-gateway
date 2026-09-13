@@ -3,6 +3,7 @@ import { createSchema } from '@repo/hono';
 
 const webhookShape = z.object({
   id: z.uuidv7(),
+  creator_id: z.uuid().nullable(),
   name: z.string(),
   description: z.string().nullish().optional(),
   endpoint: z.string(),
@@ -39,6 +40,7 @@ const listWebhooks = createSchema({
 const createWebhook = createSchema({
   body: webhookShape.omit({
     id: true,
+    creator_id: true,
     created_at: true,
     updated_at: true,
   }),
@@ -53,6 +55,7 @@ const updateWebhook = createSchema({
 
   body: webhookShape.partial().omit({
     id: true,
+    creator_id: true,
     created_at: true,
     updated_at: true,
   }),
