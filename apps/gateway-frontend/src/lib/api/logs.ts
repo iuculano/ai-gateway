@@ -49,7 +49,7 @@ export async function deleteLog(id: string): Promise<void> {
   await client.logs[':id'].$delete({ param: { id } });
 }
 
-export async function getLogStats() {
-  const response = await client.logs.stats.$get();
+export async function countLogs() {
+  const response = await client.logs.count.$get();
   return response.json();
 }
