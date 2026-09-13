@@ -15,7 +15,7 @@ import Schemas, {
   type LogStatsResponse,
 } from './logs.schemas';
 
-/** Which of the two payloads an operation is about. */
+// What type of payload we're attempting to retrieve.
 export type PayloadSide = 'request' | 'response';
 
 // The underlying error definitions.
@@ -24,18 +24,6 @@ type LogNotFoundFailure = {
   id: string;
 };
 
-/**
- * Three ways a payload read can come back empty, kept apart on purpose.
- *
- * They all answer 404, but with different messages, and the difference is worth
- * something to whoever is reading it: a log that was never given a payload on
- * that side is a normal state that will never change, while one whose object
- * has gone means the row still advertises something that a lifecycle rule or a
- * stray delete has since taken away. Collapsing them would lose that.
- *
- * `side` travels with the failure because the message names it, and the handler
- * has no other way to know which of the two endpoints it is answering for.
- */
 type PayloadNotStoredFailure = {
   code: 'PAYLOAD_NOT_STORED';
   id: string;
@@ -53,22 +41,10 @@ export type GetLogFailure = LogNotFoundFailure;
 export type GetLogPayloadFailure = LogNotFoundFailure | PayloadNotStoredFailure | PayloadUnavailableFailure;
 export type DeleteLogFailure = LogNotFoundFailure;
 
-/**
- * Where a payload lives.
- *
- * Organization first, so a bucket lifecycle rule or a tenant-wide purge is a
- * prefix operation rather than a scan. The key is stored on the row rather than
- * recomputed at read time, so this layout can change without a migration -
- * existing rows keep pointing at where their objects actually are.
- */
 function objectKey(organizationId: string, logId: string, side: PayloadSide): string {
   return `logs/${organizationId}/${logId}/${side}.json.zst`;
 }
 
-/**
- * Adds the derived has_request / has_response flags and drops the internal
- * key columns.
- */
 function toLogShape(row: typeof logs.$inferSelect): LogShape {
   return Schemas.getLog.response.parse({
     ...row,
@@ -100,18 +76,11 @@ async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>
 /**
  * Retrieves one side of a log's stored payload.
  *
- * The tenant-scoped row is resolved before its object key, so object storage is
- * never queried for another tenant's log.
- *
  * @param id
  * The id of the log.
  *
  * @param side
  * Which payload to read.
- *
- * @returns
- * The stored payload or the expected reason it is unavailable. Storage failures
- * still reject.
  */
 async function getLogPayload(
   id: string,
@@ -132,7 +101,7 @@ async function getLogPayload(
     return err({ code: 'PAYLOAD_NOT_STORED', id, side });
   }
 
-  // Null means absent - transport and decoding failures are unexpected errors.
+  // Have a reference saved but the object is missing, somehow.
   const payload = await objectStorage.getJson(key);
   if (payload === null) {
     // Distinguish a missing referenced object from a payload that was never
@@ -146,17 +115,11 @@ async function getLogPayload(
 /**
  * Retrieves one side of the payload for many logs at once.
  *
- * Reads are concurrent, and absent payloads are reported in `meta.missing` rather than
- * failing the batch.
- *
  * @param ids
- * The log ids to read. Already length-capped by the schema.
+ * The log ids to read.
  *
  * @param side
  * Which payload to read.
- *
- * @returns
- * The payloads that resolved, keyed by log id, plus the ids that did not.
  */
 async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<BatchResponse> {
   const caller = getCaller();
@@ -218,14 +181,12 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
 /**
  * Retrieves a list of logs, filtered by the given criteria.
  *
- * Deliberately not a Result: an empty page is a page, and there is no outcome
- * here the caller could correct.
- *
  * @param query
  * The filter criteria.
  */
 async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
   const caller = getCaller();
+
   // Expected format is "key1:value1,key2:value2"
   const tagsToFilter = parseTags(query.tags);
 
@@ -434,9 +395,6 @@ function toStats(row: Record<string, string | number | undefined>, estimated: bo
 /**
  * Deletes a log and both of its stored payloads.
  *
- * The row is deleted first so a later storage failure leaves lifecycle-cleanable
- * orphans rather than references to missing payloads.
- *
  * @param id
  * The id of the log to delete.
  */
@@ -615,7 +573,6 @@ export default {
   getLogStats,
   deleteLog,
 
-  // Ingestion. Not reachable over HTTP - see the note in logs.routes.ts.
   startLog,
   completeLog,
   failLog,
