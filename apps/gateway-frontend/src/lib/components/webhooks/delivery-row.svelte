@@ -58,8 +58,8 @@ const detailItems: DetailItem[] = $derived([
 			{delivery.status_code}
 		</span>
 
-		<span class="inline-flex items-center gap-1.5 text-xs font-medium" style:color={outcome.color}>
-			<span class="size-1.5 flex-none rounded-full" style:background={outcome.color}></span>{outcome.label}
+		<span class="text-xs font-medium" style:color={outcome.color}>
+			{outcome.label}
 		</span>
 	{/snippet}
 

@@ -4,8 +4,6 @@ import type { Webhook } from '$lib/api/types';
 import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import DeliveryRow from '$lib/components/webhooks/delivery-row.svelte';
@@ -218,10 +216,10 @@ function refreshAll() {
 // read together - a row leaves the outbox and appears in deliveries moments
 // later, and watching that as two separate tables meant flipping back and forth
 // to follow a single delivery.
-const VIEW_TABS = $derived([
-  { id: 'endpoints' as const, label: `Endpoints · ${webhooks.endpoints.rows.length}` },
-  { id: 'outbox' as const, label: `Queue · ${webhooks.outbox.rows.length}` },
-]);
+const VIEW_TABS = [
+  { id: 'endpoints' as const, label: 'Endpoints' },
+  { id: 'outbox' as const, label: 'Queue' },
+];
 
 /** The lists on screen. The queue view shows two at once, side by side. */
 const shown = $derived(view === 'endpoints' ? [webhooks.endpoints] : [webhooks.outbox, webhooks.deliveries]);
@@ -246,24 +244,22 @@ const tailable = $derived(shown.every((list) => !list.appended) && (view === 'en
 	{/snippet}
 </PageHeader>
 
-<StatGrid>
-	<StatCard
-		label="Endpoints"
-		value={webhooks.endpoints.rows.length}
-		hint={webhooks.endpoints.hasMore ? 'first page' : undefined}
-	/>
-	<!-- '· loaded' on the three that are counted client-side over the rows paged
-	     in: neither the outbox nor the deliveries endpoint returns an aggregate,
-	     and an uncaptioned figure here would read as an all-time total. -->
-	<StatCard label="Pending · loaded" value={webhooks.outbox.rows.length} accent="#f59e0b" />
-	<StatCard
-		label="Delivered · loaded"
-		value={delivered}
-		accent="#10b981"
-		hint={successRate === null ? undefined : `${successRate.toFixed(1)}%`}
-	/>
-	<StatCard label="Failed · loaded" value={failed} accent="#f87171" />
-</StatGrid>
+{#snippet statsSummary()}
+	<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
+		<span class="font-medium text-zinc-100 tabular-nums">{filteredEndpoints.length.toLocaleString()}</span>
+		of <span class="font-medium text-zinc-200 tabular-nums">{webhooks.endpoints.rows.length.toLocaleString()}</span> endpoints
+		<span class="mx-1 text-zinc-600">·</span>
+		<!-- Queue and delivery counts cover loaded rows, not all-time totals. -->
+		<span
+			class="font-medium text-emerald-400 tabular-nums"
+			title={successRate === null ? undefined : `${successRate.toFixed(1)}% of delivery attempts succeeded`}
+		>{delivered.toLocaleString()}</span> delivered
+		<span class="mx-1 text-zinc-600">·</span>
+		<span class="font-medium text-amber-400 tabular-nums">{webhooks.outbox.rows.length.toLocaleString()}</span> pending
+		<span class="mx-1 text-zinc-600">·</span>
+		<span class="font-medium text-red-400 tabular-nums">{failed.toLocaleString()}</span> failed
+	</span>
+{/snippet}
 
 {#snippet viewTabs()}
 	<FilterTabs tabs={VIEW_TABS} bind:value={view} />
@@ -295,9 +291,7 @@ const tailable = $derived(shown.every((list) => !list.appended) && (view === 'en
 	>
 		{#snippet toolbar()}
 			{@render viewTabs()}
-			<span class="text-[12.5px] text-zinc-600">
-				{filteredEndpoints.length} of {webhooks.endpoints.rows.length} webhooks{webhooks.endpoints.hasMore ? ' loaded' : ''}
-			</span>
+			{@render statsSummary()}
 
 			<span class="ml-auto"></span>
 			{@render refreshControls()}
@@ -344,6 +338,7 @@ const tailable = $derived(shown.every((list) => !list.appended) && (view === 'en
 		>
 			{#snippet toolbar()}
 				{@render viewTabs()}
+				{@render statsSummary()}
 				<span class="ml-auto"></span>
 				{@render refreshControls()}
 			{/snippet}
