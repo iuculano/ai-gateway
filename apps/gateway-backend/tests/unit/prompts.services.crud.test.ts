@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import {
   auditWrites,
   callerFixture,
@@ -288,3 +290,19 @@ describe('listPromptVersions', () => {
     expect(page.meta.oldest_id).toBe(ID_B);
   });
 });
+
+for (const status of ['all', 'versioned', 'unversioned'] as const) {
+  test(`prompt ${status} filter composes with organization, tags, and cursor predicates`, async () => {
+    database.respondTo('select', 'prompts', rows());
+    await asCaller(() => Services.listPrompts({ limit: 20, status, tags: 'env:prod', after_id: OTHER_ID }));
+    const query = database.queriesFor('select', 'prompts')[0];
+    const where = query?.calls.find((call) => call.method === 'where')?.args[0] as SQL;
+    const compiled = new PgDialect().sqlToQuery(where);
+    expect(compiled.params).toContain(ORGANIZATION_ID);
+    expect(compiled.params).toContain(OTHER_ID);
+    expect(compiled.params).toContain(JSON.stringify({ env: 'prod' }));
+    if (status === 'all') expect(compiled.sql).not.toContain('active_version');
+    else expect(compiled.sql).toContain(`"active_version" is ${status === 'versioned' ? 'not ' : ''}null`);
+    expect(query?.calls.find((call) => call.method === 'limit')?.args[0]).toBe(21);
+  });
+}
