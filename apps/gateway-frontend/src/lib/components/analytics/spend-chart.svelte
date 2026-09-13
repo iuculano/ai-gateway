@@ -1,8 +1,8 @@
 <script lang="ts">
 import type { SeriesPoint } from '$lib/api/analytics';
+import ChartCard from '$lib/components/app/chart-card.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import { cumulativeSpend } from '$lib/data/chart-series';
-import ChartCard from '$lib/components/app/chart-card.svelte';
 
 let {
   points,
@@ -19,7 +19,10 @@ let {
 } = $props();
 
 let view = $state<'period' | 'cumulative'>('period');
-const views = $derived([{ id: 'period' as const, label: interval === 'hour' ? 'Hourly' : 'Daily' }, { id: 'cumulative' as const, label: 'Cumulative' }]);
+const views = $derived([
+  { id: 'period' as const, label: interval === 'hour' ? 'Hourly' : 'Daily' },
+  { id: 'cumulative' as const, label: 'Cumulative' },
+]);
 const displayed = $derived(view === 'cumulative' ? cumulativeSpend(points) : points);
 const HEIGHT = 210;
 const PAD = { top: 14, right: 10, bottom: 24, left: 76 };
@@ -41,10 +44,13 @@ const maximum = $derived.by(() => {
 const selected = $derived(hovered === null ? null : displayed[hovered]);
 const x = (index: number) => PAD.left + slot * (index + 0.5);
 const height = (cost: number) => (cost / maximum) * plotHeight;
-const money = (cost: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', minimumFractionDigits: 2,
-  maximumFractionDigits: cost !== 0 && Math.abs(cost) < 0.01 ? 6 : 2,
-}).format(cost);
+const money = (cost: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: cost !== 0 && Math.abs(cost) < 0.01 ? 6 : 2,
+  }).format(cost);
 
 // Clear the tooltip when the range changes or a new response arrives.
 $effect(() => {

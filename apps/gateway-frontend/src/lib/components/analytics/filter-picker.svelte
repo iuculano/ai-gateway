@@ -1,7 +1,13 @@
 <script lang="ts">
 import { Input } from '$lib/components/ui/input';
 
-let { id, label, options, value = $bindable(''), class: fieldClass = '' }: {
+let {
+  id,
+  label,
+  options,
+  value = $bindable(''),
+  class: fieldClass = '',
+}: {
   id: string;
   label: string;
   options: string[];

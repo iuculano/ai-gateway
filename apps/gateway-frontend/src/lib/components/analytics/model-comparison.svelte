@@ -2,14 +2,18 @@
 import type { SeriesPoint } from '$lib/api/analytics';
 import CardToolbar from '$lib/components/app/card-toolbar.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import { modelComparisonRows, type ModelSortKey, sortModelRows } from '$lib/data/model-comparison';
 import { fmt, fmtCostTotal, fmtLatency, providerTone } from '$lib/data/format';
+import { type ModelSortKey, modelComparisonRows, sortModelRows } from '$lib/data/model-comparison';
 
 let { points, failures, loading }: { points: SeriesPoint[]; failures: SeriesPoint[]; loading: boolean } = $props();
 let sortKey = $state<ModelSortKey>('requests');
 let ascending = $state(false);
 let view = $state<'table' | 'bars' | 'efficiency'>('table');
-const views = [{ id: 'table', label: 'Table' }, { id: 'efficiency', label: 'Efficiency' }, { id: 'bars', label: 'Bars' }] satisfies { id: typeof view; label: string }[];
+const views = [
+  { id: 'table', label: 'Table' },
+  { id: 'efficiency', label: 'Efficiency' },
+  { id: 'bars', label: 'Bars' },
+] satisfies { id: typeof view; label: string }[];
 const rows = $derived(sortModelRows(modelComparisonRows(points, failures), sortKey, ascending));
 const topModels = $derived(sortModelRows(rows, 'requests', false).slice(0, 6));
 const maxRequests = $derived(Math.max(1, topModels[0]?.requests ?? 0));
@@ -32,10 +36,13 @@ function sort(key: ModelSortKey) {
   ascending = sortKey === key ? !ascending : key === 'model';
   sortKey = key;
 }
-const money = (value: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', minimumFractionDigits: 2,
-  maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 4,
-}).format(value);
+const money = (value: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 4,
+  }).format(value);
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">

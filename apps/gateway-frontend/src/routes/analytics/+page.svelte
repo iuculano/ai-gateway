@@ -1,18 +1,18 @@
 <script lang="ts">
 import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import { outcomes, outcomeBuckets } from '$lib/data/chart-series';
-import SpendChart from '$lib/components/analytics/spend-chart.svelte';
-import ModelComparison from '$lib/components/analytics/model-comparison.svelte';
 import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import { rankCallers, type CallerMetric } from '$lib/data/caller-ranking';
+import ModelComparison from '$lib/components/analytics/model-comparison.svelte';
+import SpendChart from '$lib/components/analytics/spend-chart.svelte';
 import ChartCard from '$lib/components/app/chart-card.svelte';
+import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
 import StatGrid from '$lib/components/app/stat-grid.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmt, fmtCostTotal } from '$lib/data/format';
 import { periodComparison } from '$lib/data/analytics-comparison';
+import { type CallerMetric, rankCallers } from '$lib/data/caller-ranking';
+import { outcomeBuckets, outcomes } from '$lib/data/chart-series';
+import { fmt, fmtCostTotal } from '$lib/data/format';
 
 // Chart ink. Chrome comes from the app's own tokens so the cards match the rest
 // of the dashboard; only the DATA colours come from the validated palette.
@@ -63,10 +63,18 @@ let filterPoints = $state<SeriesPoint[]>([]);
 let filtersLoading = $state(true);
 let filtersError = $state(false);
 let filterRequest = 0;
-const providerOptions = $derived([...new Set(filterPoints.flatMap((point) => point.provider ? [point.provider] : []))].sort());
-const modelOptions = $derived([...new Set(filterPoints
-  .filter((point) => !providerFilter || point.provider === providerFilter)
-  .flatMap((point) => point.model ? [point.model] : []))].sort());
+const providerOptions = $derived(
+  [...new Set(filterPoints.flatMap((point) => (point.provider ? [point.provider] : [])))].sort(),
+);
+const modelOptions = $derived(
+  [
+    ...new Set(
+      filterPoints
+        .filter((point) => !providerFilter || point.provider === providerFilter)
+        .flatMap((point) => (point.model ? [point.model] : [])),
+    ),
+  ].sort(),
+);
 
 function setProvider(value: string) {
   providerFilter = value;
@@ -113,7 +121,10 @@ let modelPoints: SeriesPoint[] = $state([]);
 let modelFailures: SeriesPoint[] = $state([]);
 let callerPoints: SeriesPoint[] = $state([]);
 let callerMetric = $state<CallerMetric>('requests');
-const callerViews = [{ id: 'requests', label: 'Requests' }, { id: 'cost_total', label: 'Spend' }] satisfies { id: CallerMetric; label: string }[];
+const callerViews = [
+  { id: 'requests', label: 'Requests' },
+  { id: 'cost_total', label: 'Spend' },
+] satisfies { id: CallerMetric; label: string }[];
 const topCallers = $derived(rankCallers(callerPoints, callerMetric));
 let previousTotals = $state<SeriesPoint | null>(null);
 let previousStatuses = $state<SeriesPoint[]>([]);
@@ -137,7 +148,17 @@ async function load() {
   const previous = { ...filters, start_date: new Date(end - 2 * duration).toISOString(), end_date: start };
 
   try {
-    const [totalsResponse, statusResponse, series, providers, models, callers, comparison, failuresByModel, statusTimeline] = await Promise.all([
+    const [
+      totalsResponse,
+      statusResponse,
+      series,
+      providers,
+      models,
+      callers,
+      comparison,
+      failuresByModel,
+      statusTimeline,
+    ] = await Promise.all([
       fetchSeries({ ...common, interval: 'none' }),
       fetchSeries({ ...common, interval: 'none', group_by: ['status'] }),
       fetchSeries({ ...common, interval: range.interval }),
@@ -212,9 +233,19 @@ const comparisons = $derived.by(() => {
   const previousErrorRate = previousRequests ? (previousFailed / previousRequests) * 100 : null;
   return {
     requests: periodComparison(requestTotal, previousRequests, { label }),
-    spend: periodComparison(totals?.cost_total ?? 0, previousTotals?.cost_total ?? null, { label, lowerIsBetter: true }),
-    latency: periodComparison(totals?.average_latency_ms ?? null, previousTotals?.average_latency_ms ?? null, { label, lowerIsBetter: true }),
-    errors: periodComparison(requestTotal > 0 ? errorRate : null, previousErrorRate, { label, lowerIsBetter: true, percentagePoints: true }),
+    spend: periodComparison(totals?.cost_total ?? 0, previousTotals?.cost_total ?? null, {
+      label,
+      lowerIsBetter: true,
+    }),
+    latency: periodComparison(totals?.average_latency_ms ?? null, previousTotals?.average_latency_ms ?? null, {
+      label,
+      lowerIsBetter: true,
+    }),
+    errors: periodComparison(requestTotal > 0 ? errorRate : null, previousErrorRate, {
+      label,
+      lowerIsBetter: true,
+      percentagePoints: true,
+    }),
   };
 });
 
@@ -258,12 +289,22 @@ const areaInnerH = AREA_H - AREA_PAD.top - AREA_PAD.bottom;
 const areaX = (i: number) => AREA_PAD.left + (i / Math.max(1, timeline.length - 1)) * areaInnerW;
 const areaY = (v: number) => AREA_PAD.top + areaInnerH - (v / requestsMax) * areaInnerH;
 
-const outcomeAreas = $derived(outcomes.map((outcome, index) => {
-  const upper = timeline.map((_, i) => `${i === 0 ? 'M' : 'L'}${areaX(i)},${areaY(outcomeCounts[i]!.slice(0, index + 1).reduce((a, b) => a + b, 0))}`);
-  const lower = timeline.map((_, i) => `L${areaX(i)},${areaY(outcomeCounts[i]!.slice(0, index).reduce((a, b) => a + b, 0))}`).reverse();
-  return { ...outcome, path: [...upper, ...lower, 'Z'].join(' ') };
-}));
-$effect(() => { void timeline; areaHover = null; });
+const outcomeAreas = $derived(
+  outcomes.map((outcome, index) => {
+    const upper = timeline.map(
+      (_, i) =>
+        `${i === 0 ? 'M' : 'L'}${areaX(i)},${areaY((outcomeCounts[i] ?? []).slice(0, index + 1).reduce((a, b) => a + b, 0))}`,
+    );
+    const lower = timeline
+      .map((_, i) => `L${areaX(i)},${areaY((outcomeCounts[i] ?? []).slice(0, index).reduce((a, b) => a + b, 0))}`)
+      .reverse();
+    return { ...outcome, path: [...upper, ...lower, 'Z'].join(' ') };
+  }),
+);
+$effect(() => {
+  void timeline;
+  areaHover = null;
+});
 
 function onAreaMove(event: MouseEvent) {
   if (timeline.length === 0) return;
@@ -281,7 +322,10 @@ const SEGMENT_GAP = 2;
 let barWidth = $state(360);
 let barHover = $state<number | null>(null);
 let providerView = $state<'volume' | 'share'>('volume');
-const providerViews = [{ id: 'volume', label: 'Volume' }, { id: 'share', label: 'Share' }] satisfies { id: typeof providerView; label: string }[];
+const providerViews = [
+  { id: 'volume', label: 'Volume' },
+  { id: 'share', label: 'Share' },
+] satisfies { id: typeof providerView; label: string }[];
 
 /** Buckets on the x axis, in time order. */
 const providerBuckets = $derived([...new Set(providerPoints.map((p) => p.bucket ?? ''))].sort());
@@ -329,7 +373,7 @@ const stacks = $derived(
     let cursor = 0;
     return providerSeries.map((series) => {
       const value = providerLookup.get(`${bucket}|${series.id}`) ?? 0;
-      const share = providerTotals[bucketIndex]! > 0 ? value / providerTotals[bucketIndex]! * 100 : 0;
+      const share = (providerTotals[bucketIndex] ?? 0) > 0 ? (value / (providerTotals[bucketIndex] ?? 0)) * 100 : 0;
       const height = ((providerView === 'share' ? share : value) / providerMax) * barInnerH;
       const y = BAR_PAD.top + barInnerH - cursor - height;
       cursor += height;
@@ -350,32 +394,61 @@ const LAT_PAD = { top: 12, right: 12, bottom: 24, left: 46 };
 let latWidth = $state(360);
 let latHover = $state<number | null>(null);
 let latencyView = $state<'overall' | 'providers'>('overall');
-const latencyViews = [{ id: 'overall', label: 'Overall' }, { id: 'providers', label: 'By provider' }] satisfies { id: typeof latencyView; label: string }[];
+const latencyViews = [
+  { id: 'overall', label: 'Overall' },
+  { id: 'providers', label: 'By provider' },
+] satisfies { id: typeof latencyView; label: string }[];
 
 const latPoints = $derived(timeline);
-const latencySeries = $derived(latencyView === 'overall'
-  ? [{ id: 'overall', label: 'Overall', color: '#3987e5', values: timeline.map(point => point.average_latency_ms) }]
-  : providerSeries.map(series => ({ ...series, values: timeline.map(point => providerPoints.find(p => p.bucket === point.bucket && (p.provider ?? 'unknown') === series.id)?.average_latency_ms ?? null) })));
-const hasLatency = $derived(latencySeries.some(series => series.values.some(value => value !== null)));
-const latMax = $derived(niceMax(Math.max(1, ...latencySeries.flatMap(series => series.values.map(value => value ?? 0)))));
+const latencySeries = $derived(
+  latencyView === 'overall'
+    ? [{ id: 'overall', label: 'Overall', color: '#3987e5', values: timeline.map((point) => point.average_latency_ms) }]
+    : providerSeries.map((series) => ({
+        ...series,
+        values: timeline.map(
+          (point) =>
+            providerPoints.find((p) => p.bucket === point.bucket && (p.provider ?? 'unknown') === series.id)
+              ?.average_latency_ms ?? null,
+        ),
+      })),
+);
+const hasLatency = $derived(latencySeries.some((series) => series.values.some((value) => value !== null)));
+const latMax = $derived(
+  niceMax(Math.max(1, ...latencySeries.flatMap((series) => series.values.map((value) => value ?? 0)))),
+);
 const latInnerW = $derived(Math.max(1, latWidth - LAT_PAD.left - LAT_PAD.right));
 const latInnerH = LAT_H - LAT_PAD.top - LAT_PAD.bottom;
 
 const latX = (i: number) => LAT_PAD.left + (i / Math.max(1, latPoints.length - 1)) * latInnerW;
 const latY = (v: number) => LAT_PAD.top + latInnerH - (v / latMax) * latInnerH;
 
-const latencyPaths = $derived(latencySeries.map(series => {
-  let connected = false;
-  const path = series.values.map((value, i) => {
-    if (value === null) { connected = false; return ''; }
-    const command = connected ? 'L' : 'M';
-    connected = true;
-    return `${command}${latX(i)},${latY(value)}`;
-  }).join(' ');
-  return { ...series, path };
-}));
-$effect(() => { void timeline; void latencyView; latHover = null; });
-$effect(() => { void providerPoints; void providerView; barHover = null; });
+const latencyPaths = $derived(
+  latencySeries.map((series) => {
+    let connected = false;
+    const path = series.values
+      .map((value, i) => {
+        if (value === null) {
+          connected = false;
+          return '';
+        }
+        const command = connected ? 'L' : 'M';
+        connected = true;
+        return `${command}${latX(i)},${latY(value)}`;
+      })
+      .join(' ');
+    return { ...series, path };
+  }),
+);
+$effect(() => {
+  void timeline;
+  void latencyView;
+  latHover = null;
+});
+$effect(() => {
+  void providerPoints;
+  void providerView;
+  barHover = null;
+});
 
 function onLatMove(event: MouseEvent) {
   if (latPoints.length === 0) return;
@@ -385,7 +458,6 @@ function onLatMove(event: MouseEvent) {
 }
 
 // ---- ranked lists (single hue - length already encodes the value) -------------
-
 </script>
 
 <PageHeader title="Analytics" description="Traffic, spend and latency across every model routed through Relay.">

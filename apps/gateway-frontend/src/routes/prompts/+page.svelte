@@ -14,8 +14,8 @@ import { pairSummary } from '$lib/data/format';
 import { tagKeys } from '$lib/data/prompts';
 import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
 import { dashboard } from '$lib/state/dashboard.svelte';
-import { prompts } from '$lib/state/prompts.svelte';
 import type { PromptStatus } from '$lib/state/prompt-list.svelte';
+import { prompts } from '$lib/state/prompts.svelte';
 
 // One grid, shared with the row component so the header and the rows sit in
 // the same grid - the same contract the other tables use.
