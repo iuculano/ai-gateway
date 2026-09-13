@@ -5,8 +5,6 @@ import type { ListMeta } from '$lib/api/types';
 import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import AuditRow from '$lib/components/audit/audit-row.svelte';
@@ -163,12 +161,6 @@ const filtered = $derived.by(() => {
 	{/snippet}
 </PageHeader>
 
-<StatGrid>
-	<StatCard label="Events today" value={eventsToday} accent="#10b981" />
-	<StatCard label="Active actors" value={activeActors} accent="#60a5fa" />
-	<StatCard label="Denied / flagged" value={failures} accent="#f87171" />
-</StatGrid>
-
 <TableCard
 	cols={COLS}
 	columns={COLUMNS}
@@ -182,8 +174,15 @@ const filtered = $derived.by(() => {
 >
 	{#snippet toolbar()}
 		<FilterTabs tabs={TABS} bind:value={cat} />
-		<span class="text-[12.5px] text-zinc-600">
-			{filtered.length} of {events.length} events{meta?.more_data ? ' loaded' : ''}
+		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
+			<span class="font-medium text-zinc-100 tabular-nums">{filtered.length.toLocaleString()}</span>
+			of <span class="font-medium text-zinc-200 tabular-nums">{events.length.toLocaleString()}</span> events{meta?.more_data ? ' loaded' : ''}
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-emerald-400 tabular-nums">{eventsToday.toLocaleString()}</span> events today
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-blue-400 tabular-nums">{activeActors.toLocaleString()}</span> active actors
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-red-400 tabular-nums">{failures.toLocaleString()}</span> denied / flagged
 		</span>
 
 		<span class="ml-auto"></span>
