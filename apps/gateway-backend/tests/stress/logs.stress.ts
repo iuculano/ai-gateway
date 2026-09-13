@@ -445,7 +445,7 @@ const allScenarios: GroupedScenario[] = [
     group: 'stats',
     name: 'log stats (exact below 100k, sampled above)',
     run: async () => {
-      const result = await asTenant(() => LogsServices.getLogStats());
+      const result = await asTenant(() => LogsServices.countLogs());
       return result.total;
     },
   },

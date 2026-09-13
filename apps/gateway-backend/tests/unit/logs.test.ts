@@ -289,9 +289,9 @@ test('completeLog stores both payloads before publishing their references', asyn
 test('completeLog does not publish object references when storage fails', async () => {
   objects.failure = new Error('bucket unavailable');
 
-  await expect(Services.completeLog('org', LOG_ID, { request: { messages: ['hello'] } })).rejects.toThrow(
-    'bucket unavailable',
-  );
+  await expect(
+    Services.completeLog('org', LOG_ID, { request: { messages: ['hello'] }, response: { choices: [] } }),
+  ).rejects.toThrow('bucket unavailable');
 
   expect(database.queries).toHaveLength(0);
 });
