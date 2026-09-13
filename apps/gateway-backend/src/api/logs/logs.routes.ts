@@ -168,7 +168,6 @@ const listLogs = createRoute({
   },
 });
 
-
 const countLogs = createRoute({
   method: 'get' as const,
   path: '/logs/count',

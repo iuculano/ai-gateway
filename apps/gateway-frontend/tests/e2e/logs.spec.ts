@@ -9,7 +9,7 @@ test('auto-refresh updates counts and continues after a stats failure', async ({
   api.get('/api/logs', () => ({
     json: { data: [{ ...SUCCESS_LOG, model: `refreshed-model-${count}` }], meta: LOG_META },
   }));
-  api.get('/api/logs/stats', () =>
+  api.get('/api/logs/count', () =>
     failStats
       ? { status: 503, json: { error: { message: 'Counts unavailable' } } }
       : {
@@ -17,8 +17,6 @@ test('auto-refresh updates counts and continues after a stats failure', async ({
             total: count,
             estimated: false,
             by_status: { complete: count, failed: 0, incomplete: 0 },
-            tokens: { input: 0, output: 0, total: 0 },
-            cost: { input: 0, output: 0, total: 0 },
           },
         },
   );

@@ -401,6 +401,7 @@ async function completeLog(
     responseKey ? objectStorage.putJson(responseKey, entry.response) : Promise.resolve(),
   ]);
 
+  // biome-ignore format: looks nicer
   await db
     .update(logs)
     .set({

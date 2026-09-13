@@ -20,7 +20,7 @@ function database(responses: unknown[]) {
 }
 
 for (const count of [0, 9, 10]) {
-  test(`returns an exact count of ${count} without EXPLAIN`, async () => {
+  test(`returns an exact count of ${count} without estimating`, async () => {
     const db = database([[{ count: String(count) }]]);
     expect(await countRows(db.client, records, { threshold: 10 })).toEqual({ count, estimated: false });
     expect(db.queries).toHaveLength(1);
@@ -29,8 +29,7 @@ for (const count of [0, 9, 10]) {
 }
 
 test('uses the same tenant filter for bounded count and estimate', async () => {
-  const plan = [{ Plan: { 'Plan Rows': 2500 } }];
-  const db = database([[{ count: 11 }], [{ 'QUERY PLAN': plan }]]);
+  const db = database([[{ count: 11 }], [{ 'QUERY PLAN': [{ Plan: { 'Plan Rows': 2500 } }] }]]);
   expect(await countRows(db.client, records, { threshold: 10, where: eq(records.organizationId, 'tenant-a') })).toEqual(
     { count: 2500, estimated: true },
   );
