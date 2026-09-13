@@ -61,6 +61,9 @@ export const logs = pgTable(
     // For time-based analytics within an organization.
     index('logs_org_created_idx').on(t.organization_id, t.created_at),
 
+    // For the rollup worker's time-range scans across all organizations.
+    index('idx_logs_on_created_at').on(t.created_at),
+
     // For assembling every gateway request that belongs to one application trace.
     index('logs_org_trace_idx').on(t.organization_id, t.trace_id, t.id),
 
