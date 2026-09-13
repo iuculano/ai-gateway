@@ -3,14 +3,6 @@ import { logs } from '@repo/drizzle/schemas';
 import { createSchema } from '@repo/hono';
 import { createSelectSchema } from 'drizzle-orm/zod';
 
-/**
- * How many logs one batch may ask for.
- *
- * Each id costs one object-storage read, so this is the fan-out a single
- * request can provoke. 100 against a concurrency cap of 32 is a few overlapping
- * waves - large enough to be worth batching, small enough that it cannot be
- * used as an amplifier.
- */
 const MAX_BATCH_SIZE = 100;
 
 // It is apparently prohibited by spec to have all 0s
@@ -22,38 +14,15 @@ const traceId = z
 const logShape = createSelectSchema(logs)
   .omit({
     organization_id: true,
-
-    // Internal. The keys say where a payload lives, which is nobody's business
-    // outside this service - the /request and /response endpoints are the only
-    // supported way to read one.
-    request_object_reference: true,
-    response_object_reference: true,
+    request_object_reference: true, // server generated
+    response_object_reference: true, // server generated
   })
   .extend({
-    // Coerced, not plain z.number(). postgres hands `numeric` back as a STRING
-    // to preserve precision, and $type<number>() on the column only changes the
-    // TypeScript type - it installs no runtime mapper. A bare z.number() here
-    // rejects every row the moment a cost is non-zero.
     input_cost: z.coerce.number().nonnegative(),
     output_cost: z.coerce.number().nonnegative(),
-
-    // Derived from the columns above so a client knows whether following the
-    // link is worth it. Either can be false: a caller can suppress one side
-    // with ai-log-omit-request / ai-log-omit-response, and a request that
-    // failed upstream never produces a response to store.
     has_request: z.boolean(),
     has_response: z.boolean(),
   });
-
-/**
- * A stored payload.
- *
- * Deliberately untyped. The gateway logs whatever the endpoint handed it, and
- * pinning this to the chat-completions shape would both couple the two modules
- * and break the moment a second endpoint starts logging. Cloudflare documents
- * the equivalent responses the same way, as an open object.
- */
-const payload = z.unknown();
 
 const getLog = createSchema({
   params: z.object({
@@ -68,7 +37,7 @@ const getLogRequest = createSchema({
     id: z.uuidv7(),
   }),
 
-  response: payload,
+  response: z.unknown(),
 });
 
 const getLogResponse = createSchema({
@@ -76,33 +45,19 @@ const getLogResponse = createSchema({
     id: z.uuidv7(),
   }),
 
-  response: payload,
+  response: z.unknown(),
 });
 
-/**
- * The batch shape, shared by both payload sides.
- *
- * A miss is reported per id rather than failing the call. One unreadable object
- * says nothing about the other ninety-nine, and a batch that collapses on a
- * single absent payload is unusable against a store that is eventually
- * consistent or partially expired.
- */
 const batch = createSchema({
   body: z.object({
     ids: z.array(z.uuidv7()).min(1).max(MAX_BATCH_SIZE),
   }),
 
   response: z.object({
-    // Keyed by log id. Only ids that actually resolved appear here.
-    data: z.record(z.uuidv7(), payload),
+    data: z.record(z.uuidv7(), z.unknown()),
     meta: z.object({
       requested: z.number().int().nonnegative(),
       returned: z.number().int().nonnegative(),
-
-      // Ids that produced nothing: unknown to this organization, or known with
-      // no payload stored on that side. The two are deliberately not
-      // distinguished - telling a caller that a log id exists but belongs to
-      // someone else is the leak the distinction would create.
       missing: z.array(z.uuidv7()),
     }),
   }),
@@ -135,25 +90,9 @@ const deleteLog = createSchema({
     id: z.uuidv7(),
   }),
 
-  response: z.void(),
+  response: z.void(), // 204 no content
 });
 
-/**
- * Tenant-wide totals.
- *
- * No filters, deliberately. Every figure below is either counted or derived
- * from statistics the planner keeps per column, and `tags` has neither - the
- * planner has no statistics for jsonb containment and returns the same
- * hardcoded guess whatever value it is given. A filtered variant would
- * therefore be exact for `status`, roughly right for `model`, and silently
- * meaningless for `tags`, which is a worse API than not offering it.
- *
- * `estimated` is the honest part of the contract: past a threshold these stop
- * being counts. It is a field rather than a separate endpoint because the
- * caller renders the same panel either way and only needs to know whether to
- * prefix a "~".
- */
-const stats = createSchema({
   response: z.object({
     // The sum of by_status, so the three always add up to it - see getLogStats
     // for why that is built rather than asserted.
