@@ -173,8 +173,13 @@ function toChatCompletionHttpException(
 
     case 'PROVIDER_REJECTED_REQUEST':
       return new HTTPException(failure.status as 400, {
-        message: `Upstream provider rejected the request: ${failure.message}`,
-        cause: failure.cause,
+        // Authentication errors can echo the supplied secret and provider URLs.
+        message:
+          failure.status === 401
+            ? 'Invalid provider API key. Check your credentials and try again.'
+            : `Upstream provider rejected the request: ${failure.message}`,
+        cause: failure.status === 401 ? undefined : failure.cause,
+        res: new Response(null, { headers: { 'ai-error-source': 'upstream' } }),
       });
 
     case 'PROVIDER_FAILED':
