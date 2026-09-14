@@ -2,7 +2,10 @@ import { expect, test } from 'bun:test';
 import { spendDrivers } from '../../src/lib/data/spend-drivers';
 
 const point = (model: string, requests: number, cost_total: number, provider = 'openai') => ({
-  provider, model, requests, cost_total,
+  provider,
+  model,
+  requests,
+  cost_total,
 });
 function effects(current: ReturnType<typeof point>[], previous: ReturnType<typeof point>[]) {
   const result = spendDrivers(current, previous);
