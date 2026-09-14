@@ -15,7 +15,7 @@
     "db:push": "bunx --bun drizzle-kit push --config=drizzle.config.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^1.0.0-rc.5-169397b",
+    "drizzle-orm": "^1.0.0-rc.5-5935859",
     "zod": "^4.5.4"
   },
   "devDependencies": {
