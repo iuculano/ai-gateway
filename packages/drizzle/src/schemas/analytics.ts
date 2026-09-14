@@ -1,4 +1,4 @@
-import { bigint, integer, numeric, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, index, integer, numeric, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 
 /**
@@ -39,6 +39,9 @@ export const analyticsHourly = pgTable(
     refreshed_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    // For the rollup worker's latest-bucket lookup across all organizations.
+    index('idx_analytics_hourly_on_bucket').on(t.bucket).concurrently(),
+
     // For unique hourly analytics groups.
     unique('analytics_hourly_key').on(
       t.organization_id,
