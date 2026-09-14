@@ -127,8 +127,16 @@ test('a batch returns healthy payloads when another referenced object is missing
   const actor = { actor_type: 'user', actor_id: acme.userId } as const;
   const first = await LogServices.startLog(acme.organizationId, { model: 'one', provider: 'test-provider', ...actor });
   const second = await LogServices.startLog(acme.organizationId, { model: 'two', provider: 'test-provider', ...actor });
-  await LogServices.completeLog(acme.organizationId, first, { request: { value: 'one' } });
-  await LogServices.completeLog(acme.organizationId, second, { request: { value: 'two' } });
+  await LogServices.completeLog(acme.organizationId, first, {
+    request: { value: 'one' },
+    response: {},
+    omitResponse: true,
+  });
+  await LogServices.completeLog(acme.organizationId, second, {
+    request: { value: 'two' },
+    response: {},
+    omitResponse: true,
+  });
 
   const [reference] = await admin`
     select request_object_reference

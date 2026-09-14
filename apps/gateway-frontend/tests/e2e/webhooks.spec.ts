@@ -6,6 +6,7 @@ for (const description of ['', '   ', '  Updated description  ']) {
   test(`webhook description updates persist: ${JSON.stringify(description)}`, async ({ page, api }) => {
     registerEmptyApp(api);
     let webhook: Webhook = {
+      creator_id: null,
       id: '0198f100-0000-7000-8000-000000000009',
       name: 'Billing webhook',
       description: 'Original description',

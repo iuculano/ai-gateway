@@ -1451,7 +1451,7 @@ test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', as
 
 test('a failure before the first chunk is still a normal error response, not a broken stream', async () => {
   aiState.streamOnError = new APICallError({
-    message: 'invalid api key',
+    message: 'Incorrect API key provided: secret-test-key. Visit https://provider.test/api-keys.',
     url: 'https://api.openai.test',
     requestBodyValues: {},
     statusCode: 401,
@@ -1461,8 +1461,12 @@ test('a failure before the first chunk is still a normal error response, not a b
   const response = await post(body({ stream: true }));
 
   expect(response.status).toBe(401);
+  expect(response.headers.get('ai-error-source')).toBe('upstream');
   expect(response.headers.get('content-type')).not.toContain('text/event-stream');
   expect(response.headers.get('ai-trace-id')).toMatch(/^[0-9a-f]{32}$/);
+  expect(await response.json()).toMatchObject({
+    error: { message: 'Invalid provider API key. Check your credentials and try again.' },
+  });
 });
 
 test('the non-streaming handler echoes the log id it opened', async () => {
@@ -1493,4 +1497,18 @@ test('an explicit zero provider cache count is stored as zero', async () => {
   };
   await withCaller(() => Services.createChatCompletion(headers(), body()));
   expect(logWrites.completed[0]?.entry.cached_input_tokens).toBe(0);
+});
+test('non-streamed provider authentication failures identify the upstream source', async () => {
+  aiState.generateError = new APICallError({
+    message: 'Incorrect API key provided: secret-test-key. Visit https://provider.test/api-keys.',
+    url: 'https://api.openai.test',
+    requestBodyValues: {},
+    statusCode: 401,
+  });
+  const response = await post(body());
+  expect(response.status).toBe(401);
+  expect(response.headers.get('ai-error-source')).toBe('upstream');
+  expect(await response.json()).toMatchObject({
+    error: { message: 'Invalid provider API key. Check your credentials and try again.' },
+  });
 });

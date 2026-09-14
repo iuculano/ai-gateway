@@ -4,8 +4,6 @@ import { listProviders } from '$lib/api/models';
 import type { CatalogProvider } from '$lib/api/types';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import ProviderRow from '$lib/components/models/provider-row.svelte';
@@ -106,24 +104,6 @@ const lastSynced = $derived.by(() => {
 	description="The model catalogue and published prices, synced hourly from models.dev."
 />
 
-<StatGrid>
-	<StatCard label="Providers" value={providers.length} />
-	<StatCard label="Models" value={allModels.length} hint={customCount > 0 ? `${customCount} custom` : undefined} />
-	<!-- Surfaced rather than buried: an unpriced model is one that bills at
-	     nothing, and the count belongs where it cannot be missed. -->
-	<StatCard
-		label="Unpriced"
-		value={unpricedCount}
-		hint="of {allModels.length}"
-		accent={unpricedCount > 0 ? '#f59e0b' : undefined}
-	/>
-	<StatCard
-		label="Last synced"
-		value={lastSynced ? timeAgo(lastSynced) : '—'}
-		hint={lastSynced ? 'from models.dev' : undefined}
-	/>
-</StatGrid>
-
 <TableCard
 	cols={COLS}
 	columns={COLUMNS}
@@ -143,7 +123,23 @@ const lastSynced = $derived.by(() => {
 			bind:value={search}
 			class="h-8 w-64 rounded-lg border border-line-strong bg-surface-3 px-2.5 text-[12.5px] text-zinc-200 placeholder:text-zinc-600 focus:border-line-strong focus:outline-none"
 		/>
-		<span class="text-[12.5px] text-zinc-600">{shownCount} of {allModels.length} models</span>
+		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
+			<span class="font-medium text-zinc-100 tabular-nums">{shownCount.toLocaleString()}</span>
+			of <span class="font-medium text-zinc-200 tabular-nums">{allModels.length.toLocaleString()}</span> models
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium text-zinc-200 tabular-nums">{providers.length.toLocaleString()}</span> providers
+			{#if customCount > 0}
+				<span class="mx-1 text-zinc-600">·</span>
+				<span class="font-medium text-violet-400 tabular-nums">{customCount.toLocaleString()}</span> custom
+			{/if}
+			<span class="mx-1 text-zinc-600">·</span>
+			<span class="font-medium tabular-nums {unpricedCount > 0 ? 'text-amber-400' : 'text-zinc-200'}">{unpricedCount.toLocaleString()}</span> unpriced
+			<span class="mx-1 text-zinc-600">·</span>
+			last synced <span
+				class="font-medium tabular-nums {lastSynced ? (Date.now() - new Date(lastSynced).getTime() > 3 * 60 * 60 * 1000 ? 'text-amber-400' : 'text-emerald-400') : 'text-zinc-600'}"
+				title={lastSynced ? `From models.dev · ${lastSynced}` : undefined}
+			>{lastSynced ? timeAgo(lastSynced) : '—'}</span>
+		</span>
 		<div class="ml-auto flex items-center gap-2.5">
 			<ToolbarButton onclick={load} disabled={loading}>
 				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>

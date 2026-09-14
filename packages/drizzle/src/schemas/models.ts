@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { boolean, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 
 export const models = pgTable(
@@ -34,6 +45,9 @@ export const models = pgTable(
     updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    // For provider/name lookups across built-in and custom models.
+    index('idx_models_on_provider_name').on(t.provider, t.name),
+
     // For unique built-in models.
     uniqueIndex('models_builtin_key').on(t.provider, t.name).where(sql`${t.source} = 'builtin'`),
 

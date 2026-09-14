@@ -11,6 +11,6 @@ import type { Snippet } from 'svelte';
 let { children }: { children: Snippet } = $props();
 </script>
 
-<div class="flex flex-wrap items-center gap-3 border-b border-line px-4 py-[13px]">
+<div class="flex flex-wrap items-center border-b border-line gap-3 px-4 py-[13px]">
 	{@render children()}
 </div>

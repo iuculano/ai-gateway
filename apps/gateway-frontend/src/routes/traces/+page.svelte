@@ -16,10 +16,8 @@ import type { Trace, TraceDetail, TraceNode, TraceSource, TraceStatus } from '$l
 import CardToolbar from '$lib/components/app/card-toolbar.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmt, fmtCost, fmtCostTotal, fmtLatency, fmtTokens, fmtTs } from '$lib/data/format';
+import { fmtCost, fmtLatency, fmtTokens, fmtTs } from '$lib/data/format';
 import { dashboard } from '$lib/state/dashboard.svelte';
 
 type TraceFilter = 'all' | 'errors' | 'slow';
@@ -213,24 +211,6 @@ const selectedNode = $derived(nodes.find((node) => node.id === selectedNodeId) ?
 const windowMs = $derived(detail?.trace.window_ms ?? 0);
 const totalSpans = $derived(nodes.filter((node) => node.source === 'application_span').length);
 
-// Computed over the page in view, and labelled as such - there is no aggregate
-// endpoint for traces yet, and captioning 25 rows as '24h' would put an
-// invented number in front of somebody reading it as one.
-const failedTraces = $derived(traces.filter((trace) => trace.status === 'failed').length);
-const successRate = $derived(traces.length === 0 ? null : ((traces.length - failedTraces) / traces.length) * 100);
-const medianDuration = $derived.by(() => {
-  const durations = traces
-    .map((trace) => trace.duration_ms)
-    .filter((duration): duration is number => duration !== null)
-    .toSorted((left, right) => left - right);
-
-  return durations[Math.floor(durations.length / 2)] ?? null;
-});
-const pageSpend = $derived(traces.reduce((sum, trace) => sum + Number(trace.total_cost), 0));
-const pageTokens = $derived(
-  traces.reduce((sum, trace) => sum + trace.total_input_tokens + trace.total_output_tokens, 0),
-);
-
 function traceStatusClass(status: TraceStatus): string {
   if (status === 'failed') return 'border-red-500/20 bg-red-500/10 text-red-400';
   if (status === 'partial') return 'border-amber-500/20 bg-amber-500/10 text-amber-400';
@@ -404,16 +384,6 @@ async function copyTraceId() {
 	{/snippet}
 </PageHeader>
 
-<StatGrid>
-	<StatCard label="Traces · page" value={fmt(traces.length)} hint={failedTraces > 0 ? `${failedTraces} failed` : undefined} />
-	<StatCard
-		label="Success rate · page"
-		value={successRate === null ? '—' : `${successRate.toFixed(1)}%`}
-		accent={successRate !== null && successRate >= 99 ? '#10b981' : undefined}
-	/>
-	<StatCard label="Median duration · page" value={fmtLatency(medianDuration)} />
-	<StatCard label="Trace spend · page" value={fmtCostTotal(pageSpend)} hint="{fmt(pageTokens)} tok" />
-</StatGrid>
 
 <div class="grid items-start gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
 	<section class="overflow-hidden rounded-xl border border-track bg-surface-1" aria-label="Trace list">
@@ -422,7 +392,7 @@ async function copyTraceId() {
 		</CardToolbar>
 
 		<div class="flex min-h-10 items-center justify-between border-b border-line px-4 text-[11px] text-zinc-600">
-			<span>{filteredTraces.length} of {traces.length} on this page</span>
+			<span><span class="text-zinc-100 tabular-nums">{filteredTraces.length}</span> of <span class="text-zinc-100 tabular-nums">{traces.length}</span> on this page</span>
 			<span class="tracking-[.05em] uppercase">Newest first</span>
 		</div>
 
@@ -599,11 +569,11 @@ async function copyTraceId() {
 					<div class="flex items-center gap-1.5 whitespace-nowrap text-[10.5px] text-zinc-500">
 						<span class="size-1.5 rounded-[1px]" style:background={entry.color}></span>
 						{entry.label}
-						<span class="text-zinc-700 tabular-nums">{entry.count}</span>
+						<span class="text-zinc-100 tabular-nums">{entry.count}</span>
 					</div>
 				{/each}
 				<div class="ml-auto flex items-center gap-3">
-					<span class="text-[10.5px] text-zinc-600">{totalSpans} application spans</span>
+					<span class="text-[10.5px] text-zinc-600"><span class="text-zinc-100 tabular-nums">{totalSpans}</span> application spans</span>
 					<button
 						type="button"
 						aria-pressed={showMap}
@@ -650,11 +620,11 @@ async function copyTraceId() {
 					</svg>
 
 					<div class="mt-2 flex flex-wrap items-center gap-x-2 text-[10.5px] text-zinc-600">
-						<span class="tabular-nums">{nodes.length} nodes</span>
+						<span class="tabular-nums"><span class="text-zinc-100">{nodes.length}</span> nodes</span>
 						<span class="text-zinc-800">•</span>
-						<span class="tabular-nums">{mapDepth} levels deep</span>
+						<span class="tabular-nums"><span class="text-zinc-100">{mapDepth}</span> levels deep</span>
 						<span class="text-zinc-800">•</span>
-						<span class="tabular-nums">{fmtLatency(windowMs)} end to end</span>
+						<span class="tabular-nums"><span class="text-zinc-100">{fmtLatency(windowMs)}</span> end to end</span>
 					</div>
 				</div>
 			{/if}

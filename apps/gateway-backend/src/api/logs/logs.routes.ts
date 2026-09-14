@@ -91,11 +91,6 @@ const getLogResponse = createRoute({
   },
 });
 
-/**
- * POST, not GET, for both batch routes: the id list is the payload, and a few
- * hundred UUIDs in a query string runs into proxy URL limits well before the
- * documented maximum of 100 becomes the binding constraint.
- */
 const getLogRequestBatch = createRoute({
   method: 'post' as const,
   path: '/logs/batch/request',
@@ -173,26 +168,18 @@ const listLogs = createRoute({
   },
 });
 
-/**
- * Registered BEFORE /logs/:id.
- *
- * `/logs/stats` and `/logs/:id` are both GET and both match this path. If the
- * parameterised route wins, "stats" is bound to :id, fails the uuidv7 check and
- * answers 400 - a routing bug wearing a validation error's clothes. The two
- * batch routes avoid this only by being POST.
- */
-const getLogStats = createRoute({
+const countLogs = createRoute({
   method: 'get' as const,
-  path: '/logs/stats',
+  path: '/logs/count',
   security: bearerSecurity,
   middleware: [authorize({ scopes: [SCOPES.logsRead] })],
   responses: {
     ...protectedRouteErrors,
     200: {
-      description: 'Totals for the organization. Estimated above 100,000 logs.',
+      description: 'Totals for the organization',
       content: {
         'application/json': {
-          schema: Schemas.stats.response,
+          schema: Schemas.countLogs.response,
         },
       },
     },
@@ -230,6 +217,6 @@ export default {
   getLogRequestBatch,
   getLogResponseBatch,
   listLogs,
-  getLogStats,
+  countLogs,
   deleteLog,
 };

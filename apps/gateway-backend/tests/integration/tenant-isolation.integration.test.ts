@@ -96,8 +96,8 @@ test('log statistics and analytics are isolated', async () => {
   await seedLog(acme, 'acme-two');
   await seedLog(globex, 'globex-one');
 
-  const acmeStats = await asTenant(acme, () => LogServices.getLogStats());
-  const globexStats = await asTenant(globex, () => LogServices.getLogStats());
+  const acmeStats = await asTenant(acme, () => LogServices.countLogs());
+  const globexStats = await asTenant(globex, () => LogServices.countLogs());
   expect(acmeStats.total).toBe(2);
   expect(globexStats.total).toBe(1);
 

@@ -8,12 +8,20 @@ if (!connectionString) {
   );
 }
 
+const databaseUrl = new URL(connectionString);
+
+// Planetscale uses this in their connection string but Bun doesn't support it.
+// Can seemingly just delete it.
+if (databaseUrl.searchParams.get('sslrootcert') === 'system') {
+  databaseUrl.searchParams.delete('sslrootcert');
+}
+
 export default defineConfig({
   schema: './schemas.ts',
   out: './migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    url: connectionString,
+    url: databaseUrl.toString(),
   },
   breakpoints: true,
   verbose: true,

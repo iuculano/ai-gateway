@@ -63,16 +63,15 @@ const handler: RequestHandler = async ({ params, request, cookies, url, locals }
    * deactivated user, a rotated JWKS, or a session evicted from Valkey - all of
    * which arrive here as a 401 on a token that looked valid moments ago.
    *
-   * Re-sending is safe even for a POST because authenticate() is middleware
-   * that throws before any handler runs, so a 401 is proof that nothing was
-   * mutated. That is specifically NOT true of a 5xx or a timeout, which is why
-   * only this one status is retried.
+   * Only gateway authentication failures can be retried safely. An upstream
+   * provider's 401 is marked separately: our session was accepted and the
+   * handler already ran, so refreshing it would replay a failed inference.
    *
    * Never on 403: that is authorize() saying the token is fine and the caller
    * lacks the scope, and a new token carries the same scopes. Retrying it would
    * loop without ever changing the answer.
    */
-  if (response.status === 401 && session.refreshToken) {
+  if (response.status === 401 && response.headers.get('ai-error-source') !== 'upstream' && session.refreshToken) {
     const renewed: Session | null = await refreshSession(cookies);
 
     if (renewed && renewed.accessToken !== session.accessToken) {

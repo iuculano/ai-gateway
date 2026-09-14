@@ -65,7 +65,7 @@ Load shape:
   --concurrency <n>            maximum in-flight requests             (default: 200)
   --logging-modes <csv>        row,full                                (default: row,full)
   --protocols <csv>            nonstream,stream                        (default: nonstream)
-  --mix <weights>              chat/logs/stats/payloads traffic       (default: chat:100)
+  --mix <weights>              chat/logs/count/payloads traffic       (default: chat:100)
   --logs-query <query>         query string used by the logs workload (default: limit=25)
   --batch-size <n>             ids per payload batch, maximum 100     (default: 25)
   --request-bytes <n>          approximate chat prompt bytes          (default: 256)
@@ -565,7 +565,7 @@ async function performRequest(context: RequestContext): Promise<RequestSample> {
       body = read.body;
       firstByteMs = read.firstByteMs;
     } else if (context.workload === 'stats') {
-      response = await fetch(gatewayEndpoint('/v1/logs/stats'), {
+      response = await fetch(gatewayEndpoint('/v1/logs/count'), {
         headers: commonHeaders(context.apiKey),
         signal: AbortSignal.timeout(timeoutMs),
       });

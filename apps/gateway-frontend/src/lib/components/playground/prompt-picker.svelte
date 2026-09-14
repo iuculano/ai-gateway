@@ -44,7 +44,8 @@ let loadError: string | null = $state(null);
 let values: Record<string, string> = $state({});
 
 onMount(() => {
-  prompts.ensureLoaded();
+  // The picker must not inherit the prompts page's status filter or cursor.
+  void prompts.list.filterByStatus('all');
 });
 
 const selected = $derived<Prompt | undefined>(prompts.list.rows.find((prompt) => prompt.name === promptName));

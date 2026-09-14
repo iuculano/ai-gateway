@@ -1,21 +1,21 @@
 import { parseTags, probe, toPage } from '@repo/core';
-import { and, asc, db, desc, eq, gt, inArray, lt, sql } from '@repo/drizzle';
+import { and, asc, countRows, db, desc, eq, gt, inArray, lt, sql } from '@repo/drizzle';
 import { logs } from '@repo/drizzle/schemas';
 import { getCaller, getTraceContext } from '@repo/hono';
 import { objectStorage } from '@repo/object-storage';
 import { err, ok, type Result } from 'neverthrow';
 import Schemas, {
   type BatchResponse,
+  type CountLogsResponse,
   type DeleteLogResponse,
   type GetLogPayloadResponse,
   type GetLogResponse,
   type ListLogsQuery,
   type ListLogsResponse,
   type LogShape,
-  type LogStatsResponse,
 } from './logs.schemas';
 
-/** Which of the two payloads an operation is about. */
+// What type of payload we're attempting to retrieve.
 export type PayloadSide = 'request' | 'response';
 
 // The underlying error definitions.
@@ -24,18 +24,6 @@ type LogNotFoundFailure = {
   id: string;
 };
 
-/**
- * Three ways a payload read can come back empty, kept apart on purpose.
- *
- * They all answer 404, but with different messages, and the difference is worth
- * something to whoever is reading it: a log that was never given a payload on
- * that side is a normal state that will never change, while one whose object
- * has gone means the row still advertises something that a lifecycle rule or a
- * stray delete has since taken away. Collapsing them would lose that.
- *
- * `side` travels with the failure because the message names it, and the handler
- * has no other way to know which of the two endpoints it is answering for.
- */
 type PayloadNotStoredFailure = {
   code: 'PAYLOAD_NOT_STORED';
   id: string;
@@ -53,22 +41,10 @@ export type GetLogFailure = LogNotFoundFailure;
 export type GetLogPayloadFailure = LogNotFoundFailure | PayloadNotStoredFailure | PayloadUnavailableFailure;
 export type DeleteLogFailure = LogNotFoundFailure;
 
-/**
- * Where a payload lives.
- *
- * Organization first, so a bucket lifecycle rule or a tenant-wide purge is a
- * prefix operation rather than a scan. The key is stored on the row rather than
- * recomputed at read time, so this layout can change without a migration -
- * existing rows keep pointing at where their objects actually are.
- */
 function objectKey(organizationId: string, logId: string, side: PayloadSide): string {
   return `logs/${organizationId}/${logId}/${side}.json.zst`;
 }
 
-/**
- * Adds the derived has_request / has_response flags and drops the internal
- * key columns.
- */
 function toLogShape(row: typeof logs.$inferSelect): LogShape {
   return Schemas.getLog.response.parse({
     ...row,
@@ -85,43 +61,47 @@ function toLogShape(row: typeof logs.$inferSelect): LogShape {
  */
 async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>> {
   const caller = getCaller();
+
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select()
     .from(logs)
-    .where(and(eq(logs.organization_id, caller.organization.id), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, caller.organization.id),
+      eq(logs.id, id)
+    ));
 
   if (!row) {
     return err({ code: 'LOG_NOT_FOUND', id });
   }
 
-  return ok(toLogShape(row));
+  const parsed = toLogShape(row);
+  return ok(parsed);
 }
 
 /**
  * Retrieves one side of a log's stored payload.
- *
- * The tenant-scoped row is resolved before its object key, so object storage is
- * never queried for another tenant's log.
  *
  * @param id
  * The id of the log.
  *
  * @param side
  * Which payload to read.
- *
- * @returns
- * The stored payload or the expected reason it is unavailable. Storage failures
- * still reject.
  */
 async function getLogPayload(
   id: string,
   side: PayloadSide,
 ): Promise<Result<GetLogPayloadResponse, GetLogPayloadFailure>> {
   const caller = getCaller();
+
+  // biome-ignore format: looks nicer
   const [row] = await db
     .select()
     .from(logs)
-    .where(and(eq(logs.organization_id, caller.organization.id), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, caller.organization.id),
+      eq(logs.id, id)
+    ));
 
   if (!row) {
     return err({ code: 'LOG_NOT_FOUND', id });
@@ -132,11 +112,9 @@ async function getLogPayload(
     return err({ code: 'PAYLOAD_NOT_STORED', id, side });
   }
 
-  // Null means absent - transport and decoding failures are unexpected errors.
+  // Have a reference saved but the object is missing, somehow.
   const payload = await objectStorage.getJson(key);
   if (payload === null) {
-    // Distinguish a missing referenced object from a payload that was never
-    // stored.
     return err({ code: 'PAYLOAD_UNAVAILABLE', id, side });
   }
 
@@ -146,17 +124,11 @@ async function getLogPayload(
 /**
  * Retrieves one side of the payload for many logs at once.
  *
- * Reads are concurrent, and absent payloads are reported in `meta.missing` rather than
- * failing the batch.
- *
  * @param ids
- * The log ids to read. Already length-capped by the schema.
+ * The log ids to read.
  *
  * @param side
  * Which payload to read.
- *
- * @returns
- * The payloads that resolved, keyed by log id, plus the ids that did not.
  */
 async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<BatchResponse> {
   const caller = getCaller();
@@ -218,14 +190,12 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
 /**
  * Retrieves a list of logs, filtered by the given criteria.
  *
- * Deliberately not a Result: an empty page is a page, and there is no outcome
- * here the caller could correct.
- *
  * @param query
  * The filter criteria.
  */
 async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
   const caller = getCaller();
+
   // Expected format is "key1:value1,key2:value2"
   const tagsToFilter = parseTags(query.tags);
 
@@ -282,169 +252,50 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
   });
 }
 
-/**
- * Above this size, statistics use a bounded sample instead of scanning every
- * tenant row.
- */
-const EXACT_THRESHOLD = 100_000;
+async function countLogs(): Promise<CountLogsResponse> {
+  const caller = getCaller();
 
-/**
- * Target sample size keeps estimated-query work stable as tenants grow.
- */
-const TARGET_SAMPLE_ROWS = 20_000;
+  const by_status = { complete: 0, failed: 0, incomplete: 0 };
+  let estimated = false;
 
-/**
- * Caps page reads because `TABLESAMPLE` runs before the tenant predicate; small
- * tenants in a shared table may therefore receive a noisier sample.
- */
-const MAX_SAMPLE_PERCENTAGE = 5;
+  // Ouch, this can scan 3x for an upwards of 300,000 rows!!
+  // TODO figure out a better way to handle this - maybe cache the counts?
+  for (const status of ['complete', 'failed', 'incomplete'] as const) {
+    // biome-ignore format: looks nicer
+    const result = await countRows(db, logs, {
+      where: and(
+        eq(logs.organization_id, caller.organization.id),
+        eq(logs.status, status)
+      ),
+    });
 
-/**
- * The planner's own estimate of how many rows this tenant has.
- *
- * `EXPLAIN` without `ANALYZE` avoids executing the count. The estimate is used
- * only for the tenant predicate; narrower breakdowns come from the sample.
- */
-async function estimateLogCount(organizationId: string): Promise<number> {
-  const rows = await db.execute<Record<string, unknown>>(
-    sql`explain (format json) select 1 from ${logs} where ${logs.organization_id} = ${organizationId}`,
-  );
-
-  // Drivers may return EXPLAIN JSON either parsed or serialized.
-  const raw = Object.values(rows[0] ?? {})[0];
-  const plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
-
-  const estimate = plan?.[0]?.Plan?.['Plan Rows'];
-
-  return typeof estimate === 'number' && Number.isFinite(estimate) ? Math.max(0, Math.round(estimate)) : 0;
-}
-
-/**
- * Tenant-wide totals, counted when that is cheap and sampled when it is not.
- *
- * A capped count selects the exact or estimated path without scanning beyond
- * the threshold. Large tenants use the planner for the total and one bounded
- * sample for all breakdowns; empty tenants return zeroes.
- */
-async function getLogStats(): Promise<LogStatsResponse> {
-  const organizationId = getCaller().organization.id;
-  const [capped] = await db.execute<{ total: number }>(
-    sql`select count(*)::int as total
-        from (
-          select 1
-          from ${logs}
-          where ${logs.organization_id} = ${organizationId}
-          limit ${EXACT_THRESHOLD + 1}
-        ) t`,
-  );
-
-  const cappedTotal = capped?.total ?? 0;
-
-  if (cappedTotal <= EXACT_THRESHOLD) {
-    const [row] = await db.execute<Record<string, string | number>>(sql`
-      select
-        count(*) filter (where ${logs.status} = 'complete')::int   as complete,
-        count(*) filter (where ${logs.status} = 'failed')::int     as failed,
-        count(*) filter (where ${logs.status} = 'incomplete')::int as incomplete,
-        coalesce(sum(${logs.input_tokens}), 0)::bigint             as input_tokens,
-        coalesce(sum(${logs.output_tokens}), 0)::bigint            as output_tokens,
-        coalesce(sum(${logs.input_cost}), 0)                       as input_cost,
-        coalesce(sum(${logs.output_cost}), 0)                      as output_cost
-      from ${logs}
-      where ${logs.organization_id} = ${organizationId}
-    `);
-
-    return toStats(row ?? {}, false);
+    by_status[status] = result.count;
+    estimated = estimated || result.estimated;
   }
 
-  const estimate = await estimateLogCount(organizationId);
-
-  // One page-level sample supplies every breakdown. Derive its percentage from
-  // the estimate, then clamp it to bound work and avoid rounding to an empty sample.
-  const percentage = Math.min(
-    MAX_SAMPLE_PERCENTAGE,
-    Math.max(0.01, (100 * TARGET_SAMPLE_ROWS) / Math.max(estimate, 1)),
-  );
-
-  const [sample] = await db.execute<Record<string, string | number>>(sql`
-    select
-      count(*)::int                                              as sampled,
-      count(*) filter (where ${logs.status} = 'complete')::int    as complete,
-      count(*) filter (where ${logs.status} = 'failed')::int      as failed,
-      count(*) filter (where ${logs.status} = 'incomplete')::int  as incomplete,
-      coalesce(sum(${logs.input_tokens}), 0)::bigint              as input_tokens,
-      coalesce(sum(${logs.output_tokens}), 0)::bigint             as output_tokens,
-      coalesce(sum(${logs.input_cost}), 0)                        as input_cost,
-      coalesce(sum(${logs.output_cost}), 0)                       as output_cost
-    from ${logs} tablesample system (${percentage})
-    where ${logs.organization_id} = ${organizationId}
-  `);
-
-  const sampled = Number(sample?.sampled ?? 0);
-
-  // A page sample can miss a tenant entirely; preserve the estimated total
-  // instead of reporting a confident zero or dividing by it.
-  if (!sample || sampled === 0) {
-    return toStats({ complete: estimate }, true);
-  }
-
-  // Scale sums so null token and cost values need no separate treatment.
-  const scale = estimate / sampled;
-
-  return toStats(
-    {
-      complete: Math.round(Number(sample.complete) * scale),
-      failed: Math.round(Number(sample.failed) * scale),
-      incomplete: Math.round(Number(sample.incomplete) * scale),
-      input_tokens: Math.round(Number(sample.input_tokens) * scale),
-      output_tokens: Math.round(Number(sample.output_tokens) * scale),
-      input_cost: Number(sample.input_cost) * scale,
-      output_cost: Number(sample.output_cost) * scale,
-    },
-    true,
-  );
-}
-
-/**
- * Assembles the response from either branch's raw figures.
- *
- * Deriving `total` from the rounded status counts keeps estimated totals
- * consistent with the visible breakdown.
- */
-function toStats(row: Record<string, string | number | undefined>, estimated: boolean): LogStatsResponse {
-  const complete = Number(row.complete ?? 0);
-  const failed = Number(row.failed ?? 0);
-  const incomplete = Number(row.incomplete ?? 0);
-
-  const inputTokens = Number(row.input_tokens ?? 0);
-  const outputTokens = Number(row.output_tokens ?? 0);
-
-  const inputCost = Number(row.input_cost ?? 0);
-  const outputCost = Number(row.output_cost ?? 0);
-
-  return Schemas.stats.response.parse({
-    total: complete + failed + incomplete,
-    estimated: estimated,
-    by_status: { complete, failed, incomplete },
-    tokens: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
-    cost: { input: inputCost, output: outputCost, total: inputCost + outputCost },
+  return Schemas.countLogs.response.parse({
+    total: by_status.complete + by_status.failed + by_status.incomplete,
+    estimated,
+    by_status,
   });
 }
 
 /**
  * Deletes a log and both of its stored payloads.
  *
- * The row is deleted first so a later storage failure leaves lifecycle-cleanable
- * orphans rather than references to missing payloads.
- *
  * @param id
  * The id of the log to delete.
  */
 async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLogFailure>> {
   const caller = getCaller();
+
+  // biome-ignore format: looks nicer
   const [row] = await db
     .delete(logs)
-    .where(and(eq(logs.organization_id, caller.organization.id), eq(logs.id, id)))
+    .where(and(
+      eq(logs.organization_id, caller.organization.id),
+      eq(logs.id, id)
+    ))
     .returning();
 
   if (!row) {
@@ -452,11 +303,9 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
   }
 
   const keys = [row.request_object_reference, row.response_object_reference].filter((key) => key !== null);
-
-  // Surface storage failures because they leave orphaned objects after row deletion.
   await objectStorage.deleteMany(keys);
 
-  return ok(undefined);
+  return ok(undefined); // 204 no content
 }
 
 /**
@@ -518,12 +367,8 @@ async function startLog(
 /**
  * Stores the payloads for a finished inference and marks the log complete.
  *
- * Non-omitted payloads are written concurrently before their references are
- * published on the row, preventing a completed log from advertising an object
- * that is not yet readable.
- *
  * @param organizationId
- * The tenant the log belongs to. Passed explicitly - see startLog.
+ * The tenant the log belongs to.
  *
  * @param id
  * The log to complete, from startLog.
@@ -535,8 +380,8 @@ async function completeLog(
   organizationId: string,
   id: string,
   entry: {
-    request?: unknown;
-    response?: unknown;
+    request: unknown;
+    response: unknown;
     omitRequest?: boolean;
     omitResponse?: boolean;
     gateway_cache_hit?: boolean;
@@ -548,17 +393,15 @@ async function completeLog(
     response_time_ms?: number;
   },
 ): Promise<void> {
-  const writeRequest = entry.request !== undefined && !entry.omitRequest;
-  const writeResponse = entry.response !== undefined && !entry.omitResponse;
-
-  const requestKey = writeRequest ? objectKey(organizationId, id, 'request') : null;
-  const responseKey = writeResponse ? objectKey(organizationId, id, 'response') : null;
+  const requestKey = entry.omitRequest ? null : objectKey(organizationId, id, 'request');
+  const responseKey = entry.omitResponse ? null : objectKey(organizationId, id, 'response');
 
   await Promise.all([
     requestKey ? objectStorage.putJson(requestKey, entry.request) : Promise.resolve(),
     responseKey ? objectStorage.putJson(responseKey, entry.response) : Promise.resolve(),
   ]);
 
+  // biome-ignore format: looks nicer
   await db
     .update(logs)
     .set({
@@ -573,43 +416,45 @@ async function completeLog(
       ...(entry.output_cost != null ? { output_cost: entry.output_cost } : {}),
       ...(entry.response_time_ms != null ? { response_time_ms: entry.response_time_ms } : {}),
     })
-    .where(and(eq(logs.organization_id, organizationId), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, organizationId),
+      eq(logs.id, id)
+    ));
 }
 
 /**
  * Marks a log failed.
  *
- * The request payload remains useful for diagnosing the failure and is retained
- * unless explicitly omitted.
- *
  * @param organizationId
- * The tenant the log belongs to. Passed explicitly - see startLog.
+ * The tenant the log belongs to.
  *
  * @param id
  * The log to fail, from startLog.
  *
  * @param entry
- * The request payload, if there is one worth keeping.
+ * The request payload and its storage-omission control.
  */
 async function failLog(
   organizationId: string,
   id: string,
-  entry: { request?: unknown; omitRequest?: boolean } = {},
+  entry: { request: unknown; omitRequest?: boolean },
 ): Promise<void> {
-  const writeRequest = entry.request !== undefined && !entry.omitRequest;
-  const requestKey = writeRequest ? objectKey(organizationId, id, 'request') : null;
-
-  if (requestKey) {
-    await objectStorage.putJson(requestKey, entry.request);
+  const key = entry.omitRequest ? null : objectKey(organizationId, id, 'request');
+  if (key) {
+    await objectStorage.putJson(key, entry.request);
   }
 
+  // biome-ignore format: looks nicer
   await db
     .update(logs)
     .set({
       status: 'failed',
-      ...(requestKey ? { request_object_reference: requestKey } : {}),
+      ...(key ? { request_object_reference: key } : {}),
     })
-    .where(and(eq(logs.organization_id, organizationId), eq(logs.id, id)));
+    .where(and(
+      eq(logs.organization_id, organizationId),
+      eq(logs.id, id)
+    ));
 }
 
 export default {
@@ -617,10 +462,9 @@ export default {
   getLogPayload,
   getLogPayloadBatch,
   listLogs,
-  getLogStats,
+  countLogs,
   deleteLog,
 
-  // Ingestion. Not reachable over HTTP - see the note in logs.routes.ts.
   startLog,
   completeLog,
   failLog,

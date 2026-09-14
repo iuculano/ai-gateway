@@ -124,21 +124,8 @@ test('DELETE /logs/:id maps LOG_NOT_FOUND to 404', async () => {
 });
 
 test('static collection routes are not swallowed by parameter routes', async () => {
-  database.respondTo(
-    'execute',
-    null,
-    rows({ total: 0 }),
-    rows({
-      complete: 0,
-      failed: 0,
-      incomplete: 0,
-      input_tokens: 0,
-      output_tokens: 0,
-      input_cost: 0,
-      output_cost: 0,
-    }),
-  );
-  expect((await request('/logs/stats')).status).toBe(200);
+  database.respondTo('execute', null, ...[0, 0, 0].map((count) => rows({ count })));
+  expect((await request('/logs/count')).status).toBe(200);
 
   database.respondTo('select', 'webhook_outbox', rows());
   expect((await request('/webhooks/outbox')).status).toBe(200);

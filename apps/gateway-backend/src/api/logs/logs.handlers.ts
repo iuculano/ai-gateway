@@ -18,11 +18,6 @@ function toGetLogHttpException(failure: GetLogFailure): HTTPException {
   }
 }
 
-/**
- * All three payload failures are a 404, and the message is the whole difference
- * between them - which is why the service keeps them apart rather than
- * answering one collapsed "not found".
- */
 function toGetLogPayloadHttpException(failure: GetLogPayloadFailure): HTTPException {
   const { code } = failure;
 
@@ -59,7 +54,6 @@ function toDeleteLogHttpException(failure: DeleteLogFailure): HTTPException {
 
 /**
  * GET /logs/:id
- *
  * Retrieve a specific log by id.
  */
 const getLog = defineOpenAPIRoute({
@@ -79,7 +73,6 @@ const getLog = defineOpenAPIRoute({
 
 /**
  * GET /logs/:id/request
- *
  * Retrieve the request payload as it was submitted.
  */
 const getLogRequest = defineOpenAPIRoute({
@@ -99,7 +92,6 @@ const getLogRequest = defineOpenAPIRoute({
 
 /**
  * GET /logs/:id/response
- *
  * Retrieve the response payload as it was returned.
  */
 const getLogResponse = defineOpenAPIRoute({
@@ -119,7 +111,6 @@ const getLogResponse = defineOpenAPIRoute({
 
 /**
  * POST /logs/batch/request
- *
  * Retrieve many request payloads at once, fetched concurrently.
  */
 const getLogRequestBatch = defineOpenAPIRoute({
@@ -134,7 +125,6 @@ const getLogRequestBatch = defineOpenAPIRoute({
 
 /**
  * POST /logs/batch/response
- *
  * Retrieve many response payloads at once, fetched concurrently.
  */
 const getLogResponseBatch = defineOpenAPIRoute({
@@ -149,7 +139,6 @@ const getLogResponseBatch = defineOpenAPIRoute({
 
 /**
  * GET /logs
- *
  * Retrieve a list of logs.
  */
 const listLogs = defineOpenAPIRoute({
@@ -163,14 +152,13 @@ const listLogs = defineOpenAPIRoute({
 });
 
 /**
- * GET /logs/stats
- *
+ * GET /logs/count
  * Totals for the organization, counted or estimated depending on size.
  */
-const getLogStats = defineOpenAPIRoute({
-  route: Routes.getLogStats,
+const countLogs = defineOpenAPIRoute({
+  route: Routes.countLogs,
   handler: async (c) => {
-    const result = await Services.getLogStats();
+    const result = await Services.countLogs();
 
     return c.json(result, 200);
   },
@@ -178,7 +166,6 @@ const getLogStats = defineOpenAPIRoute({
 
 /**
  * DELETE /logs/:id
- *
  * Delete a log and both of its stored payloads.
  */
 const deleteLog = defineOpenAPIRoute({
@@ -198,7 +185,7 @@ const deleteLog = defineOpenAPIRoute({
 });
 
 const app = new OpenAPIHono({ defaultHook: zodExceptionHook }).openapiRoutes([
-  getLogStats,
+  countLogs,
   getLog,
   getLogRequest,
   getLogResponse,

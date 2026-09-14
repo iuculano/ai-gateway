@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
+import CardToolbar from './card-toolbar.svelte';
 
 /**
  * A page-level card for a chart.
@@ -15,7 +16,7 @@ let {
   children,
 }: {
   title: string;
-  /** Sits under the title. Say what the number actually measures. */
+  /** Inline description beside the title; full text remains in its tooltip. */
   hint?: string;
   /** Right-aligned controls, e.g. a legend or a range toggle. */
   actions?: Snippet;
@@ -24,18 +25,18 @@ let {
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">
-	<div class="flex flex-wrap items-start justify-between gap-3 border-b border-line px-[18px] py-[13px]">
-		<div>
-			<h2 class="text-[13.5px] font-medium tracking-[-0.01em] text-zinc-200">{title}</h2>
+	<CardToolbar>
+		<div class="flex h-8 min-w-0 flex-1 items-center gap-2.5">
+			<h2 class="shrink-0 text-[13px] font-medium text-zinc-200">{title}</h2>
 			{#if hint}
-				<p class="mt-[3px] text-[11.5px] text-zinc-600">{hint}</p>
+				<p class="truncate text-[12.5px] text-zinc-500" title={hint}>{hint}</p>
 			{/if}
 		</div>
 		{#if actions}
-			<div class="flex flex-wrap items-center gap-3">{@render actions()}</div>
+			<div class="ml-auto flex min-h-8 flex-wrap items-center gap-3">{@render actions()}</div>
 		{/if}
-	</div>
-	<div class="px-[18px] py-4">
+	</CardToolbar>
+	<div class="px-4 py-[var(--analytics-body-padding,8px)]">
 		{@render children()}
 	</div>
 </div>

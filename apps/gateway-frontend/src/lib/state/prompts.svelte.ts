@@ -5,7 +5,6 @@ import {
   createPromptVersion,
   deletePrompt,
   deletePromptVersion,
-  listPrompts,
   listPromptVersions,
   type UpdatePromptInput,
   type UpdatePromptVersionInput,
@@ -13,7 +12,7 @@ import {
   updatePromptVersion,
 } from '$lib/api/prompts';
 import type { Prompt, PromptVersionSummary } from '$lib/api/types';
-import { CursorList } from './cursor-list.svelte';
+import { PromptList } from './prompt-list.svelte';
 
 const PAGE_SIZE = 50;
 
@@ -31,17 +30,14 @@ const EMPTY_VERSIONS: VersionsState = { rows: [], loading: false, error: null };
  * whichever ones have been opened.
  *
  * Versions are keyed by prompt id and fetched on demand rather than up front.
- * A page of 50 prompts is 50 more requests if they are all loaded eagerly, and
+ * A page of 20 prompts is 20 more requests if they are all loaded eagerly, and
  * the list is only ever read for the row the user has actually expanded or is
  * previewing.
  *
  * Mutations go to the API first; local state only changes on success.
  */
 class PromptsState {
-  readonly list = new CursorList<Prompt>(
-    (after) => listPrompts({ limit: PAGE_SIZE, after_id: after }),
-    'Failed to load prompts.',
-  );
+  readonly list = new PromptList();
 
   /**
    * Version lists, by prompt id.
@@ -99,7 +95,7 @@ class PromptsState {
 
   async create(input: CreatePromptInput): Promise<Prompt> {
     const created = await createPrompt(input);
-    this.list.rows = [created, ...this.list.rows];
+    await this.list.firstPage();
 
     return created;
   }
@@ -107,6 +103,7 @@ class PromptsState {
   async update(id: string, input: UpdatePromptInput): Promise<Prompt> {
     const updated = await updatePrompt(id, input);
     this.list.rows = this.list.rows.map((prompt) => (prompt.id === id ? updated : prompt));
+    await this.list.load();
 
     return updated;
   }
@@ -122,6 +119,8 @@ class PromptsState {
 
     this.list.rows = this.list.rows.filter((prompt) => prompt.id !== id);
     delete this.versions[id];
+    await this.list.load();
+    if (this.list.rows.length === 0 && this.list.pageIndex > 0) await this.list.previousPage();
   }
 
   /**
@@ -140,6 +139,7 @@ class PromptsState {
     const wasUnversioned = this.list.rows.find((prompt) => prompt.id === id)?.active_version == null;
     if (wasUnversioned) {
       this.patch(id, { active_version: created.version });
+      await this.list.load();
     }
 
     return created;

@@ -3,9 +3,17 @@ import { IDS, PAGE_META, PROMPT, PROMPT_VERSION, registerEmptyApp } from './fixt
 
 test('a prompt can be created, versioned, and rendered with an input', async ({ page, api }) => {
   registerEmptyApp(api);
-  api.post('/api/prompts', { status: 201, json: PROMPT });
+  const promptRows: (typeof PROMPT)[] = [];
+  api.get('/api/prompts', { json: { data: promptRows, meta: PAGE_META } });
+  api.post('/api/prompts', () => {
+    promptRows.push(PROMPT);
+    return { status: 201, json: PROMPT };
+  });
   api.get(`/api/prompts/${IDS.prompt}/versions`, { json: { data: [], meta: PAGE_META } });
-  api.post(`/api/prompts/${IDS.prompt}/versions`, { status: 201, json: PROMPT_VERSION });
+  api.post(`/api/prompts/${IDS.prompt}/versions`, () => {
+    promptRows[0] = { ...PROMPT, active_version: 1 };
+    return { status: 201, json: PROMPT_VERSION };
+  });
   api.get(`/api/prompts/${IDS.prompt}/versions/1`, { json: PROMPT_VERSION });
   api.post(`/api/prompts/${IDS.prompt}/versions/1/render`, (request) => {
     const inputs = (request.body as { inputs?: Record<string, string> }).inputs ?? {};

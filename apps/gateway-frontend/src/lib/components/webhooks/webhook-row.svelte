@@ -1,13 +1,13 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
+import { resolveActorNames } from '$lib/api/actors';
 import type { Webhook } from '$lib/api/types';
-import { copyToClipboard } from '$lib/clipboard';
 import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
 import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
 import DetailGrid from '$lib/components/app/detail-grid.svelte';
 import ExpandableRow from '$lib/components/app/expandable-row.svelte';
 import Panel from '$lib/components/app/panel.svelte';
-import { fmtTs, formatDate, initialsOf, pairSummary, timeAgo } from '$lib/data/format';
+import { fmtTs, formatDate, pairSummary, timeAgo } from '$lib/data/format';
 import type { WebhookActivity } from '$lib/data/webhooks';
 import { webhooks as store } from '$lib/state/webhooks.svelte';
 
@@ -40,11 +40,39 @@ const filterRules = $derived(Object.entries(w.filter ?? {}));
 const created = $derived(fmtTs(w.created_at));
 const updated = $derived(fmtTs(w.updated_at));
 
+let creatorName: string | null = $state(null);
+
+$effect(() => {
+  const creatorId = w.creator_id;
+  creatorName = null;
+  if (!expanded || !creatorId) return;
+
+  let cancelled = false;
+  const creator = { actor_type: 'user', actor_id: creatorId };
+  resolveActorNames([creator])
+    .then((name) => {
+      if (!cancelled) creatorName = name(creator);
+    })
+    .catch(() => {
+      // Keep the creator ID visible if name resolution is unavailable.
+    });
+
+  return () => {
+    cancelled = true;
+  };
+});
+
 const detailItems: DetailItem[] = $derived([
-  { label: 'Webhook ID', value: w.id },
+  {
+    label: 'Webhook ID',
+    value: w.id,
+    title: w.id,
+    copyable: true,
+    auditHref: `/audit?target_type=webhook&target_id=${encodeURIComponent(w.id)}`,
+  },
   { label: 'Created', value: created.full },
+  { label: 'Created by', value: creatorName ?? w.creator_id ?? '—', title: w.creator_id ?? undefined, mono: false },
   { label: 'Last updated', value: updated.full },
-  { label: 'Description', value: w.description ?? '—', mono: false },
   { label: 'Tags', value: pairSummary(w.tags), title: pairSummary(w.tags) },
   { label: 'Last attempt', value: timeAgo(activity.lastAttemptAt), mono: false },
 ]);
@@ -64,11 +92,6 @@ async function remove() {
   } finally {
     busy = false;
   }
-}
-
-function copyEndpoint(event: MouseEvent) {
-  event.stopPropagation();
-  void copyToClipboard(w.endpoint, 'Endpoint copied');
 }
 </script>
 
@@ -137,25 +160,7 @@ function copyEndpoint(event: MouseEvent) {
 	{/snippet}
 
 	{#snippet details()}
-		<!-- The endpoint gets a box of its own rather than a cell in the grid: it is
-		     the one field here worth copying, and a grid cell has nowhere to hang the
-		     button. Long URLs scroll sideways instead of wrapping the panel open. -->
-		<Panel title="Endpoint">
-			{#snippet actions()}
-				<button
-					type="button"
-					class="h-7 rounded-md border border-line-strong bg-surface-3 px-2.5 text-[11.5px] font-medium text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
-					onclick={copyEndpoint}
-				>
-					Copy
-				</button>
-			{/snippet}
-			<code class="block overflow-x-auto px-3.5 py-[13px] font-mono text-xs whitespace-nowrap text-zinc-200 select-all">
-				{w.endpoint}
-			</code>
-		</Panel>
-
-		<DetailGrid items={detailItems} cols={3} />
+		<DetailGrid items={detailItems} cols={6} />
 
 		<div class="grid grid-cols-2 gap-3.5">
 			<Panel title="Delivery filter">
@@ -188,7 +193,7 @@ function copyEndpoint(event: MouseEvent) {
 			<!-- Counted over the rows currently paged in, and captioned as such:
 			     neither list endpoint returns a total, so a bare figure here would
 			     read as the endpoint's lifetime history. -->
-			<Panel title="Activity · loaded window">
+			<Panel title="Activity">
 				<div class="flex grow items-center gap-8 px-3.5 py-[13px]">
 					<div>
 						<div class="mb-0.5 text-[10.5px] text-zinc-600">Pending</div>

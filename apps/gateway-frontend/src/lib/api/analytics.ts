@@ -1,4 +1,5 @@
 import type { AnalyticsSeriesResponse } from 'gateway-backend/schemas/analytics';
+import { topCallerReferences } from '$lib/data/caller-ranking';
 import { resolveActorNames } from './actors';
 import { client } from './client';
 
@@ -33,7 +34,9 @@ export async function fetchSeries(request: SeriesRequest) {
   const response = await client.analytics.series.$post({ json: request });
   const result = await response.json();
   if (!request.group_by?.includes('actor')) return result;
-  const actorName = await resolveActorNames(result.points);
+  // Only the top six in either view need display names. Keep all aggregates
+  // for accurate spend ranking and shares without resolving every caller.
+  const actorName = await resolveActorNames(topCallerReferences(result.points));
   return { ...result, points: result.points.map((point) => ({ ...point, actor_label: actorName(point) })) };
 }
 

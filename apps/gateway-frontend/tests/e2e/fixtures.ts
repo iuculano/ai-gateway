@@ -278,13 +278,11 @@ export function registerEmptyApp(api: ApiMock): void {
     json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },
   });
   api.get('/api/logs', { json: { data: [], meta: LOG_META } });
-  api.get('/api/logs/stats', {
+  api.get('/api/logs/count', {
     json: {
       total: 0,
       estimated: false,
       by_status: { complete: 0, failed: 0, incomplete: 0 },
-      tokens: { input: 0, output: 0, total: 0 },
-      cost: { input: 0, output: 0, total: 0 },
     },
   });
   api.get('/api/traces', { json: { data: [], meta: LOG_META } });
