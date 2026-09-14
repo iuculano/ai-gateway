@@ -25,7 +25,7 @@ let {
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">
-	<CardToolbar>
+	<CardToolbar compact>
 		<div class="flex h-8 min-w-0 flex-1 items-center gap-2.5">
 			<h2 class="shrink-0 text-[13px] font-medium text-zinc-200">{title}</h2>
 			{#if hint}
@@ -36,7 +36,7 @@ let {
 			<div class="ml-auto flex min-h-8 flex-wrap items-center gap-3">{@render actions()}</div>
 		{/if}
 	</CardToolbar>
-	<div class="px-[18px] py-4">
+	<div class="px-4 py-2">
 		{@render children()}
 	</div>
 </div>

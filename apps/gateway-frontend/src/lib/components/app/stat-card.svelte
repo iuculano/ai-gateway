@@ -19,6 +19,7 @@ let {
   hint,
   accent,
   comparison,
+  compact = false,
 }: {
   label: string;
   /** Pre-formatted. Callers own their own units and precision. */
@@ -28,9 +29,25 @@ let {
   /** Optional swatch colour, for cards that carry a status meaning. */
   accent?: string;
   comparison?: { text: string; color: string; title: string };
+  /** Inline summary for dense dashboards; other pages retain the stacked card. */
+  compact?: boolean;
 } = $props();
 </script>
 
+{#if compact}
+<!-- Compact chart toolbars are 32px controls + 16px padding + a 1px divider. -->
+<div class="flex h-[49px] min-w-0 items-center gap-3 rounded-[11px] border border-track bg-surface-1 px-4 py-2">
+    <span class="flex shrink-0 items-center gap-[7px] text-[13px] font-medium text-zinc-200">
+        {#if accent}<span class="size-[7px] flex-none rounded-full" style:background={accent}></span>{/if}
+        {label}
+    </span>
+    <span class="ml-auto shrink-0 font-mono text-[14px] font-medium text-zinc-100 tabular-nums">{value}</span>
+    {#if hint}<span class="min-w-0 truncate text-[11px] text-zinc-400" title={hint}>{hint}</span>{/if}
+    {#if comparison}
+        <span class="shrink-0 border-l border-line-strong pl-3 text-xs font-medium tabular-nums" style:color={comparison.color} title={comparison.title}>{comparison.text}</span>
+    {/if}
+</div>
+{:else}
 <div class="rounded-[11px] border border-track bg-surface-2 px-4 py-[15px]">
 	<div class="flex items-center gap-[7px]">
 		{#if accent}
@@ -50,3 +67,4 @@ let {
 		{/if}
 	</div>
 </div>
+{/if}

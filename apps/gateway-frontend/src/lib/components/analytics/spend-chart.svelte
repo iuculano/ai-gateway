@@ -3,6 +3,7 @@ import type { SeriesPoint } from '$lib/api/analytics';
 import ChartCard from '$lib/components/app/chart-card.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import { cumulativeSpend } from '$lib/data/chart-series';
+import SpendExplanation from './spend-explanation.svelte';
 
 let {
   points,
@@ -10,21 +11,55 @@ let {
   rangeLabel,
   bucketLabel,
   interval,
+  modelPoints,
+  previousModelPoints,
+  comparisonLabel,
+  comparisonUnavailable,
+  onretry,
 }: {
   interval: 'hour' | 'day';
   points: SeriesPoint[];
   loading: boolean;
   rangeLabel: string;
   bucketLabel: (bucket: string | null) => string;
+  modelPoints: SeriesPoint[];
+  previousModelPoints: SeriesPoint[] | null;
+  comparisonLabel: string;
+  comparisonUnavailable: boolean;
+  onretry: () => void;
 } = $props();
 
-let view = $state<'period' | 'cumulative'>('period');
+let view = $state<'period' | 'cumulative' | 'per-request' | 'explanation'>('period');
 const views = $derived([
   { id: 'period' as const, label: interval === 'hour' ? 'Hourly' : 'Daily' },
   { id: 'cumulative' as const, label: 'Cumulative' },
+  { id: 'per-request' as const, label: 'Per request' },
+  { id: 'explanation' as const, label: 'Why it changed' },
 ]);
-const displayed = $derived(view === 'cumulative' ? cumulativeSpend(points) : points);
-const HEIGHT = 210;
+// Divide each bucket's spend by all requests, matching the model comparison.
+// Empty buckets have no average; preserve that distinction from free requests.
+const displayed = $derived(
+  view === 'cumulative'
+    ? cumulativeSpend(points)
+    : view === 'per-request'
+      ? points.map((point) => ({
+          ...point,
+          cost_input: point.requests > 0 ? point.cost_input / point.requests : null,
+          cost_output: point.requests > 0 ? point.cost_output / point.requests : null,
+          cost_total: point.requests > 0 ? point.cost_total / point.requests : null,
+        }))
+      : points,
+);
+const hint = $derived(
+  view === 'explanation'
+    ? `Compared with ${comparisonLabel}.`
+    : view === 'cumulative'
+    ? 'Running total in this window.'
+    : view === 'per-request'
+      ? 'Input and output spend / all requests in each bucket.'
+      : 'Input and output costs.',
+);
+const HEIGHT = 170;
 const PAD = { top: 14, right: 10, bottom: 24, left: 76 };
 const INPUT = '#60a5fa';
 const OUTPUT = '#a78bfa';
@@ -36,16 +71,16 @@ const plotWidth = $derived(Math.max(1, width - PAD.left - PAD.right));
 const slot = $derived(plotWidth / Math.max(1, displayed.length));
 const barWidth = $derived(Math.min(32, slot * 0.65));
 const maximum = $derived.by(() => {
-  const peak = Math.max(0, ...displayed.map((point) => point.cost_input + point.cost_output));
+  const peak = Math.max(0, ...displayed.map((point) => (point.cost_input ?? 0) + (point.cost_output ?? 0)));
   if (peak === 0) return 1;
   const step = 10 ** Math.floor(Math.log10(peak)) / 2;
   return Math.ceil(peak / step) * step;
 });
 const selected = $derived(hovered === null ? null : displayed[hovered]);
 const x = (index: number) => PAD.left + slot * (index + 0.5);
-const height = (cost: number) => (cost / maximum) * plotHeight;
-const money = (cost: number) =>
-  new Intl.NumberFormat('en-US', {
+const height = (cost: number | null) => ((cost ?? 0) / maximum) * plotHeight;
+const money = (cost: number | null) =>
+  cost === null ? '—' : new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2,
@@ -61,10 +96,13 @@ $effect(() => {
 });
 </script>
 
-<ChartCard title="Spend over time" hint={view === 'cumulative' ? 'Running total in this window.' : 'Input and output costs.'}>
+<ChartCard title="Spend over time" {hint}>
 	{#snippet actions()}
         <FilterTabs tabs={views} bind:value={view} />
 	{/snippet}
+	{#if view === 'explanation'}
+        <SpendExplanation current={modelPoints} previous={previousModelPoints} {loading} unavailable={comparisonUnavailable} {onretry} />
+    {:else}
 	<div class="relative" bind:clientWidth={width}>
         
 		<div class="pointer-events-none absolute top-0 right-2 flex items-center gap-3 text-[10px] text-zinc-400">
@@ -72,11 +110,11 @@ $effect(() => {
 			<span class="flex items-center gap-1.5"><span class="size-2 rounded-sm" style:background={OUTPUT}></span>Output</span>
 		</div>
 		{#if loading}
-			<div class="flex h-[210px] items-center justify-center text-[12.5px] text-zinc-600">Loading spend…</div>
+			<div class="flex h-[170px] items-center justify-center text-[12.5px] text-zinc-600">Loading spend…</div>
 		{:else if displayed.length === 0}
-			<div class="flex h-[210px] items-center justify-center text-[12.5px] text-zinc-600">No spend data in this window.</div>
+			<div class="flex h-[170px] items-center justify-center text-[12.5px] text-zinc-600">No spend data in this window.</div>
 		{:else}
-			<svg {width} height={HEIGHT} role="img" aria-label="{view === 'cumulative' ? 'Cumulative' : 'Per-period'} input and output spend over {rangeLabel.toLowerCase()}">
+			<svg {width} height={HEIGHT} role="img" aria-label="{view === 'cumulative' ? 'Cumulative' : view === 'per-request' ? 'Average per-request' : 'Per-period'} input and output spend over {rangeLabel.toLowerCase()}">
 				{#each [0, 0.25, 0.5, 0.75, 1] as tick (tick)}
 					{@const y = PAD.top + plotHeight * (1 - tick)}
 					<line x1={PAD.left} y1={y} x2={width - PAD.right} y2={y} stroke="#1f1f23" />
@@ -103,7 +141,7 @@ $effect(() => {
 					style:top="{PAD.top}px"
 					style:width="{slot}px"
 					style:height="{plotHeight}px"
-					aria-label="{bucketLabel(point.bucket)}: {money(point.cost_total)} total, {money(point.cost_input)} input, {money(point.cost_output)} output"
+					aria-label="{bucketLabel(point.bucket)}: {view === 'per-request' && point.requests === 0 ? 'No requests in this bucket' : `${money(point.cost_total)} total, ${money(point.cost_input)} input, ${money(point.cost_output)} output${view === 'per-request' ? ` per request, across ${point.requests.toLocaleString()} requests` : ''}`}"
 					onmouseenter={() => (hovered = index)}
 					onmouseleave={() => (hovered = null)}
 					onfocus={() => (hovered = index)}
@@ -120,9 +158,13 @@ $effect(() => {
 					<div class="mb-1 text-zinc-500">{view === 'cumulative' ? 'Through ' : ''}{bucketLabel(selected.bucket)}</div>
 					<div class="flex justify-between gap-3 text-blue-400"><span>Input</span><span class="tabular-nums">{money(selected.cost_input)}</span></div>
 					<div class="flex justify-between gap-3 text-violet-400"><span>Output</span><span class="tabular-nums">{money(selected.cost_output)}</span></div>
-					<div class="mt-1 flex justify-between gap-3 border-t border-line pt-1 font-medium text-zinc-200"><span>Total</span><span class="tabular-nums">{money(selected.cost_total)}</span></div>
+					<div class="mt-1 flex justify-between gap-3 border-t border-line pt-1 font-medium text-zinc-200"><span>{view === 'per-request' ? 'Avg $/request' : 'Total'}</span><span class="tabular-nums">{money(selected.cost_total)}</span></div>
+                    {#if view === 'per-request'}
+                        <div class="mt-1 text-zinc-500 tabular-nums">{selected.requests === 0 ? 'No requests in this bucket.' : `Across ${selected.requests.toLocaleString()} requests`}</div>
+                    {/if}
 				</div>
 			{/if}
 		{/if}
 	</div>
+    {/if}
 </ChartCard>
