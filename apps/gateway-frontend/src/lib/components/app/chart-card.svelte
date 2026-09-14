@@ -25,7 +25,7 @@ let {
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">
-	<CardToolbar compact>
+	<CardToolbar>
 		<div class="flex h-8 min-w-0 flex-1 items-center gap-2.5">
 			<h2 class="shrink-0 text-[13px] font-medium text-zinc-200">{title}</h2>
 			{#if hint}
