@@ -33,7 +33,7 @@ services:
   # Local storage for customer application traces. The gateway-facing OTLP
   # endpoint is http://victoria-traces:10428/insert/opentelemetry/v1/traces.
   victoria-traces:
-    image:   victoriametrics/victoria-traces:v0.10.0
+    image:   victoriametrics/victoria-traces:v0.11.0
     restart: unless-stopped
     command:
       - -storageDataPath=/victoria-traces-data
