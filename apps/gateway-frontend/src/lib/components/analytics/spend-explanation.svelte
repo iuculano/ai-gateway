@@ -3,7 +3,13 @@ import type { SeriesPoint } from '$lib/api/analytics';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import { spendDrivers } from '$lib/data/spend-drivers';
 
-let { current, previous, loading, unavailable, onretry }: {
+let {
+  current,
+  previous,
+  loading,
+  unavailable,
+  onretry,
+}: {
   current: SeriesPoint[];
   previous: SeriesPoint[] | null;
   loading: boolean;
@@ -15,9 +21,13 @@ const attribution = $derived(spendDrivers(current, previous ?? []));
 // reconcile to displayed totals. Keep sub-cent precision for tiny workloads.
 const decimals = $derived(Math.max(attribution.previousSpend, attribution.currentSpend) < 0.01 ? 6 : 2);
 const rounded = (value: number) => Number(value.toFixed(decimals));
-const money = (value: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: decimals,
-}).format(value);
+const money = (value: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: decimals,
+  }).format(value);
 const effects = $derived([
   {
     label: 'Request volume',
@@ -27,16 +37,18 @@ const effects = $derived([
   {
     label: 'Model mix',
     amount: attribution.steps ? rounded(attribution.steps.afterMix) - rounded(attribution.steps.afterVolume) : null,
-    description: 'Change the mix of models at the current request count, using previous costs per request. New models use their current cost per request.',
+    description:
+      'Change the mix of models at the current request count, using previous costs per request. New models use their current cost per request.',
   },
   {
     label: 'Cost per request',
     amount: attribution.steps ? rounded(attribution.currentSpend) - rounded(attribution.steps.afterMix) : null,
-    description: 'Change average cost per request within models present in both periods. This can reflect token usage, caching or pricing.',
+    description:
+      'Change average cost per request within models present in both periods. This can reflect token usage, caching or pricing.',
   },
 ]);
-const largest = $derived(Math.max(0, ...effects.map(effect => Math.abs(effect.amount ?? 0))));
-const color = (amount: number | null) => !amount ? '#a1a1aa' : amount > 0 ? '#fbbf24' : '#34d399';
+const largest = $derived(Math.max(0, ...effects.map((effect) => Math.abs(effect.amount ?? 0))));
+const color = (amount: number | null) => (!amount ? '#a1a1aa' : amount > 0 ? '#fbbf24' : '#34d399');
 </script>
 
 <div class="h-[160px] overflow-auto">

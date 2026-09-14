@@ -10,7 +10,11 @@ export function periodComparison(
     return { text: 'No prior data', color: neutral, title: `No comparable data for ${options.label}.` };
   }
   if (previous === 0 && current !== 0 && !options.percentagePoints) {
-    return { text: 'New', color: increaseColor, title: `Up from zero in ${options.label}; percentage change is undefined.` };
+    return {
+      text: 'New',
+      color: increaseColor,
+      title: `Up from zero in ${options.label}; percentage change is undefined.`,
+    };
   }
   const change = options.percentagePoints
     ? current - previous

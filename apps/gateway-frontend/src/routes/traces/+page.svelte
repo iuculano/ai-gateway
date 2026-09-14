@@ -392,7 +392,7 @@ async function copyTraceId() {
 		</CardToolbar>
 
 		<div class="flex min-h-10 items-center justify-between border-b border-line px-4 text-[11px] text-zinc-600">
-			<span>{filteredTraces.length} of {traces.length} on this page</span>
+			<span><span class="text-zinc-100 tabular-nums">{filteredTraces.length}</span> of <span class="text-zinc-100 tabular-nums">{traces.length}</span> on this page</span>
 			<span class="tracking-[.05em] uppercase">Newest first</span>
 		</div>
 
@@ -569,11 +569,11 @@ async function copyTraceId() {
 					<div class="flex items-center gap-1.5 whitespace-nowrap text-[10.5px] text-zinc-500">
 						<span class="size-1.5 rounded-[1px]" style:background={entry.color}></span>
 						{entry.label}
-						<span class="text-zinc-700 tabular-nums">{entry.count}</span>
+						<span class="text-zinc-100 tabular-nums">{entry.count}</span>
 					</div>
 				{/each}
 				<div class="ml-auto flex items-center gap-3">
-					<span class="text-[10.5px] text-zinc-600">{totalSpans} application spans</span>
+					<span class="text-[10.5px] text-zinc-600"><span class="text-zinc-100 tabular-nums">{totalSpans}</span> application spans</span>
 					<button
 						type="button"
 						aria-pressed={showMap}
@@ -620,11 +620,11 @@ async function copyTraceId() {
 					</svg>
 
 					<div class="mt-2 flex flex-wrap items-center gap-x-2 text-[10.5px] text-zinc-600">
-						<span class="tabular-nums">{nodes.length} nodes</span>
+						<span class="tabular-nums"><span class="text-zinc-100">{nodes.length}</span> nodes</span>
 						<span class="text-zinc-800">•</span>
-						<span class="tabular-nums">{mapDepth} levels deep</span>
+						<span class="tabular-nums"><span class="text-zinc-100">{mapDepth}</span> levels deep</span>
 						<span class="text-zinc-800">•</span>
-						<span class="tabular-nums">{fmtLatency(windowMs)} end to end</span>
+						<span class="tabular-nums"><span class="text-zinc-100">{fmtLatency(windowMs)}</span> end to end</span>
 					</div>
 				</div>
 			{/if}

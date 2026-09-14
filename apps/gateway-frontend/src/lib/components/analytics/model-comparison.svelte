@@ -72,11 +72,16 @@ const money = (value: number, maximumFractionDigits = 2) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 6 : maximumFractionDigits,
   }).format(value);
-const changeValue = (value: number) => changeMetric === 'cost_total' ? money(value) : value.toLocaleString();
-const preciseMoney = (value: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 12,
-}).format(value);
-const preciseChangeValue = (value: number) => changeMetric === 'cost_total' ? preciseMoney(value) : value.toLocaleString();
+const changeValue = (value: number) => (changeMetric === 'cost_total' ? money(value) : value.toLocaleString());
+const preciseMoney = (value: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 12,
+  }).format(value);
+const preciseChangeValue = (value: number) =>
+  changeMetric === 'cost_total' ? preciseMoney(value) : value.toLocaleString();
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">

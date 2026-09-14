@@ -129,15 +129,23 @@ const callerViews = [
 ] satisfies { id: CallerMetric; label: string }[];
 const topCallers = $derived(rankCallers(callerPoints, callerMetric));
 const comparisonLabel = $derived(`the previous ${range.days === 1 ? '24 hours' : `${range.days} days`}`);
-const previousCallerValues = $derived(new Map(
-  (previousCallerPoints ?? []).map((point) => [JSON.stringify([point.actor_type, point.actor_id]), point[callerMetric]]),
-));
+const previousCallerValues = $derived(
+  new Map(
+    (previousCallerPoints ?? []).map((point) => [
+      JSON.stringify([point.actor_type, point.actor_id]),
+      point[callerMetric],
+    ]),
+  ),
+);
 const callerComparisonUnavailable = $derived(loadError !== null || previousCallerPoints === null);
-const money = (value: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', minimumFractionDigits: 2,
-  maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 6 : 2,
-}).format(value);
-const callerAmount = (value: number) => callerMetric === 'requests' ? value.toLocaleString() : money(value);
+const money = (value: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 6 : 2,
+  }).format(value);
+const callerAmount = (value: number) => (callerMetric === 'requests' ? value.toLocaleString() : money(value));
 let previousTotals = $state<SeriesPoint | null>(null);
 let previousStatuses = $state<SeriesPoint[]>([]);
 let comparisonError = $state(false);
@@ -239,19 +247,26 @@ const inFlight = $derived(statusCount('incomplete'));
 const errorRate = $derived(requestTotal > 0 ? (failed / requestTotal) * 100 : 0);
 const inFlightRate = $derived(requestTotal > 0 ? (inFlight / requestTotal) * 100 : 0);
 const averageCostPerRequest = $derived(totals && totals.requests > 0 ? totals.cost_total / totals.requests : null);
-const formatAverageCost = (value: number) => new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 4,
-}).format(value);
+const formatAverageCost = (value: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 4,
+  }).format(value);
 
 const comparisons = $derived.by(() => {
   if (loading || loadError) return undefined;
   const label = `the previous ${range.days === 1 ? '24 hours' : `${range.days} days`}`;
   if (comparisonError) {
     const unavailable = { text: 'Unavailable', color: '#a1a1aa', title: `Could not load ${label}.` };
-    return { requests: unavailable, spend: unavailable, averageCost: unavailable, latency: unavailable, errors: unavailable };
+    return {
+      requests: unavailable,
+      spend: unavailable,
+      averageCost: unavailable,
+      latency: unavailable,
+      errors: unavailable,
+    };
   }
   const previousRequests = previousTotals?.requests ?? null;
   const previousFailed = previousStatuses.find((point) => point.status === 'failed')?.requests ?? 0;
@@ -322,7 +337,11 @@ const tokenSeries = [
   { id: 'output', label: 'Output', color: '#a78bfa' },
 ];
 const trafficTitle = $derived(
-  trafficView === 'tokens' ? 'Tokens over time' : trafficView === 'errors' ? 'Error rate over time' : 'Requests over time',
+  trafficView === 'tokens'
+    ? 'Tokens over time'
+    : trafficView === 'errors'
+      ? 'Error rate over time'
+      : 'Requests over time',
 );
 const trafficHint = $derived(
   trafficView === 'tokens'
@@ -347,9 +366,14 @@ const bucketErrorRates = $derived(
 const trafficMax = $derived(
   trafficView === 'errors'
     ? Math.min(100, niceMax(Math.max(1, ...bucketErrorRates.map((rate) => rate ?? 0))))
-    : niceMax(Math.max(1, ...timeline.map((point) =>
-        trafficView === 'tokens' ? point.input_tokens + point.output_tokens : point.requests,
-      ))),
+    : niceMax(
+        Math.max(
+          1,
+          ...timeline.map((point) =>
+            trafficView === 'tokens' ? point.input_tokens + point.output_tokens : point.requests,
+          ),
+        ),
+      ),
 );
 const areaInnerW = $derived(Math.max(1, areaWidth - AREA_PAD.left - AREA_PAD.right));
 const areaInnerH = AREA_H - AREA_PAD.top - AREA_PAD.bottom;
@@ -371,15 +395,17 @@ const outcomeAreas = $derived(
 );
 const errorRatePath = $derived.by(() => {
   let connected = false;
-  return bucketErrorRates.map((rate, index) => {
-    if (rate === null) {
-      connected = false;
-      return '';
-    }
-    const command = connected ? 'L' : 'M';
-    connected = true;
-    return `${command}${areaX(index)},${areaY(rate)}`;
-  }).join(' ');
+  return bucketErrorRates
+    .map((rate, index) => {
+      if (rate === null) {
+        connected = false;
+        return '';
+      }
+      const command = connected ? 'L' : 'M';
+      connected = true;
+      return `${command}${areaX(index)},${areaY(rate)}`;
+    })
+    .join(' ');
 });
 $effect(() => {
   void timeline;

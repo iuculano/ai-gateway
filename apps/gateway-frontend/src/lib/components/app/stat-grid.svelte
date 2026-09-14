@@ -11,7 +11,11 @@ import type { Snippet } from 'svelte';
  * the row empty, which is what the keys page already did.
  * Compact inline summaries use fewer columns on narrow screens to keep their labels readable.
  */
-let { children, compact = false, columns = 4 }: {
+let {
+  children,
+  compact = false,
+  columns = 4,
+}: {
   children: Snippet;
   compact?: boolean;
   /** Number of inline summaries across on wide screens. */

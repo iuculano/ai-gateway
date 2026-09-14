@@ -54,10 +54,10 @@ const hint = $derived(
   view === 'explanation'
     ? `Compared with ${comparisonLabel}.`
     : view === 'cumulative'
-    ? 'Running total in this window.'
-    : view === 'per-request'
-      ? 'Input and output spend / all requests in each bucket.'
-      : 'Input and output costs.',
+      ? 'Running total in this window.'
+      : view === 'per-request'
+        ? 'Input and output spend / all requests in each bucket.'
+        : 'Input and output costs.',
 );
 const HEIGHT = 160;
 const PAD = { top: 14, right: 10, bottom: 24, left: 76 };
@@ -80,12 +80,14 @@ const selected = $derived(hovered === null ? null : displayed[hovered]);
 const x = (index: number) => PAD.left + slot * (index + 0.5);
 const height = (cost: number | null) => ((cost ?? 0) / maximum) * plotHeight;
 const money = (cost: number | null) =>
-  cost === null ? '—' : new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: cost !== 0 && Math.abs(cost) < 0.01 ? 6 : 2,
-  }).format(cost);
+  cost === null
+    ? '—'
+    : new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: cost !== 0 && Math.abs(cost) < 0.01 ? 6 : 2,
+      }).format(cost);
 
 // Clear the tooltip when the range changes or a new response arrives.
 $effect(() => {
