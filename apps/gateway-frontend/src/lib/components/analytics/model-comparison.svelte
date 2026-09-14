@@ -80,7 +80,7 @@ const preciseChangeValue = (value: number) => changeMetric === 'cost_total' ? pr
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">
-	<CardToolbar compact>
+	<CardToolbar>
 		<h2 class="flex h-8 items-center text-[13px] font-medium text-zinc-200" title={showingChanges ? `Compared with ${comparisonLabel}. Largest absolute changes first.` : undefined}>Model comparison</h2>
 		<span class="text-[12.5px] text-zinc-500"><span class="font-medium text-zinc-200 tabular-nums">{loading || (showingChanges && comparisonUnavailable) ? '—' : (showingChanges ? changeRows.length : rows.length).toLocaleString()}</span> models</span>
 		<div class="ml-auto"><FilterTabs tabs={views} bind:value={view} /></div>
@@ -94,7 +94,7 @@ const preciseChangeValue = (value: number) => changeMetric === 'cost_total' ? pr
                 <ToolbarButton onclick={onretry}>Retry comparison</ToolbarButton>
             </div>
         {:else}
-            <div class="max-h-[200px] overflow-auto">
+            <div class="max-h-[190px] overflow-auto">
                 <table class="w-full min-w-[600px] border-collapse text-[12.5px]">
                     <caption class="sr-only">Compared with {comparisonLabel}. Largest absolute changes first.</caption>
                     <thead class="sticky top-0 z-10 bg-surface-1">
@@ -155,7 +155,7 @@ const preciseChangeValue = (value: number) => changeMetric === 'cost_total' ? pr
 			{/if}
 		</div>
 	{:else}
-	<div class="max-h-[200px] overflow-auto">
+	<div class="max-h-[190px] overflow-auto">
 		<table class="w-full {view === 'efficiency' ? 'min-w-[520px]' : 'min-w-[640px]'} border-collapse text-[12.5px]">
 			<thead class="sticky top-0 z-10 bg-surface-1">
 				<tr>

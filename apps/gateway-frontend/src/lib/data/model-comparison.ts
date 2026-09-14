@@ -1,5 +1,31 @@
 import type { SeriesPoint } from '$lib/api/analytics';
 
+export type ModelChangeMetric = 'cost_total' | 'requests';
+
+/** Include models from either window so retired models still explain decreases. */
+export function modelChangeRows(current: SeriesPoint[], previous: SeriesPoint[], metric: ModelChangeMetric) {
+  const key = (point: SeriesPoint) => JSON.stringify([point.provider, point.model]);
+  const currentByModel = new Map(current.map((point) => [key(point), point]));
+  const previousByModel = new Map(previous.map((point) => [key(point), point]));
+  const models = new Map([...previousByModel, ...currentByModel]);
+  return [...models]
+    .map(([id, point]) => {
+      const currentValue = currentByModel.get(id)?.[metric] ?? 0;
+      const previousValue = previousByModel.get(id)?.[metric] ?? 0;
+      const change = currentValue - previousValue;
+      return {
+        id,
+        model: point.model ?? 'Unknown model',
+        provider: point.provider ?? 'Unknown provider',
+        current: currentValue,
+        previous: previousValue,
+        change,
+        percentage: previousValue > 0 ? (change / previousValue) * 100 : currentValue > 0 ? null : 0,
+      };
+    })
+    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change) || a.id.localeCompare(b.id));
+}
+
 export function modelComparisonRows(totals: SeriesPoint[], failures: SeriesPoint[]) {
   const key = (point: SeriesPoint) => JSON.stringify([point.provider, point.model]);
   const failed = new Map(failures.map((point) => [key(point), point.requests]));

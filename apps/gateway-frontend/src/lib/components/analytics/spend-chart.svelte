@@ -59,7 +59,7 @@ const hint = $derived(
       ? 'Input and output spend / all requests in each bucket.'
       : 'Input and output costs.',
 );
-const HEIGHT = 170;
+const HEIGHT = 160;
 const PAD = { top: 14, right: 10, bottom: 24, left: 76 };
 const INPUT = '#60a5fa';
 const OUTPUT = '#a78bfa';
@@ -110,9 +110,9 @@ $effect(() => {
 			<span class="flex items-center gap-1.5"><span class="size-2 rounded-sm" style:background={OUTPUT}></span>Output</span>
 		</div>
 		{#if loading}
-			<div class="flex h-[170px] items-center justify-center text-[12.5px] text-zinc-600">Loading spend…</div>
+			<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading spend…</div>
 		{:else if displayed.length === 0}
-			<div class="flex h-[170px] items-center justify-center text-[12.5px] text-zinc-600">No spend data in this window.</div>
+			<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">No spend data in this window.</div>
 		{:else}
 			<svg {width} height={HEIGHT} role="img" aria-label="{view === 'cumulative' ? 'Cumulative' : view === 'per-request' ? 'Average per-request' : 'Per-period'} input and output spend over {rangeLabel.toLowerCase()}">
 				{#each [0, 0.25, 0.5, 0.75, 1] as tick (tick)}

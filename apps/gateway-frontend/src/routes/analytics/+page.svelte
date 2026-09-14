@@ -119,13 +119,25 @@ const outcomeCounts = $derived(outcomeBuckets(timeline, outcomePoints));
 let providerPoints: SeriesPoint[] = $state([]);
 let modelPoints: SeriesPoint[] = $state([]);
 let modelFailures: SeriesPoint[] = $state([]);
+let previousModelPoints = $state<SeriesPoint[] | null>(null);
 let callerPoints: SeriesPoint[] = $state([]);
+let previousCallerPoints = $state<SeriesPoint[] | null>(null);
 let callerMetric = $state<CallerMetric>('requests');
 const callerViews = [
   { id: 'requests', label: 'Requests' },
   { id: 'cost_total', label: 'Spend' },
 ] satisfies { id: CallerMetric; label: string }[];
 const topCallers = $derived(rankCallers(callerPoints, callerMetric));
+const comparisonLabel = $derived(`the previous ${range.days === 1 ? '24 hours' : `${range.days} days`}`);
+const previousCallerValues = $derived(new Map(
+  (previousCallerPoints ?? []).map((point) => [JSON.stringify([point.actor_type, point.actor_id]), point[callerMetric]]),
+));
+const callerComparisonUnavailable = $derived(loadError !== null || previousCallerPoints === null);
+const money = (value: number) => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', minimumFractionDigits: 2,
+  maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 6 : 2,
+}).format(value);
+const callerAmount = (value: number) => callerMetric === 'requests' ? value.toLocaleString() : money(value);
 let previousTotals = $state<SeriesPoint | null>(null);
 let previousStatuses = $state<SeriesPoint[]>([]);
 let comparisonError = $state(false);
@@ -139,6 +151,8 @@ async function load() {
   comparisonError = false;
   previousTotals = null;
   previousStatuses = [];
+  previousModelPoints = null;
+  previousCallerPoints = null;
 
   const end = Date.now();
   const duration = range.days * 86_400_000;
@@ -169,6 +183,8 @@ async function load() {
       Promise.allSettled([
         fetchSeries({ ...previous, interval: 'none' }),
         fetchSeries({ ...previous, interval: 'none', group_by: ['status'] }),
+        fetchSeries({ ...previous, interval: 'none', group_by: ['provider', 'model'] }),
+        fetchSeries({ ...previous, interval: 'none', group_by: ['actor'] }),
       ]),
       fetchSeries({ ...common, interval: 'none', group_by: ['provider', 'model'], status: 'failed' }),
       fetchSeries({ ...common, interval: range.interval, group_by: ['status'] }),
@@ -182,7 +198,9 @@ async function load() {
     modelPoints = models.points;
     modelFailures = failuresByModel.points;
     callerPoints = callers.points;
-    const [previousTotalResult, previousStatusResult] = comparison;
+    const [previousTotalResult, previousStatusResult, previousModelsResult, previousCallersResult] = comparison;
+    if (previousModelsResult.status === 'fulfilled') previousModelPoints = previousModelsResult.value.points;
+    if (previousCallersResult.status === 'fulfilled') previousCallerPoints = previousCallersResult.value.points;
     if (previousTotalResult.status === 'fulfilled' && previousStatusResult.status === 'fulfilled') {
       previousTotals = previousTotalResult.value.points[0] ?? null;
       previousStatuses = previousStatusResult.value.points;
@@ -220,13 +238,20 @@ const inFlight = $derived(statusCount('incomplete'));
  */
 const errorRate = $derived(requestTotal > 0 ? (failed / requestTotal) * 100 : 0);
 const inFlightRate = $derived(requestTotal > 0 ? (inFlight / requestTotal) * 100 : 0);
+const averageCostPerRequest = $derived(totals && totals.requests > 0 ? totals.cost_total / totals.requests : null);
+const formatAverageCost = (value: number) => new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 4,
+}).format(value);
 
 const comparisons = $derived.by(() => {
   if (loading || loadError) return undefined;
   const label = `the previous ${range.days === 1 ? '24 hours' : `${range.days} days`}`;
   if (comparisonError) {
     const unavailable = { text: 'Unavailable', color: '#a1a1aa', title: `Could not load ${label}.` };
-    return { requests: unavailable, spend: unavailable, latency: unavailable, errors: unavailable };
+    return { requests: unavailable, spend: unavailable, averageCost: unavailable, latency: unavailable, errors: unavailable };
   }
   const previousRequests = previousTotals?.requests ?? null;
   const previousFailed = previousStatuses.find((point) => point.status === 'failed')?.requests ?? 0;
@@ -237,6 +262,11 @@ const comparisons = $derived.by(() => {
       label,
       lowerIsBetter: true,
     }),
+    averageCost: periodComparison(
+      averageCostPerRequest,
+      previousTotals && previousTotals.requests > 0 ? previousTotals.cost_total / previousTotals.requests : null,
+      { label, lowerIsBetter: true },
+    ),
     latency: periodComparison(totals?.average_latency_ms ?? null, previousTotals?.average_latency_ms ?? null, {
       label,
       lowerIsBetter: true,
@@ -275,34 +305,85 @@ function niceMax(value: number): number {
   return Math.ceil(value / (magnitude / 2)) * (magnitude / 2);
 }
 
-// ---- requests over time (single series, area) --------------------------------
-const AREA_H = 210;
+// ---- requests, tokens and error rate over time -------------------------------
+const AREA_H = 160;
 const AREA_PAD = { top: 14, right: 10, bottom: 24, left: 52 };
 
 let areaWidth = $state(720);
 let areaHover = $state<number | null>(null);
+let trafficView = $state<'requests' | 'tokens' | 'errors'>('requests');
+const trafficViews = [
+  { id: 'requests', label: 'Requests' },
+  { id: 'tokens', label: 'Tokens' },
+  { id: 'errors', label: 'Error rate' },
+] satisfies { id: typeof trafficView; label: string }[];
+const tokenSeries = [
+  { id: 'input', label: 'Input', color: '#60a5fa' },
+  { id: 'output', label: 'Output', color: '#a78bfa' },
+];
+const trafficTitle = $derived(
+  trafficView === 'tokens' ? 'Tokens over time' : trafficView === 'errors' ? 'Error rate over time' : 'Requests over time',
+);
+const trafficHint = $derived(
+  trafficView === 'tokens'
+    ? 'Input · output tokens'
+    : trafficView === 'errors'
+      ? 'Failed requests / all requests'
+      : 'Success · incomplete · failed',
+);
+const trafficSeries = $derived(trafficView === 'tokens' ? tokenSeries : outcomes);
+const trafficCounts = $derived(
+  trafficView === 'tokens' ? timeline.map((point) => [point.input_tokens, point.output_tokens]) : outcomeCounts,
+);
+const failedOutcomeIndex = outcomes.findIndex((outcome) => outcome.id === 'failed');
+// Incomplete requests remain in the denominator, matching the headline rate.
+// A bucket with no requests has no rate, rather than a misleading 0%.
+const bucketErrorRates = $derived(
+  timeline.map((point, index) =>
+    point.requests > 0 ? ((outcomeCounts[index]?.[failedOutcomeIndex] ?? 0) / point.requests) * 100 : null,
+  ),
+);
 
-const requestsMax = $derived(niceMax(Math.max(1, ...timeline.map((d) => d.requests))));
+const trafficMax = $derived(
+  trafficView === 'errors'
+    ? Math.min(100, niceMax(Math.max(1, ...bucketErrorRates.map((rate) => rate ?? 0))))
+    : niceMax(Math.max(1, ...timeline.map((point) =>
+        trafficView === 'tokens' ? point.input_tokens + point.output_tokens : point.requests,
+      ))),
+);
 const areaInnerW = $derived(Math.max(1, areaWidth - AREA_PAD.left - AREA_PAD.right));
 const areaInnerH = AREA_H - AREA_PAD.top - AREA_PAD.bottom;
 
 const areaX = (i: number) => AREA_PAD.left + (i / Math.max(1, timeline.length - 1)) * areaInnerW;
-const areaY = (v: number) => AREA_PAD.top + areaInnerH - (v / requestsMax) * areaInnerH;
+const areaY = (v: number) => AREA_PAD.top + areaInnerH - (v / trafficMax) * areaInnerH;
 
 const outcomeAreas = $derived(
-  outcomes.map((outcome, index) => {
+  trafficSeries.map((outcome, index) => {
     const upper = timeline.map(
       (_, i) =>
-        `${i === 0 ? 'M' : 'L'}${areaX(i)},${areaY((outcomeCounts[i] ?? []).slice(0, index + 1).reduce((a, b) => a + b, 0))}`,
+        `${i === 0 ? 'M' : 'L'}${areaX(i)},${areaY((trafficCounts[i] ?? []).slice(0, index + 1).reduce((a, b) => a + b, 0))}`,
     );
     const lower = timeline
-      .map((_, i) => `L${areaX(i)},${areaY((outcomeCounts[i] ?? []).slice(0, index).reduce((a, b) => a + b, 0))}`)
+      .map((_, i) => `L${areaX(i)},${areaY((trafficCounts[i] ?? []).slice(0, index).reduce((a, b) => a + b, 0))}`)
       .reverse();
     return { ...outcome, path: [...upper, ...lower, 'Z'].join(' ') };
   }),
 );
+const errorRatePath = $derived.by(() => {
+  let connected = false;
+  return bucketErrorRates.map((rate, index) => {
+    if (rate === null) {
+      connected = false;
+      return '';
+    }
+    const command = connected ? 'L' : 'M';
+    connected = true;
+    return `${command}${areaX(index)},${areaY(rate)}`;
+  }).join(' ');
+});
 $effect(() => {
   void timeline;
+  void trafficView;
   areaHover = null;
 });
 
@@ -314,18 +395,20 @@ function onAreaMove(event: MouseEvent) {
 }
 
 // ---- provider split (stacked bars, categorical) -------------------------------
-const BAR_H = 200;
-const BAR_PAD = { top: 12, right: 8, bottom: 24, left: 46 };
+const BAR_H = 160;
+const BAR_PAD = { top: 12, right: 8, bottom: 24, left: 76 };
 /** A 2px gap between stacked segments so touching fills stay separable. */
 const SEGMENT_GAP = 2;
 
 let barWidth = $state(360);
 let barHover = $state<number | null>(null);
 let providerView = $state<'volume' | 'share'>('volume');
-const providerViews = [
-  { id: 'volume', label: 'Volume' },
-  { id: 'share', label: 'Share' },
-] satisfies { id: typeof providerView; label: string }[];
+let providerMetric = $state<CallerMetric>('requests');
+const providerViews = $derived([
+  { id: 'volume' as const, label: providerMetric === 'requests' ? 'Volume' : 'Amount' },
+  { id: 'share' as const, label: 'Share' },
+]);
+const providerTitle = $derived(providerMetric === 'requests' ? 'Requests by provider' : 'Spend by provider');
 
 /** Buckets on the x axis, in time order. */
 const providerBuckets = $derived([...new Set(providerPoints.map((p) => p.bucket ?? ''))].sort());
@@ -351,7 +434,7 @@ const providerSeries = $derived.by(() => {
 const providerLookup = $derived.by(() => {
   const table = new Map<string, number>();
   for (const point of providerPoints) {
-    table.set(`${point.bucket ?? ''}|${point.provider ?? 'unknown'}`, point.requests);
+    table.set(`${point.bucket ?? ''}|${point.provider ?? 'unknown'}`, point[providerMetric]);
   }
   return table;
 });
@@ -361,7 +444,7 @@ const providerTotals = $derived(
     providerSeries.reduce((sum, series) => sum + (providerLookup.get(`${bucket}|${series.id}`) ?? 0), 0),
   ),
 );
-const providerMax = $derived(providerView === 'share' ? 100 : niceMax(Math.max(1, ...providerTotals)));
+const providerMax = $derived(providerView === 'share' ? 100 : niceMax(Math.max(0, ...providerTotals)));
 const barInnerW = $derived(Math.max(1, barWidth - BAR_PAD.left - BAR_PAD.right));
 const barInnerH = BAR_H - BAR_PAD.top - BAR_PAD.bottom;
 const barSlot = $derived(barInnerW / Math.max(1, providerBuckets.length));
@@ -388,7 +471,7 @@ const stacks = $derived(
 // reconstruct a mean exactly; a p95 cannot be recovered from stored p95s by any
 // arithmetic, so drawing one here would mean inventing it. That needs a latency
 // histogram, which is deliberately not in this iteration.
-const LAT_H = 200;
+const LAT_H = 160;
 const LAT_PAD = { top: 12, right: 12, bottom: 24, left: 46 };
 
 let latWidth = $state(360);
@@ -447,6 +530,7 @@ $effect(() => {
 $effect(() => {
   void providerPoints;
   void providerView;
+  void providerMetric;
   barHover = null;
 });
 
@@ -506,31 +590,48 @@ function onLatMove(event: MouseEvent) {
 	</div>
 {/if}
 
-<StatGrid>
-	<StatCard label="Requests · {range.label.replace('Last ', '')}" value={loading ? '—' : fmt(requestTotal)} comparison={comparisons?.requests} />
-	<StatCard label="Spend" value={loading ? '—' : fmtCostTotal(totals?.cost_total ?? 0)} comparison={comparisons?.spend} />
+<StatGrid compact columns={5}>
+	<StatCard compact label="Requests" value={loading ? '—' : fmt(requestTotal)} comparison={comparisons?.requests} />
+	<StatCard compact label="Spend" value={loading ? '—' : fmtCostTotal(totals?.cost_total ?? 0)} comparison={comparisons?.spend} />
+    <StatCard
+        compact
+        label="Avg $/request"
+        value={loading || loadError || averageCostPerRequest === null ? '—' : formatAverageCost(averageCostPerRequest)}
+        comparison={comparisons?.averageCost}
+    />
 	<StatCard
+        compact
 		label="Average latency"
 		comparison={comparisons?.latency}
 		value={loading || !totals?.average_latency_ms ? '—' : `${(totals.average_latency_ms / 1000).toFixed(2)}s`}
 	/>
 	<StatCard
+        compact
 		label="Error rate"
 		comparison={comparisons?.errors}
 		value={loading ? '—' : `${errorRate.toFixed(2)}%`}
 		hint={loading ? undefined : `${inFlightRate.toFixed(2)}% in flight`}
-		accent={errorRate > 5 ? '#ef4444' : '#0ca30c'}
 	/>
 </StatGrid>
 
-<!-- Traffic and spend share a row for direct comparison. -->
-<div class="mb-3.5 grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2 [&>*]:min-w-0">
-	<ChartCard title="Requests over time" hint="Success · incomplete · failed">
+<!-- One grid keeps all six cards equally tall, even when toolbars wrap or tabs change. -->
+<div class="grid grid-cols-1 items-stretch gap-2.5 lg:auto-rows-fr lg:grid-cols-2 [&>*]:min-w-0">
+	<ChartCard title={trafficTitle} hint={trafficHint}>
+        {#snippet actions()}<FilterTabs tabs={trafficViews} bind:value={trafficView} />{/snippet}
+        <div class="flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-zinc-500">
+            {#if trafficView === 'errors'}
+                <span class="flex items-center gap-1.5"><span class="size-[7px] rounded-full bg-red-500"></span>Failed / all requests</span>
+            {:else}
+                {#each trafficSeries as series (series.id)}
+                    <span class="flex items-center gap-1.5"><span class="size-[7px] rounded-full" style:background={series.color}></span>{series.label}</span>
+                {/each}
+            {/if}
+        </div>
 		<div class="relative" bind:clientWidth={areaWidth}>
 			{#if loading}
-                <div class="flex h-[210px] items-center justify-center text-[12.5px] text-zinc-600">Loading requests…</div>
+                <div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading {trafficView === 'tokens' ? 'tokens' : trafficView === 'errors' ? 'error rate' : 'requests'}…</div>
             {:else if timeline.length === 0}
-				<div class="flex h-[210px] items-center justify-center text-[12.5px] text-zinc-600">
+				<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">
 					No requests in this window.
 				</div>
 			{:else}
@@ -538,7 +639,7 @@ function onLatMove(event: MouseEvent) {
 					width={areaWidth}
 					height={AREA_H}
 					role="img"
-					aria-label="Request volume over {range.label.toLowerCase()}"
+					aria-label="{trafficTitle} · {range.label.toLowerCase()}"
 					onmousemove={onAreaMove}
 					onmouseleave={() => (areaHover = null)}
 				>
@@ -547,18 +648,25 @@ function onLatMove(event: MouseEvent) {
 						{@const y = AREA_PAD.top + areaInnerH * tick}
 						<line x1={AREA_PAD.left} y1={y} x2={areaWidth - AREA_PAD.right} y2={y} stroke={GRID} stroke-width="1" />
 						<text x={AREA_PAD.left - 8} y={y + 3.5} text-anchor="end" font-size="10" fill={AXIS_INK} class="tabular-nums">
-							{fmt(Math.round(requestsMax * (1 - tick)))}
+							{trafficView === 'errors' ? `${Number((trafficMax * (1 - tick)).toFixed(2))}%` : fmt(Math.round(trafficMax * (1 - tick)))}
 						</text>
 					{/each}
 
+                        {#if trafficView === 'errors'}
+                            <path d={errorRatePath} fill="none" stroke="#ef4444" stroke-width="2" />
+                            {#each bucketErrorRates as rate, index (index)}
+                                {#if rate !== null}<circle cx={areaX(index)} cy={areaY(rate)} r="3" fill="#ef4444" />{/if}
+                            {/each}
+                        {:else}
                         {#each outcomeAreas as series, index (series.id)}
                             {#if timeline.length === 1}
-                                {@const upper = outcomeCounts[0]!.slice(0, index + 1).reduce((a, b) => a + b, 0)}
-                                <rect x={AREA_PAD.left} y={areaY(upper)} width={Math.min(32, areaInnerW)} height={outcomeCounts[0]![index]! / requestsMax * areaInnerH} fill={series.color} />
+                                {@const upper = trafficCounts[0]!.slice(0, index + 1).reduce((a, b) => a + b, 0)}
+                                <rect x={AREA_PAD.left} y={areaY(upper)} width={Math.min(32, areaInnerW)} height={trafficCounts[0]![index]! / trafficMax * areaInnerH} fill={series.color} />
                             {:else}
                                 <path d={series.path} fill={series.color} fill-opacity="0.65" stroke={series.color} stroke-width="1" />
                             {/if}
                         {/each}
+                        {/if}
 
 					{#each timeline as point, i (point.bucket)}
 						{#if showTick(i, Math.max(1, Math.ceil(timeline.length / Math.max(2, Math.floor(areaInnerW / 75)))), timeline.length)}
@@ -589,14 +697,19 @@ function onLatMove(event: MouseEvent) {
 					>
 						<div class="mb-1 text-[10.5px] text-zinc-500">{bucketLabel(point.bucket)}</div>
 						<div class="flex items-center gap-2 text-[12.5px] whitespace-nowrap text-zinc-200">
-							<span class="size-[7px] rounded-full" style:background={ACCENT}></span>
-							<span class="tabular-nums">{point.requests.toLocaleString()}</span>
-							<span class="text-zinc-600">requests</span>
+							<span class="size-[7px] rounded-full" style:background={trafficView === 'errors' ? '#ef4444' : trafficView === 'tokens' ? '#60a5fa' : ACCENT}></span>
+							<span class="tabular-nums">{trafficView === 'errors' ? bucketErrorRates[areaHover] == null ? '—' : `${bucketErrorRates[areaHover]!.toFixed(2)}%` : (trafficView === 'tokens' ? point.input_tokens + point.output_tokens : point.requests).toLocaleString()}</span>
+							<span class="text-zinc-600">{trafficView === 'errors' ? 'error rate' : trafficView === 'tokens' ? 'tokens' : 'requests'}</span>
 						</div>
 
-                            {#each outcomes as outcome, index (outcome.id)}
-                                <div class="mt-1 flex justify-between gap-4 text-[11.5px]" style:color={outcome.color}><span>{outcome.label}</span><span class="tabular-nums">{outcomeCounts[areaHover]?.[index]?.toLocaleString() ?? '0'}</span></div>
+                        {#if trafficView === 'errors'}
+                            <div class="mt-1 text-[11.5px] text-zinc-300 tabular-nums">{(outcomeCounts[areaHover]?.[failedOutcomeIndex] ?? 0).toLocaleString()} failed / {point.requests.toLocaleString()} requests</div>
+                            {#if point.requests === 0}<div class="mt-1 text-[11.5px] text-zinc-500">No requests in this bucket.</div>{/if}
+                        {:else}
+                            {#each trafficSeries as series, index (series.id)}
+                                <div class="mt-1 flex justify-between gap-4 text-[11.5px]" style:color={series.color}><span>{series.label}</span><span class="tabular-nums">{trafficCounts[areaHover]?.[index]?.toLocaleString() ?? '0'}</span></div>
                             {/each}
+                        {/if}
                         <div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">
 							{fmtCostTotal(point.cost_total)}
 							{#if point.average_latency_ms !== null}
@@ -608,13 +721,25 @@ function onLatMove(event: MouseEvent) {
 			{/if}
 		</div>
 	</ChartCard>
-	<SpendChart interval={range.interval} points={timeline} {loading} rangeLabel={range.label} {bucketLabel} />
-</div>
+	<SpendChart
+        interval={range.interval}
+        points={timeline}
+        {loading}
+        rangeLabel={range.label}
+        {bucketLabel}
+        {modelPoints}
+        {previousModelPoints}
+        {comparisonLabel}
+        comparisonUnavailable={loadError !== null || previousModelPoints === null}
+        onretry={load}
+    />
 
-<div class="mb-3.5 grid grid-cols-2 items-start gap-3.5">
 	<!-- provider split -->
-	<ChartCard title="Requests by provider" hint={providerView === 'share' ? 'Percentage of requests per bucket.' : 'Stacked per bucket.'}>
-        {#snippet actions()}<FilterTabs tabs={providerViews} bind:value={providerView} />{/snippet}
+	<ChartCard title={providerTitle} hint={providerView === 'share' ? `Percentage of ${providerMetric === 'requests' ? 'requests' : 'spend'} per bucket.` : 'Stacked per bucket.'}>
+        {#snippet actions()}
+            <FilterTabs tabs={callerViews} bind:value={providerMetric} />
+            <FilterTabs tabs={providerViews} bind:value={providerView} />
+        {/snippet}
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
 				{#each providerSeries as series (series.id)}
 					<span class="flex items-center gap-1.5 text-[11.5px] text-zinc-500">
@@ -625,15 +750,17 @@ function onLatMove(event: MouseEvent) {
 			</div>
 
 		<div class="relative" bind:clientWidth={barWidth}>
-			{#if !loading && providerBuckets.length === 0}
-				<div class="flex h-[200px] items-center justify-center text-[12.5px] text-zinc-600">No requests in this window.</div>
+			{#if loading}
+                <div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading providers…</div>
+            {:else if providerBuckets.length === 0}
+				<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">No requests in this window.</div>
 			{:else}
-				<svg width={barWidth} height={BAR_H} role="img" aria-label="Requests by provider over {range.label.toLowerCase()}">
+				<svg width={barWidth} height={BAR_H} role="img" aria-label="{providerTitle} over {range.label.toLowerCase()} · {providerView === 'share' ? 'share' : 'amount'}">
 					{#each [0, 0.5, 1] as tick (tick)}
 						{@const y = BAR_PAD.top + barInnerH * tick}
 						<line x1={BAR_PAD.left} y1={y} x2={barWidth - BAR_PAD.right} y2={y} stroke={GRID} stroke-width="1" />
 						<text x={BAR_PAD.left - 8} y={y + 3.5} text-anchor="end" font-size="10" fill={AXIS_INK} class="tabular-nums">
-							{providerView === 'share' ? `${Math.round(providerMax * (1 - tick))}%` : fmt(Math.round(providerMax * (1 - tick)))}
+							{providerView === 'share' ? `${Math.round(providerMax * (1 - tick))}%` : providerMetric === 'cost_total' ? money(providerMax * (1 - tick)) : fmt(Math.round(providerMax * (1 - tick)))}
 						</text>
 					{/each}
 
@@ -681,7 +808,7 @@ function onLatMove(event: MouseEvent) {
 							<div class="flex items-center gap-2 text-[11.5px] whitespace-nowrap">
 								<span class="size-[7px] flex-none rounded-full" style:background={segment.series.color}></span>
 								<span class="flex-1 text-zinc-500">{segment.series.label}</span>
-								<span class="text-zinc-200 tabular-nums">{segment.value.toLocaleString()} <span class="text-zinc-500">· {segment.share.toFixed(1)}%</span></span>
+								<span class="text-zinc-200 tabular-nums">{providerMetric === 'cost_total' ? money(segment.value) : segment.value.toLocaleString()} <span class="text-zinc-500">· {(providerTotals[barHover] ?? 0) > 0 ? `${segment.share.toFixed(1)}%` : '—'}</span></span>
 							</div>
 						{/each}
 					</div>
@@ -700,9 +827,9 @@ function onLatMove(event: MouseEvent) {
         {/if}
 		<div class="relative" bind:clientWidth={latWidth}>
 			{#if loading}
-                <div class="flex h-[200px] items-center justify-center text-[12.5px] text-zinc-600">Loading latency…</div>
+                <div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading latency…</div>
             {:else if !hasLatency}
-				<div class="flex h-[200px] items-center justify-center text-[12.5px] text-zinc-600">No latency recorded.</div>
+				<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">No latency recorded.</div>
 			{:else}
 				<svg
 					width={latWidth}
@@ -755,27 +882,44 @@ function onLatMove(event: MouseEvent) {
 			{/if}
 		</div>
 	</ChartCard>
-</div>
 
-<div class="grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2 [&>*]:min-w-0">
-	<ModelComparison points={modelPoints} failures={modelFailures} {loading} />
+	<ModelComparison
+        points={modelPoints}
+        failures={modelFailures}
+        previousPoints={previousModelPoints}
+        {comparisonLabel}
+        comparisonUnavailable={loadError !== null || previousModelPoints === null}
+        onretry={load}
+        {loading}
+    />
 
 	<!-- top callers -->
-	<ChartCard title="Top callers" hint={callerMetric === 'requests' ? 'By request volume · share of all requests' : 'By spend · share of total spend'}>
-        {#snippet actions()}<FilterTabs tabs={callerViews} bind:value={callerMetric} />{/snippet}
-		<div class="flex flex-col gap-2.5">
+	<ChartCard title="Top callers" hint={`Current top callers vs ${comparisonLabel}`}>
+        {#snippet actions()}
+            <FilterTabs tabs={callerViews} bind:value={callerMetric} />
+        {/snippet}
+		<div class="flex flex-col gap-1">
 			{#if loading}
                 <div class="py-8 text-center text-[12.5px] text-zinc-600">Loading callers…</div>
             {:else}
+            {#if callerComparisonUnavailable}
+                <div class="flex flex-wrap items-center justify-between gap-2 text-[12px] text-zinc-500" role="status">
+                    <span>Previous-period comparison unavailable.</span>
+                    <ToolbarButton onclick={load}>Retry comparison</ToolbarButton>
+                </div>
+            {/if}
             {#each topCallers as caller (`${caller.actor_type}-${caller.actor_id}`)}
-				<div class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_64px_50px] items-center gap-3">
+                {@const previousValue = previousCallerValues.get(JSON.stringify([caller.actor_type, caller.actor_id])) ?? 0}
+                {@const delta = caller.value - previousValue}
+                {@const comparison = periodComparison(caller.value, previousValue, { label: comparisonLabel, lowerIsBetter: callerMetric === 'cost_total' })}
+				<div class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_64px_100px] items-center gap-3">
 					<span class="flex min-w-0 items-center gap-1.5">
 						<!--
 							The kind of credential, not decoration: a key and a human are
 							different things to hold accountable for the same spend.
 						-->
 						<span
-							class="flex-none rounded-[3px] px-1 py-[1px] text-[9.5px] tracking-wide uppercase {caller.actor_type ===
+							class="w-14 flex-none rounded-[3px] px-1 py-[1px] text-center text-[9.5px] tracking-wide uppercase {caller.actor_type ===
 							'api_key'
 								? 'bg-sky-500/12 text-sky-300/80'
 								: 'bg-violet-500/12 text-violet-300/80'}"
@@ -795,7 +939,12 @@ function onLatMove(event: MouseEvent) {
 						></div>
 					</div>
 					<span class="text-right text-[12.5px] text-zinc-300 tabular-nums" title={callerMetric === 'requests' ? `${caller.requests.toLocaleString()} requests` : `$${caller.cost_total.toLocaleString('en-US', { maximumFractionDigits: 6 })} spend`}>{callerMetric === 'requests' ? fmt(caller.requests) : fmtCostTotal(caller.cost_total)}</span>
-					<span class="text-right text-[12.5px] text-zinc-500 tabular-nums" title={callerMetric === 'requests' ? 'Share of all requests' : 'Share of total spend'}>{caller.share === null ? '—' : caller.share > 0 && caller.share < 0.1 ? '<0.1%' : `${caller.share.toFixed(1)}%`}</span>
+                        <span class="text-right text-[12px] leading-[13px] text-zinc-400 tabular-nums" title={callerComparisonUnavailable ? 'Comparison unavailable' : `Previous: ${callerAmount(previousValue)}. Current: ${callerAmount(caller.value)}. ${comparison.title}`}>
+                            {#if callerComparisonUnavailable}—{:else}
+                                <span class="block whitespace-nowrap text-zinc-200">{delta > 0 ? '+' : delta < 0 ? '−' : ''}{callerAmount(Math.abs(delta))}</span>
+                                <span class="block whitespace-nowrap text-[11px] font-medium" style:color={comparison.color}>{comparison.text}</span>
+                            {/if}
+                        </span>
 				</div>
 			{:else}
 				<div class="py-8 text-center text-[12.5px] text-zinc-600">No requests in this window.</div>

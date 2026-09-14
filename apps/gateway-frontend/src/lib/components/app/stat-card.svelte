@@ -35,8 +35,8 @@ let {
 </script>
 
 {#if compact}
-<!-- Compact chart toolbars are 32px controls + 16px padding + a 1px divider. -->
-<div class="flex h-[49px] min-w-0 items-center gap-3 rounded-[11px] border border-track bg-surface-1 px-4 py-2">
+<!-- Match standard card headers: 32px controls + 26px padding + a 1px divider. -->
+<div class="flex h-[59px] min-w-0 items-center gap-3 rounded-[11px] border border-track bg-surface-1 px-4 py-[13px]">
     <span class="flex shrink-0 items-center gap-[7px] text-[13px] font-medium text-zinc-200">
         {#if accent}<span class="size-[7px] flex-none rounded-full" style:background={accent}></span>{/if}
         {label}
