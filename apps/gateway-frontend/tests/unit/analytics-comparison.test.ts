@@ -10,6 +10,11 @@ test('relative changes distinguish improvements from increases', () => {
   expect(periodComparison(82, 100, { label: options.label })).toMatchObject({ text: '↓ 18%', color: '#fbbf24' });
 });
 
+test('relative error-rate changes use percentages of the previous rate', () => {
+  expect(periodComparison(1.38, 1, options)).toMatchObject({ text: '↑ 38%', color: '#fbbf24' });
+  expect(periodComparison(0.5, 1, options)).toMatchObject({ text: '↓ 50%', color: '#34d399' });
+});
+
 test('error rates use percentage points, including a zero baseline', () => {
   expect(periodComparison(1.1, 1.5, { ...options, percentagePoints: true }).text).toBe('↓ 0.4 pp');
   expect(periodComparison(0.25, 0, { ...options, percentagePoints: true }).text).toBe('↑ 0.25 pp');

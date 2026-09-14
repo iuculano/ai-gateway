@@ -23,6 +23,6 @@ let {
 } = $props();
 </script>
 
-<div class="grid {compact ? `mb-2.5 grid-cols-1 gap-2.5 sm:grid-cols-2 ${columns === 5 ? '2xl:grid-cols-5' : '2xl:grid-cols-4'}` : 'mb-5 grid-cols-4 gap-3.5'}">
+<div class="grid {compact ? `mb-[var(--analytics-summary-gap,10px)] grid-cols-1 gap-[var(--analytics-gap,10px)] sm:grid-cols-2 ${columns === 5 ? '2xl:grid-cols-5' : '2xl:grid-cols-4'}` : 'mb-5 grid-cols-4 gap-3.5'}">
 	{@render children()}
 </div>

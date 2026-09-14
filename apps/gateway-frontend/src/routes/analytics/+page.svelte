@@ -289,7 +289,6 @@ const comparisons = $derived.by(() => {
     errors: periodComparison(requestTotal > 0 ? errorRate : null, previousErrorRate, {
       label,
       lowerIsBetter: true,
-      percentagePoints: true,
     }),
   };
 });
@@ -320,8 +319,48 @@ function niceMax(value: number): number {
   return Math.ceil(value / (magnitude / 2)) * (magnitude / 2);
 }
 
+// Share spare viewport height across the three desktop rows. Measure the actual
+// layout so wrapped headers, browser zoom and banners all count toward the budget.
+let bodyGrowth = $state(0);
+function fitCards(grid: HTMLDivElement) {
+  const main = grid.closest('main');
+  if (!main) return;
+  let frame = 0;
+  const measure = () => {
+    frame = 0;
+    const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+    if (columns !== 2) {
+      bodyGrowth = 0;
+      return;
+    }
+    const top = grid.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+    const available = main.clientHeight - top - parseFloat(getComputedStyle(main).paddingBottom) - 1;
+    const rows = Math.ceil(grid.children.length / columns);
+    bodyGrowth = Math.max(0, Math.floor(bodyGrowth + (available - grid.getBoundingClientRect().height) / rows));
+  };
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(measure);
+  };
+  const resize = new ResizeObserver(schedule);
+  resize.observe(main);
+  resize.observe(grid);
+  for (const sibling of main.children) resize.observe(sibling);
+  const mutations = new MutationObserver(schedule);
+  mutations.observe(main, { childList: true });
+  window.addEventListener('resize', schedule);
+  schedule();
+  return {
+    destroy() {
+      cancelAnimationFrame(frame);
+      resize.disconnect();
+      mutations.disconnect();
+      window.removeEventListener('resize', schedule);
+    },
+  };
+}
+
 // ---- requests, tokens and error rate over time -------------------------------
-const AREA_H = 160;
+const AREA_H = $derived(160 + bodyGrowth);
 const AREA_PAD = { top: 14, right: 10, bottom: 24, left: 52 };
 
 let areaWidth = $state(720);
@@ -376,7 +415,7 @@ const trafficMax = $derived(
       ),
 );
 const areaInnerW = $derived(Math.max(1, areaWidth - AREA_PAD.left - AREA_PAD.right));
-const areaInnerH = AREA_H - AREA_PAD.top - AREA_PAD.bottom;
+const areaInnerH = $derived(AREA_H - AREA_PAD.top - AREA_PAD.bottom);
 
 const areaX = (i: number) => AREA_PAD.left + (i / Math.max(1, timeline.length - 1)) * areaInnerW;
 const areaY = (v: number) => AREA_PAD.top + areaInnerH - (v / trafficMax) * areaInnerH;
@@ -421,7 +460,7 @@ function onAreaMove(event: MouseEvent) {
 }
 
 // ---- provider split (stacked bars, categorical) -------------------------------
-const BAR_H = 160;
+const BAR_H = $derived(160 + bodyGrowth);
 const BAR_PAD = { top: 12, right: 8, bottom: 24, left: 76 };
 /** A 2px gap between stacked segments so touching fills stay separable. */
 const SEGMENT_GAP = 2;
@@ -472,7 +511,7 @@ const providerTotals = $derived(
 );
 const providerMax = $derived(providerView === 'share' ? 100 : niceMax(Math.max(0, ...providerTotals)));
 const barInnerW = $derived(Math.max(1, barWidth - BAR_PAD.left - BAR_PAD.right));
-const barInnerH = BAR_H - BAR_PAD.top - BAR_PAD.bottom;
+const barInnerH = $derived(BAR_H - BAR_PAD.top - BAR_PAD.bottom);
 const barSlot = $derived(barInnerW / Math.max(1, providerBuckets.length));
 const barThickness = $derived(Math.min(28, barSlot * 0.62));
 
@@ -497,15 +536,15 @@ const stacks = $derived(
 // reconstruct a mean exactly; a p95 cannot be recovered from stored p95s by any
 // arithmetic, so drawing one here would mean inventing it. That needs a latency
 // histogram, which is deliberately not in this iteration.
-const LAT_H = 160;
+const LAT_H = $derived(160 + bodyGrowth);
 const LAT_PAD = { top: 12, right: 12, bottom: 24, left: 46 };
 
 let latWidth = $state(360);
 let latHover = $state<number | null>(null);
-let latencyView = $state<'overall' | 'providers'>('overall');
+let latencyView = $state<'overall' | 'providers'>('providers');
 const latencyViews = [
-  { id: 'overall', label: 'Overall' },
   { id: 'providers', label: 'By provider' },
+  { id: 'overall', label: 'Overall' },
 ] satisfies { id: typeof latencyView; label: string }[];
 
 const latPoints = $derived(timeline);
@@ -526,7 +565,7 @@ const latMax = $derived(
   niceMax(Math.max(1, ...latencySeries.flatMap((series) => series.values.map((value) => value ?? 0)))),
 );
 const latInnerW = $derived(Math.max(1, latWidth - LAT_PAD.left - LAT_PAD.right));
-const latInnerH = LAT_H - LAT_PAD.top - LAT_PAD.bottom;
+const latInnerH = $derived(LAT_H - LAT_PAD.top - LAT_PAD.bottom);
 
 const latX = (i: number) => LAT_PAD.left + (i / Math.max(1, latPoints.length - 1)) * latInnerW;
 const latY = (v: number) => LAT_PAD.top + latInnerH - (v / latMax) * latInnerH;
@@ -569,6 +608,8 @@ function onLatMove(event: MouseEvent) {
 
 // ---- ranked lists (single hue - length already encodes the value) -------------
 </script>
+
+<div class="analytics-layout">
 
 <PageHeader title="Analytics" description="Traffic, spend and latency across every model routed through Relay.">
 	{#snippet actions()}
@@ -641,7 +682,7 @@ function onLatMove(event: MouseEvent) {
 </StatGrid>
 
 <!-- One grid keeps all six cards equally tall, even when toolbars wrap or tabs change. -->
-<div class="grid grid-cols-1 items-stretch gap-2.5 lg:auto-rows-fr lg:grid-cols-2 [&>*]:min-w-0">
+<div use:fitCards style:--analytics-body-growth={`${bodyGrowth}px`} class="grid grid-cols-1 items-stretch gap-[var(--analytics-gap)] lg:auto-rows-fr lg:grid-cols-2 [&>*]:min-w-0">
 	<ChartCard title={trafficTitle} hint={trafficHint}>
         {#snippet actions()}<FilterTabs tabs={trafficViews} bind:value={trafficView} />{/snippet}
         <div class="flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-zinc-500">
@@ -655,9 +696,9 @@ function onLatMove(event: MouseEvent) {
         </div>
 		<div class="relative" bind:clientWidth={areaWidth}>
 			{#if loading}
-                <div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading {trafficView === 'tokens' ? 'tokens' : trafficView === 'errors' ? 'error rate' : 'requests'}…</div>
+                <div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">Loading {trafficView === 'tokens' ? 'tokens' : trafficView === 'errors' ? 'error rate' : 'requests'}…</div>
             {:else if timeline.length === 0}
-				<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">
+				<div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">
 					No requests in this window.
 				</div>
 			{:else}
@@ -736,18 +777,13 @@ function onLatMove(event: MouseEvent) {
                                 <div class="mt-1 flex justify-between gap-4 text-[11.5px]" style:color={series.color}><span>{series.label}</span><span class="tabular-nums">{trafficCounts[areaHover]?.[index]?.toLocaleString() ?? '0'}</span></div>
                             {/each}
                         {/if}
-                        <div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">
-							{fmtCostTotal(point.cost_total)}
-							{#if point.average_latency_ms !== null}
-								· {point.average_latency_ms}ms avg
-							{/if}
-						</div>
 					</div>
 				{/if}
 			{/if}
 		</div>
 	</ChartCard>
 	<SpendChart
+        height={AREA_H}
         interval={range.interval}
         points={timeline}
         {loading}
@@ -777,9 +813,9 @@ function onLatMove(event: MouseEvent) {
 
 		<div class="relative" bind:clientWidth={barWidth}>
 			{#if loading}
-                <div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading providers…</div>
+                <div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">Loading providers…</div>
             {:else if providerBuckets.length === 0}
-				<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">No requests in this window.</div>
+				<div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">No requests in this window.</div>
 			{:else}
 				<svg width={barWidth} height={BAR_H} role="img" aria-label="{providerTitle} over {range.label.toLowerCase()} · {providerView === 'share' ? 'share' : 'amount'}">
 					{#each [0, 0.5, 1] as tick (tick)}
@@ -853,9 +889,9 @@ function onLatMove(event: MouseEvent) {
         {/if}
 		<div class="relative" bind:clientWidth={latWidth}>
 			{#if loading}
-                <div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">Loading latency…</div>
+                <div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">Loading latency…</div>
             {:else if !hasLatency}
-				<div class="flex h-[160px] items-center justify-center text-[12.5px] text-zinc-600">No latency recorded.</div>
+				<div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">No latency recorded.</div>
 			{:else}
 				<svg
 					width={latWidth}
@@ -924,7 +960,7 @@ function onLatMove(event: MouseEvent) {
         {#snippet actions()}
             <FilterTabs tabs={callerViews} bind:value={callerMetric} />
         {/snippet}
-		<div class="flex flex-col gap-1">
+		<div class="flex min-h-[calc(176px+var(--analytics-body-growth,0px))] flex-col justify-between gap-1">
 			{#if loading}
                 <div class="py-8 text-center text-[12.5px] text-zinc-600">Loading callers…</div>
             {:else}
@@ -979,3 +1015,23 @@ function onLatMove(event: MouseEvent) {
 		</div>
 	</ChartCard>
 </div>
+
+</div>
+
+<style>
+  .analytics-layout {
+    --analytics-gap: 10px;
+    --analytics-summary-gap: 10px;
+    --analytics-body-padding: 8px;
+  }
+
+  /* Restore normal spacing gradually, reserving enough room for the charts
+     near 1080p. The card sizing action accounts for these computed values. */
+  @media (min-width: 1024px) and (min-height: 1080px) {
+    .analytics-layout {
+      --analytics-gap: clamp(10px, calc(3.333333vh - 26px), 14px);
+      --analytics-summary-gap: clamp(10px, calc(8.333333vh - 80px), 20px);
+      --analytics-body-padding: clamp(8px, calc(6.666667vh - 64px), 16px);
+    }
+  }
+</style>

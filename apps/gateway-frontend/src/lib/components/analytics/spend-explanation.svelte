@@ -51,7 +51,7 @@ const largest = $derived(Math.max(0, ...effects.map((effect) => Math.abs(effect.
 const color = (amount: number | null) => (!amount ? '#a1a1aa' : amount > 0 ? '#fbbf24' : '#34d399');
 </script>
 
-<div class="h-[160px] overflow-auto">
+<div class="h-[calc(160px+var(--analytics-body-growth,0px))] overflow-auto">
     {#if loading}
         <div class="flex h-full items-center justify-center text-[12.5px] text-zinc-500">Loading spend comparison…</div>
     {:else if unavailable}

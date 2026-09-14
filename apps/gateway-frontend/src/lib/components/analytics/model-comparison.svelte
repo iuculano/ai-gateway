@@ -99,7 +99,7 @@ const preciseChangeValue = (value: number) =>
                 <ToolbarButton onclick={onretry}>Retry comparison</ToolbarButton>
             </div>
         {:else}
-            <div class="max-h-[190px] overflow-auto">
+            <div class="max-h-[calc(190px+var(--analytics-body-growth,0px))] overflow-auto">
                 <table class="w-full min-w-[600px] border-collapse text-[12.5px]">
                     <caption class="sr-only">Compared with {comparisonLabel}. Largest absolute changes first.</caption>
                     <thead class="sticky top-0 z-10 bg-surface-1">
@@ -114,11 +114,10 @@ const preciseChangeValue = (value: number) =>
                             {@const comparison = periodComparison(row.current, row.previous, { label: comparisonLabel, lowerIsBetter: changeMetric === 'cost_total' })}
                             <tr class="h-10 border-b border-hairline last:border-0 hover:bg-surface-3">
                                 <td class="max-w-[240px] py-2 pr-3 pl-4">
-                                    <span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider} · ${row.model}`}>
+                                    <span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider}/${row.model}`}>
                                         <span class="size-[7px] shrink-0 rounded-full" style:background={providerTone(row.provider).color}></span>
                                         <span class="min-w-0">
-                                            <span class="block truncate font-medium text-zinc-200">{row.model}</span>
-                                            <span class="block truncate text-[11px] text-zinc-500">{row.provider}</span>
+                                            <span class="block truncate font-medium text-zinc-200">{row.provider}/{row.model}</span>
                                         </span>
                                     </span>
                                 </td>
@@ -137,15 +136,15 @@ const preciseChangeValue = (value: number) =>
             </div>
         {/if}
 	{:else if view === 'bars'}
-		<div class="flex flex-col gap-2 px-4 py-2">
+		<div class="flex min-h-[calc(190px+var(--analytics-body-growth,0px))] flex-col justify-between gap-2 px-4 py-[var(--analytics-body-padding,8px)]">
 			{#if loading}
 				<p class="py-6 text-center text-[13px] text-zinc-500">Loading models…</p>
 			{:else}
 				{#each topModels as row (row.id)}
 					<div class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_50px_56px] items-center gap-3">
-						<span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider} · ${row.model}`}>
+						<span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider}/${row.model}`}>
 							<span class="size-[7px] shrink-0 rounded-full" style:background={providerTone(row.provider).color}></span>
-							<span class="truncate text-[12.5px] text-zinc-300">{row.model}</span>
+							<span class="truncate text-[12.5px] text-zinc-300">{row.provider}/{row.model}</span>
 						</span>
 						<div class="h-[18px] w-full" aria-hidden="true">
 							<div class="h-full rounded-r-[4px] bg-emerald-400" style:width={`${row.requests / maxRequests * 100}%`} style:opacity={0.35 + 0.65 * row.requests / maxRequests}></div>
@@ -160,7 +159,7 @@ const preciseChangeValue = (value: number) =>
 			{/if}
 		</div>
 	{:else}
-	<div class="max-h-[190px] overflow-auto">
+	<div class="max-h-[calc(190px+var(--analytics-body-growth,0px))] overflow-auto">
 		<table class="w-full {view === 'efficiency' ? 'min-w-[520px]' : 'min-w-[640px]'} border-collapse text-[12.5px]">
 			<thead class="sticky top-0 z-10 bg-surface-1">
 				<tr>
@@ -181,9 +180,9 @@ const preciseChangeValue = (value: number) =>
 					{#each rows as row (row.id)}
 						<tr class="h-10 border-b border-hairline transition-colors duration-100 last:border-0 hover:bg-surface-3">
 							<td class="max-w-[240px] py-1 pr-3 pl-4">
-								<span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider} · ${row.model}`}>
+								<span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider}/${row.model}`}>
 									<span class="size-[7px] shrink-0 rounded-full" style:background={providerTone(row.provider).color}></span>
-									<span class="truncate text-[13px] font-medium text-zinc-200">{row.model}</span>
+									<span class="truncate text-[13px] font-medium text-zinc-200">{row.provider}/{row.model}</span>
 								</span>
 							</td>
 							{#if view === 'efficiency'}
