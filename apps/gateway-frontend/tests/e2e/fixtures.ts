@@ -235,7 +235,6 @@ export const CATALOG: CatalogProvider[] = [
     models: [
       {
         id: IDS.model,
-        source: 'builtin',
         name: 'gpt-5',
         provider: 'openai',
         display_name: 'GPT-5',

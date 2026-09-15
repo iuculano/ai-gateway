@@ -2,14 +2,11 @@
 import { onMount } from 'svelte';
 import { listProviders } from '$lib/api/models';
 import type { CatalogProvider } from '$lib/api/types';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import TableCard from '$lib/components/app/table-card.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import ProviderRow from '$lib/components/models/provider-row.svelte';
 import { timeAgo } from '$lib/data/format';
-
-type SourceFilter = 'all' | 'builtin' | 'custom';
 
 // Shared with ProviderRow so the header and the rows sit in one grid.
 const COLS = '24px 1.7fr 118px 1.1fr 1.1fr 104px 92px 96px';
@@ -25,12 +22,6 @@ const COLUMNS = [
   { label: 'Status' },
 ];
 
-const TABS = [
-  { id: 'all' as const, label: 'All' },
-  { id: 'builtin' as const, label: 'Built-in' },
-  { id: 'custom' as const, label: 'Custom' },
-];
-
 // Local state rather than a store in $lib/state. Those exist for pages whose
 // tables feed each other or whose rows are edited; this is one read-only table
 // behind one unpaginated request, and a store would only add indirection.
@@ -38,7 +29,6 @@ let providers: CatalogProvider[] = $state([]);
 let loading = $state(true);
 let error: string | null = $state(null);
 
-let sourceFilter: SourceFilter = $state('all');
 let expandedProvider: string | null = $state(null);
 let search = $state('');
 
@@ -60,13 +50,7 @@ async function load() {
 // load itself mutates and hammer the endpoint on any error.
 onMount(load);
 
-/**
- * Providers, with their model lists narrowed to the current filter.
- *
- * Filtering the models rather than the providers is what keeps the table
- * provider-focused: switching to Custom should show which providers hold custom
- * rows, not replace the provider list with a list of models.
- */
+/** Filter the catalog by provider or model name. */
 const filtered = $derived.by(() => {
   const query = search.trim().toLowerCase();
 
@@ -74,7 +58,6 @@ const filtered = $derived.by(() => {
     .map((provider) => ({
       ...provider,
       models: provider.models.filter((model) => {
-        if (sourceFilter !== 'all' && model.source !== sourceFilter) return false;
         if (query && !provider.id.toLowerCase().includes(query)) {
           return (
             model.name.toLowerCase().includes(query) || (model.display_name?.toLowerCase().includes(query) ?? false)
@@ -87,7 +70,6 @@ const filtered = $derived.by(() => {
 });
 
 const allModels = $derived(providers.flatMap((provider) => provider.models));
-const customCount = $derived(allModels.filter((model) => model.source === 'custom').length);
 const unpricedCount = $derived(allModels.filter((model) => model.cost_input === null).length);
 const shownCount = $derived(filtered.reduce((total, provider) => total + provider.models.length, 0));
 
@@ -116,7 +98,6 @@ const lastSynced = $derived.by(() => {
 	onretry={load}
 >
 	{#snippet toolbar()}
-		<FilterTabs tabs={TABS} bind:value={sourceFilter} />
 		<input
 			type="search"
 			placeholder="Search providers and models…"
@@ -128,10 +109,6 @@ const lastSynced = $derived.by(() => {
 			of <span class="font-medium text-zinc-200 tabular-nums">{allModels.length.toLocaleString()}</span> models
 			<span class="mx-1 text-zinc-600">·</span>
 			<span class="font-medium text-zinc-200 tabular-nums">{providers.length.toLocaleString()}</span> providers
-			{#if customCount > 0}
-				<span class="mx-1 text-zinc-600">·</span>
-				<span class="font-medium text-violet-400 tabular-nums">{customCount.toLocaleString()}</span> custom
-			{/if}
 			<span class="mx-1 text-zinc-600">·</span>
 			<span class="font-medium tabular-nums {unpricedCount > 0 ? 'text-amber-400' : 'text-zinc-200'}">{unpricedCount.toLocaleString()}</span> unpriced
 			<span class="mx-1 text-zinc-600">·</span>
