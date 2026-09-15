@@ -34,7 +34,7 @@ import { type Caller, runWithCaller } from '@repo/hono';
 import { SQL } from 'bun';
 import AnalyticsServices from '../../src/api/analytics/analytics.services';
 import LogsServices from '../../src/api/logs/logs.services';
-import { commonestModel, rarestModel, TEAMS } from './catalogue';
+import { commonestModel, rarestModel, TEAMS } from './catalog';
 import { measure, type Result, report, type Scenario } from './harness';
 import {
   ABSENT_ENV_TAG,

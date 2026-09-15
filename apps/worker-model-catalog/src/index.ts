@@ -47,9 +47,9 @@ async function tick(): Promise<void> {
     await tickModelCatalog();
   } catch (error) {
     // Nothing above this catches, and an unhandled rejection here would take
-    // the process down over one unreachable upstream. A catalogue a few hours
+    // the process down over one unreachable upstream. A catalog a few hours
     // stale is not an outage; the next tick tries again.
-    logger.error({ err: error }, 'Model catalogue sync tick failed');
+    logger.error({ err: error }, 'Model catalog sync tick failed');
   } finally {
     ticking = false;
   }
@@ -64,16 +64,16 @@ const interval = environment.WORKER_ENABLED
 if (environment.WORKER_ENABLED) {
   logger.info(
     { poll_interval_ms: environment.WORKER_POLL_INTERVAL_MS, source_url: environment.CATALOG_SOURCE_URL },
-    'Model catalogue sync started',
+    'Model catalog sync started',
   );
 
   // setInterval does not fire until the interval has elapsed, and at hourly
   // pacing that would leave a freshly deployed worker with nothing in the
-  // catalogue for an hour. The conditional GET makes a redundant startup pass
+  // catalog for an hour. The conditional GET makes a redundant startup pass
   // cheap, so it is always worth taking one.
   void tick();
 } else {
-  logger.warn('Model catalogue sync is disabled by WORKER_ENABLED - the catalogue will not be refreshed');
+  logger.warn('Model catalog sync is disabled by WORKER_ENABLED - the catalog will not be refreshed');
 }
 
 const shutdown = () => {

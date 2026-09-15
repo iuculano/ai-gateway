@@ -50,7 +50,7 @@ async function load() {
     const result = await listProviders();
     providers = result.data;
   } catch (cause) {
-    error = cause instanceof Error ? cause.message : 'Failed to load the catalogue.';
+    error = cause instanceof Error ? cause.message : 'Failed to load the catalog.';
   } finally {
     loading = false;
   }
@@ -91,7 +91,7 @@ const customCount = $derived(allModels.filter((model) => model.source === 'custo
 const unpricedCount = $derived(allModels.filter((model) => model.cost_input === null).length);
 const shownCount = $derived(filtered.reduce((total, provider) => total + provider.models.length, 0));
 
-/** The oldest sync across providers - the figure that says the catalogue is stale. */
+/** The oldest sync across providers - the figure that says the catalog is stale. */
 const lastSynced = $derived.by(() => {
   const stamps = providers.map((provider) => provider.synced_at).filter((stamp): stamp is string => stamp !== null);
   if (stamps.length === 0) return null;
@@ -101,7 +101,7 @@ const lastSynced = $derived.by(() => {
 
 <PageHeader
 	title="Models"
-	description="The model catalogue and published prices, synced hourly from models.dev."
+	description="The model catalog and published prices, synced hourly from models.dev."
 />
 
 <TableCard
@@ -110,9 +110,9 @@ const lastSynced = $derived.by(() => {
 	{loading}
 	{error}
 	isEmpty={filtered.length === 0}
-	loadingLabel="Loading catalogue…"
-	emptyTitle={providers.length === 0 ? 'No providers in the catalogue' : 'No providers match your filters'}
-	emptyHint={providers.length === 0 ? 'The catalogue worker populates this on its first sync.' : undefined}
+	loadingLabel="Loading catalog…"
+	emptyTitle={providers.length === 0 ? 'No providers in the catalog' : 'No providers match your filters'}
+	emptyHint={providers.length === 0 ? 'The catalog worker populates this on its first sync.' : undefined}
 	onretry={load}
 >
 	{#snippet toolbar()}

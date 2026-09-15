@@ -228,7 +228,7 @@ export const FAILED_TRACE_DETAIL: TraceDetail = {
   ],
 };
 
-export const CATALOGUE: CatalogProvider[] = [
+export const CATALOG: CatalogProvider[] = [
   {
     id: 'openai',
     synced_at: UPDATED_AT,

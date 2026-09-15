@@ -40,7 +40,7 @@ function toConfig(offering: CatalogOffering): Record<string, unknown> {
 }
 
 /**
- * One catalogue row, as the table wants it.
+ * One catalog row, as the table wants it.
  *
  * Missing prices remain null because unpublished and free are different states.
  */
@@ -89,12 +89,12 @@ const TRACKED = [
 ] as const;
 
 /**
- * Applies a catalogue snapshot atomically: update changed built-ins, delist
+ * Applies a catalog snapshot atomically: update changed built-ins, delist
  * missing ones, and confirm the rest. `updated_at` tracks data changes while
  * `synced_at` tracks the latest confirmation; custom rows are never touched.
  *
  * @param selected
- * The offerings from one catalogue snapshot.
+ * The offerings from one catalog snapshot.
  */
 export async function upsertCatalog(selected: SelectedOffering[]): Promise<UpsertSummary> {
   if (selected.length === 0) {
@@ -147,7 +147,7 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
           },
 
           // Avoid changing `updated_at` for confirmations alone. Operator-owned
-          // tags are intentionally excluded from catalogue comparisons.
+          // tags are intentionally excluded from catalog comparisons.
           setWhere: sql`(${current}) IS DISTINCT FROM (${incoming})`,
         })
         .returning({ id: models.id });
@@ -183,8 +183,22 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
       .where(and(eq(models.source, 'builtin'), inArray(models.provider, providers), isNull(models.delisted_at)))
       .returning({ id: models.id });
 
-    logger.debug({ written, delisted: delisted, confirmed: confirmed.length }, 'Catalogue upsert complete');
+    logger.debug({ written, delisted: delisted, confirmed: confirmed.length }, 'Catalog upsert complete');
 
     return { written, delisted: delisted, confirmed: confirmed.length };
   });
+}
+
+/** Remove worker-owned models outside the configured provider whitelist. */
+export async function deleteExcludedModels(providerWhitelist: string[]): Promise<number> {
+  const deleted = await db
+    .delete(models)
+    .where(
+      and(
+        eq(models.source, 'builtin'),
+        providerWhitelist.length > 0 ? notInArray(models.provider, providerWhitelist) : undefined,
+      ),
+    )
+    .returning({ id: models.id });
+  return deleted.length;
 }

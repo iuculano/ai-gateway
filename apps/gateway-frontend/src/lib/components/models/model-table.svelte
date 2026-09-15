@@ -33,7 +33,7 @@ const STATUS_TONES = {
  *
  * They are separate facts - `status` is what the provider says about a model,
  * `delisted_at` is that the model stopped appearing at all - but a row that has
- * left the catalogue is the more urgent of the two, and there is one column.
+ * left the catalog is the more urgent of the two, and there is one column.
  */
 function toneFor(model: CatalogModel) {
   return model.delisted_at !== null ? STATUS_TONES.delisted : STATUS_TONES[model.status];

@@ -77,17 +77,17 @@ export interface SelectedOffering {
  * something actually changed.
  *
  * In memory, which is not where it belongs - it should be a row, so that a
- * restart does not re-download and re-upsert an unchanged catalogue. It moves
- * there when the catalogue tables land. The cost until then is one wasted 4 MB
+ * restart does not re-download and re-upsert an unchanged catalog. It moves
+ * there when the catalog tables land. The cost until then is one wasted 4 MB
  * fetch per process start.
  */
 let lastEtag: string | undefined;
 
 /**
- * Fetches the catalogue, unless models.dev says it has not changed.
+ * Fetches the catalog, unless models.dev says it has not changed.
  *
  * @returns
- * The parsed catalogue, or null when the upstream answered 304 and there is
+ * The parsed catalog, or null when the upstream answered 304 and there is
  * nothing to do.
  */
 async function fetchCatalog(): Promise<Catalog | null> {
@@ -112,7 +112,7 @@ async function fetchCatalog(): Promise<Catalog | null> {
 
   // Only after a successful parse. Recording it earlier would mean a body that
   // arrived truncated or malformed still suppressed the next fetch, and the
-  // catalogue would stay stale until the upstream happened to change again.
+  // catalog would stay stale until the upstream happened to change again.
   lastEtag = response.headers.get('etag') ?? undefined;
 
   return catalog;
@@ -153,6 +153,6 @@ export async function tickModelCatalog(): Promise<void> {
       delisted: summary.delisted,
       confirmed: summary.confirmed,
     },
-    'Synced models.dev catalogue',
+    'Synced models.dev catalog',
   );
 }

@@ -13,7 +13,7 @@ const price = z.coerce.number().nonnegative().nullable();
 const modelShape = z.object({
   id: z.uuidv7(),
 
-  // Which rows the catalogue worker owns. Built-ins are replaced on every sync;
+  // Which rows the catalog worker owns. Built-ins are replaced on every sync;
   // custom rows are the organization's and are never touched by it.
   source: z.enum(['builtin', 'custom']),
 
@@ -72,7 +72,7 @@ const listModels = createSchema({
 });
 
 /**
- * The catalogue, grouped by provider.
+ * The catalog, grouped by provider.
  *
  * Separate from listModels rather than a mode of it: that one is a flat
  * cursor-paginated list, and a page boundary through a provider's models would

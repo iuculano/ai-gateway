@@ -6,7 +6,7 @@ import Services from '../../src/api/models/models.services';
 import { admin, callerFor, prepareSuite, readAuditRows, resetDatabase, seedTenant, type Tenant } from './setup';
 
 /**
- * The model catalogue, against a real database.
+ * The model catalog, against a real database.
  *
  * Built-in models are global, while API-created custom models belong to their
  * caller's organization. These tests also cover whether the rows PostgreSQL
@@ -134,7 +134,7 @@ test('a failing model audit write rolls the update back', async () => {
   expect((await admin`select name from models where id = ${created.id}`)[0]?.name).toBe('gpt-4-turbo');
 });
 
-test('the cursor walks the catalogue exactly once', async () => {
+test('the cursor walks the catalog exactly once', async () => {
   const created = [
     await createModel({ name: 'one' }),
     await createModel({ name: 'two' }),

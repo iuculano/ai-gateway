@@ -111,20 +111,20 @@ async function listModels(request: ListModelsRequest): Promise<ListModelsRespons
 }
 
 /**
- * The whole catalogue, grouped by provider.
+ * The whole catalog, grouped by provider.
  *
  * Unpaginated on purpose. Every figure the dashboard shows for a provider - the
  * price range, the model count, the widest context - is an aggregate over all
  * of that provider's models, and a page boundary running through the middle of
  * one would turn each of those into a statement about a page instead. At the
- * low hundreds of rows the catalogue holds, that is a trade worth making;
+ * low hundreds of rows the catalog holds, that is a trade worth making;
  * listModels remains for anything that wants a cursor.
  *
  * Scoped to global rows plus the caller's own. Built-ins carry no
  * organization_id and belong to everyone; custom rows belong to exactly one
  * organization and must not be visible to another.
  *
- * Deliberately not a Result: an empty catalogue is a catalogue, and there is no
+ * Deliberately not a Result: an empty catalog is a catalog, and there is no
  * outcome here a caller could correct.
  */
 async function listProviders(): Promise<ListProvidersResponse> {

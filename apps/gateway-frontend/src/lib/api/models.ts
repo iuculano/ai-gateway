@@ -1,7 +1,7 @@
 import { client } from './client';
 
 /**
- * The whole catalogue, grouped by provider.
+ * The whole catalog, grouped by provider.
  *
  * Unpaginated by design - every figure the table shows for a provider is an
  * aggregate over all of its models, so a page boundary would turn each one into

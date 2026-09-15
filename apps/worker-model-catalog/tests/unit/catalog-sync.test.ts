@@ -10,7 +10,7 @@ const actualDrizzle = await import('@repo/drizzle');
 
 // PostgreSQL is the system boundary for this worker. Keep the worker's own
 // fetch, selection, and upsert modules real so the test observes one complete
-// catalogue-sync slice.
+// catalog-sync slice.
 mock.module('@repo/drizzle', () => ({ ...actualDrizzle, db }));
 
 const { tickModelCatalog } = await import('../../src/worker/catalog-sync');

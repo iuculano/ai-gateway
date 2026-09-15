@@ -5,11 +5,11 @@ import { Input } from '$lib/components/ui/input';
 import { fmtContext, fmtPricePerMillion, providerTone } from '$lib/data/format';
 
 /**
- * A model field that suggests from the catalogue without being limited to it.
+ * A model field that suggests from the catalog without being limited to it.
  *
  * Free text on purpose. An Azure deployment is named by whoever created it, so
- * it is not in the catalogue and never will be - a strict dropdown would make
- * the gateway's own Azure support unreachable from this page. The catalogue is
+ * it is not in the catalog and never will be - a strict dropdown would make
+ * the gateway's own Azure support unreachable from this page. The catalog is
  * a source of suggestions here, not an allowlist.
  */
 let {
@@ -88,7 +88,7 @@ onMount(async () => {
     );
   } catch {
     // Suggestions are a convenience. Losing them leaves a plain text field,
-    // which is exactly what this was before the catalogue existed.
+    // which is exactly what this was before the catalog existed.
     options = [];
   }
 });

@@ -77,7 +77,7 @@ const listModels = defineOpenAPIRoute({
 
 /**
  * GET /providers
- * Retrieve the whole catalogue, grouped by provider.
+ * Retrieve the whole catalog, grouped by provider.
  */
 const listProviders = defineOpenAPIRoute({
   route: Routes.listProviders,

@@ -62,7 +62,7 @@ const listProviders = createRoute({
   responses: {
     ...validatedProtectedRouteErrors,
     200: {
-      description: 'Catalogue retrieved successfully',
+      description: 'Catalog retrieved successfully',
       content: {
         'application/json': {
           schema: Schemas.listProviders.response,
