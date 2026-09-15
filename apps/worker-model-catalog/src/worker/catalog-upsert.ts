@@ -7,7 +7,7 @@ export interface UpsertSummary {
   /** Rows the statement actually wrote - inserted, or updated because something moved. */
   written: number;
 
-  /** Built-ins that stopped appearing upstream on this pass. */
+  /** Models that stopped appearing upstream on this pass. */
   delisted: number;
 
   /** Rows confirmed present, whether or not they changed. */
@@ -48,8 +48,6 @@ function toRow(item: SelectedOffering) {
   const { provider, offering } = item;
 
   return {
-    source: 'builtin' as const,
-    organization_id: null,
     provider: provider,
     name: offering.id,
     display_name: offering.name ?? null,
@@ -89,9 +87,9 @@ const TRACKED = [
 ] as const;
 
 /**
- * Applies a catalog snapshot atomically: update changed built-ins, delist
+ * Applies a catalog snapshot atomically: update changed models, delist
  * missing ones, and confirm the rest. `updated_at` tracks data changes while
- * `synced_at` tracks the latest confirmation; custom rows are never touched.
+ * `synced_at` tracks the latest confirmation.
  *
  * @param selected
  * The offerings from one catalog snapshot.
@@ -125,9 +123,6 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
         .onConflictDoUpdate({
           target: [models.provider, models.name],
 
-          // PostgreSQL needs this predicate to select the partial unique index.
-          targetWhere: sql`${models.source} = 'builtin'`,
-
           set: {
             display_name: sql`excluded.display_name`,
             status: sql`excluded.status`,
@@ -160,27 +155,29 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
     for (const provider of providers) {
       const names = rows.filter((row) => row.provider === provider).map((row) => row.name);
 
+      // biome-ignore format: looks nicer
       const marked = await tx
         .update(models)
         .set({ delisted_at: sql`now()`, updated_at: sql`now()` })
-        .where(
-          and(
-            eq(models.source, 'builtin'),
-            eq(models.provider, provider),
-            notInArray(models.name, names),
-            isNull(models.delisted_at),
-          ),
-        )
+        .where(and(
+          eq(models.provider, provider),
+          notInArray(models.name, names),
+          isNull(models.delisted_at)
+        ))
         .returning({ id: models.id });
 
       delisted += marked.length;
     }
 
     // Confirm active rows after delisting so missing models are excluded.
+    // biome-ignore format: looks nicer
     const confirmed = await tx
       .update(models)
       .set({ synced_at: sql`now()` })
-      .where(and(eq(models.source, 'builtin'), inArray(models.provider, providers), isNull(models.delisted_at)))
+      .where(and(
+        inArray(models.provider, providers),
+        isNull(models.delisted_at)
+      ))
       .returning({ id: models.id });
 
     logger.debug({ written, delisted: delisted, confirmed: confirmed.length }, 'Catalog upsert complete');
@@ -189,16 +186,11 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
   });
 }
 
-/** Remove worker-owned models outside the configured provider whitelist. */
+/** Remove catalog models outside the configured provider whitelist. */
 export async function deleteExcludedModels(providerWhitelist: string[]): Promise<number> {
   const deleted = await db
     .delete(models)
-    .where(
-      and(
-        eq(models.source, 'builtin'),
-        providerWhitelist.length > 0 ? notInArray(models.provider, providerWhitelist) : undefined,
-      ),
-    )
+    .where(providerWhitelist.length > 0 ? notInArray(models.provider, providerWhitelist) : undefined)
     .returning({ id: models.id });
   return deleted.length;
 }

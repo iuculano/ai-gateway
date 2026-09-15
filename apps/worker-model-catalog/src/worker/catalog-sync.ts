@@ -1,6 +1,8 @@
 import { logger } from '@repo/core';
 import { environment } from '../environment';
-import { upsertCatalog } from './catalog-upsert';
+import { deleteExcludedModels, upsertCatalog } from './catalog-upsert';
+
+const providerWhitelist = new Set(environment.CATALOG_PROVIDER_WHITELIST);
 
 /**
  * One model as a specific provider sells it.
@@ -118,25 +120,30 @@ async function fetchCatalog(): Promise<Catalog | null> {
   return catalog;
 }
 
-/** Flattens a models.dev snapshot into rows for the catalogue upsert. */
+/** Flattens a models.dev snapshot into rows for the catalog upsert. */
 function selectOfferings(catalog: Catalog): SelectedOffering[] {
-  return Object.entries(catalog.providers).flatMap(([provider, entry]) =>
-    Object.values(entry.models).map((offering) => ({ provider, offering })),
-  );
+  return Object.entries(catalog.providers)
+    .filter(([provider]) => providerWhitelist.has(provider))
+    .flatMap(([provider, entry]) => Object.values(entry.models).map((offering) => ({ provider, offering })));
 }
 
 /**
  * One pass: fetch if changed, flatten the provider offerings, and upsert.
  *
  * Throws on a failed fetch or an unparseable body. The caller decides what that
- * means - a catalogue that is a few hours stale is not an outage, so a failed
+ * means - a catalog that is a few hours stale is not an outage, so a failed
  * tick is logged and the next one simply tries again.
  */
 export async function tickModelCatalog(): Promise<void> {
+  // Apply local configuration even when the upstream catalog returns 304.
+  const deleted = await deleteExcludedModels(environment.CATALOG_PROVIDER_WHITELIST);
+  if (deleted > 0) {
+    logger.info({ deleted }, 'Deleted models from excluded providers');
+  }
   const catalog = await fetchCatalog();
 
   if (!catalog) {
-    logger.debug('models.dev catalogue is unchanged');
+    logger.debug('models.dev catalog is unchanged');
     return;
   }
 
@@ -146,7 +153,7 @@ export async function tickModelCatalog(): Promise<void> {
 
   logger.info(
     {
-      providers: Object.keys(catalog.providers).length,
+      providers: new Set(offerings.map((item) => item.provider)).size,
       offerings: offerings.length,
       unpriced: unpriced,
       written: summary.written,

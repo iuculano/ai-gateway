@@ -37,7 +37,6 @@ export const SCOPE_OPTIONS: ScopeOption[] = [
   { id: 'logs:read', label: 'Logs · Read', desc: 'Read request logs, payloads, and analytics' },
   { id: 'logs:write', label: 'Logs · Write', desc: 'Delete request logs' },
   { id: 'models:read', label: 'Models · Read', desc: 'List and inspect configured models' },
-  { id: 'models:write', label: 'Models · Write', desc: 'Add, update, and remove models' },
   { id: 'prompts:read', label: 'Prompts · Read', desc: 'List and inspect stored prompts' },
   { id: 'prompts:write', label: 'Prompts · Write', desc: 'Create, update, and delete prompts' },
   { id: 'traces:read', label: 'Traces · Read', desc: 'List and inspect traces' },
