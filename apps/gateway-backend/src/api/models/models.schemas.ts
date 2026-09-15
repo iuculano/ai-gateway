@@ -13,10 +13,6 @@ const price = z.coerce.number().nonnegative().nullable();
 const modelShape = z.object({
   id: z.uuidv7(),
 
-  // Which rows the catalog worker owns. Built-ins are replaced on every sync;
-  // custom rows are the organization's and are never touched by it.
-  source: z.enum(['builtin', 'custom']),
-
   name: z.string(), // e.g., 'gpt-4-turbo'
   provider: z.string(),
   display_name: z.string().nullable(),
@@ -95,62 +91,14 @@ const listProviders = createSchema({
   }),
 });
 
-const createModel = createSchema({
-  body: modelShape
-    .omit({
-      id: true,
-      created_at: true,
-      updated_at: true,
-      delisted_at: true,
-      synced_at: true,
-    })
-    .partial()
-    .required({ name: true, provider: true }),
-
-  response: modelShape,
-});
-
-const updateModel = createSchema({
-  params: z.object({
-    id: z.uuidv7(),
-  }),
-
-  body: modelShape.partial().omit({
-    id: true, // server-generated
-    created_at: true, // server-generated
-    updated_at: true, // server-generated
-    delisted_at: true, // server-generated
-    synced_at: true, // server-generated
-  }),
-
-  response: modelShape,
-});
-
-const deleteModel = createSchema({
-  params: z.object({
-    id: z.uuidv7(),
-  }),
-
-  response: z.void(),
-});
-
 export type GetModelParams = z.infer<typeof getModel.params>;
 export type GetModelResponse = z.infer<typeof getModel.response>;
 export type ListModelsRequest = z.infer<typeof listModels.query>;
 export type ListModelsResponse = z.infer<typeof listModels.response>;
 export type ListProvidersResponse = z.infer<typeof listProviders.response>;
-export type CreateModelRequest = z.infer<typeof createModel.body>;
-export type CreateModelResponse = z.infer<typeof createModel.response>;
-export type UpdateModelRequest = z.infer<typeof updateModel.body>;
-export type UpdateModelResponse = z.infer<typeof updateModel.response>;
-export type DeleteModelRequest = z.infer<typeof deleteModel.params>;
-export type DeleteModelResponse = z.infer<typeof deleteModel.response>;
 
 export default {
   getModel,
   listModels,
   listProviders,
-  createModel,
-  updateModel,
-  deleteModel,
 };

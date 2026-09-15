@@ -1,19 +1,12 @@
-import { diffFields, probe, toPage } from '@repo/core';
-import { and, asc, db, desc, eq, isNull, lt, or } from '@repo/drizzle';
+import { probe, toPage } from '@repo/core';
+import { and, asc, db, desc, eq, lt, or } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
-import { getCaller } from '@repo/hono';
 import { err, ok, type Result } from 'neverthrow';
-import AuditLogServices from '../audit-logs/audit-logs.services';
 import Schemas, {
-  type CreateModelRequest,
-  type CreateModelResponse,
-  type DeleteModelResponse,
   type GetModelResponse,
   type ListModelsRequest,
   type ListModelsResponse,
   type ListProvidersResponse,
-  type UpdateModelRequest,
-  type UpdateModelResponse,
 } from './models.schemas';
 
 // The underlying error definitions.
@@ -34,8 +27,6 @@ type ModelNotFoundBySlugFailure = {
 // The public service failure unions.
 export type GetModelFailure = ModelNotFoundFailure;
 export type GetModelBySlugFailure = ModelNotFoundBySlugFailure;
-export type UpdateModelFailure = ModelNotFoundFailure;
-export type DeleteModelFailure = ModelNotFoundFailure;
 
 /**
  * Retrieves a single model by its ID.
@@ -161,154 +152,4 @@ async function listProviders(): Promise<ListProvidersResponse> {
   return Schemas.listProviders.response.parse({ data });
 }
 
-/**
- * Creates a new model in the database.
- *
- * Deliberately not a Result: nothing about a create is refusable today. There
- * is no uniqueness constraint on provider/name, so a duplicate is accepted
- * rather than rejected.
- *
- * @param request
- * The request object containing the model data to create.
- */
-async function createModel(request: CreateModelRequest): Promise<CreateModelResponse> {
-  const caller = getCaller();
-
-  const result = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(models)
-      .values({ ...request, organization_id: caller.organization.id, source: 'custom' })
-      .returning();
-
-    if (!row) {
-      // Probably impossible: a returning() insert either throws or gives a row.
-      throw new Error('Failed to create model');
-    }
-
-    await AuditLogServices.createAuditLog(
-      {
-        event: 'models.created',
-        target_type: 'model',
-        target_id: row.id,
-        status: 'success',
-        metadata: {
-          source: row.source,
-          provider: row.provider,
-          name: row.name,
-          display_name: row.display_name,
-        },
-      },
-      tx,
-    );
-
-    return row;
-  });
-
-  const parsed = Schemas.createModel.response.parse(result);
-  return parsed;
-}
-
-/**
- * Updates an existing model in the database.
- *
- * @param id
- * The ID of the model to update.
- *
- * @param request
- * The request object containing the updated model data.
- */
-async function updateModel(
-  id: string,
-  request: UpdateModelRequest,
-): Promise<Result<UpdateModelResponse, UpdateModelFailure>> {
-  const result = await db.transaction(async (tx): Promise<Result<typeof models.$inferSelect, UpdateModelFailure>> => {
-    const [existing] = await tx.select().from(models).where(eq(models.id, id)).for('update');
-
-    // Almost guaranteed that the model doesn't exist.
-    if (!existing) {
-      return err({ code: 'MODEL_NOT_FOUND', id });
-    }
-
-    const writeableFields = Object.keys(Schemas.updateModel.body.shape);
-    const { updates, difference } = diffFields(existing, request, writeableFields);
-
-    if (Object.keys(difference).length === 0) {
-      return ok(existing);
-    }
-
-    const [row] = await tx.update(models).set(updates).where(eq(models.id, id)).returning();
-
-    if (!row) {
-      throw new Error('Failed to update model');
-    }
-
-    await AuditLogServices.createAuditLog(
-      {
-        event: 'models.updated',
-        target_type: 'model',
-        target_id: row.id,
-        status: 'success',
-        difference,
-      },
-      tx,
-    );
-
-    return ok(row);
-  });
-
-  if (result.isErr()) {
-    return err(result.error);
-  }
-
-  const parsed = Schemas.updateModel.response.parse(result.value);
-  return ok(parsed);
-}
-
-/**
- * Deletes an existing model in the database.
- *
- * @param id
- * The ID of the model to delete.
- */
-async function deleteModel(id: string): Promise<Result<DeleteModelResponse, DeleteModelFailure>> {
-  const caller = getCaller();
-
-  return db.transaction(async (tx): Promise<Result<DeleteModelResponse, DeleteModelFailure>> => {
-    const [row] = await tx
-      .delete(models)
-      .where(and(eq(models.organization_id, caller.organization.id), eq(models.id, id)))
-      .returning();
-
-    if (!row) {
-      return err({ code: 'MODEL_NOT_FOUND', id });
-    }
-
-    await AuditLogServices.createAuditLog(
-      {
-        event: 'models.deleted',
-        target_type: 'model',
-        target_id: row.id,
-        status: 'success',
-        metadata: {
-          source: row.source,
-          provider: row.provider,
-          name: row.name,
-          display_name: row.display_name,
-        },
-      },
-      tx,
-    );
-
-    return ok(undefined);
-  });
-}
-
-export default {
-  getModel,
-  getModelBySlug,
-  listModels,
-  listProviders,
-  createModel,
-  updateModel,
-  deleteModel,
-};
+export default { getModel, getModelBySlug, getModelsBySlugs, listModels, listProviders };
