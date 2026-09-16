@@ -1,6 +1,7 @@
 import { probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, lt, or } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
+import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
 import Schemas, {
   type GetModelResponse,
@@ -8,6 +9,11 @@ import Schemas, {
   type ListModelsResponse,
   type ListProvidersResponse,
 } from './models.schemas';
+
+const modelCache = new LRUCache<string, GetModelResponse>({
+  max: 1000,
+  ttl: 1000 * 60 * 5, // 5 minutes
+});
 
 // The underlying error definitions.
 type ModelNotFoundFailure = {
@@ -52,28 +58,169 @@ async function getModel(id: string): Promise<Result<GetModelResponse, GetModelFa
  * The slug to look up, as `provider/name`.
  */
 async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, GetModelBySlugFailure>> {
-  // A malformed slug is deliberately not its own failure code. It answers the
-  // same as one that simply is not there, which is the existing behaviour: a
-  // caller probing for which providers exist learns nothing from the shape of
-  // the refusal.
-  const split = slug.split('/');
-  if (split.length !== 2) {
+  const separator = slug.indexOf('/');
+  if (separator <= 0 || separator === slug.length - 1) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
+  const cached = modelCache.get(slug);
+  if (cached) {
+    return ok(cached);
+  }
+
+  // biome-ignore format: looks nicer
   const [result] = await db
     .select()
     .from(models)
-    .where(and(eq(models.provider, split[0] as string), eq(models.name, split[1] as string)));
+    .where(and(
+      eq(models.provider, slug.slice(0, separator)),
+      eq(models.name, slug.slice(separator + 1))
+    ));
 
   if (!result) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
-  // I'm wondering if I even need to cache here - the query is very cheap.
-  // This endpoint is called on every inference, though, maybe worth it?
   const parsed = Schemas.getModel.response.parse(result);
+  modelCache.set(slug, parsed);
   return ok(parsed);
+}
+
+export type ModelRoutingOptions = {
+  strategy?: 'random' | 'weighted' | 'cost';
+  weights?: string;
+};
+
+async function validateAndOrderModels(models: string, options: ModelRoutingOptions): Promise<string[] | undefined> {
+  // So you can't do something like "openai/a,,google/b" and get an empty
+  // string as a candidate.
+  const candidates = models.split(',').map((model) => model.trim());
+
+  // If there is no routing strategy specified, just return the candidates
+  // as-is.
+  const strategy = options.strategy;
+  if (!strategy) {
+    const output: string[] = [];
+    for (const slug of candidates) {
+      const model = await ModelsService.getModelBySlug(slug);
+      if (model.isErr()) {
+        continue;
+      }
+
+      output.push(slug);
+    }
+
+    return output.length > 0 ? output : undefined;
+  }
+
+  if (strategy === 'weighted') {
+    // Comes through as strings since it's a header, parse into numbers.
+    const strings = options.weights?.split(',').map((weight) => weight.trim()) ?? [];
+    const weights = strings.map(Number);
+
+    // Make sure we have sane numbers as weights.
+    if (weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) {
+      return undefined;
+    }
+
+    // Probably likely to cause weird/unexpected results? I don't think this
+    // would work?
+    if (weights.length !== candidates.length) {
+      return undefined;
+    }
+
+    // Requested models and their weights together.
+    const remaining = candidates
+      .map((slug, index) => ({ slug, weight: weights[index] as number }));
+
+
+    const output: string[] = [];
+
+    // For example:
+    // Weights: [70, 20, 10], roll: 85
+    // index 0: 85 - 70 = 15 -> continue
+    // index 1: 15 - 20 = -5 -> return candidates[1]
+    // Once we're in the negatives, we're at the right index.
+    // Try to build this whole list in one go.
+    while (remaining.length > 0) {
+      const total = remaining.reduce((sum, model) => sum + model.weight, 0);
+      let roll = Math.random() * total;
+
+      // Find the candidate based on the roll.
+      for (let index = 0; index < remaining.length; index++) {
+        // biome-ignore lint: can't be out of bounds
+        const candidate = remaining[index]!;
+        roll -= candidate.weight;
+
+        // Nothing left and somehow roll landed on exactly zero, just force
+        // the last candidate.
+        const weirdness = index === remaining.length - 1;
+        if (roll < 0 || weirdness) {
+          remaining.splice(index, 1); // Remove candidate from future rolls
+
+          const model = await ModelsService.getModelBySlug(candidate.slug);
+          if (model.isOk()) {
+            output.push(candidate.slug);
+          }
+
+          break;
+        }
+      }
+    }
+
+    return output.length > 0 ? output : undefined;
+  }
+
+  if (strategy === 'random') {
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = candidates[i] as string;
+      candidates[i] = candidates[j] as string;
+      candidates[j] = temp;
+    }
+
+    const output: string[] = [];
+    for (const slug of candidates) {
+      const model = await ModelsService.getModelBySlug(slug);
+      if (model.isErr()) {
+        continue;
+      }
+
+      output.push(slug);
+    }
+
+    return output.length > 0 ? output : undefined;
+  }
+
+  if (strategy === 'cost') {
+    // Grab the slug and cost so we can sort.
+    const models = await Promise.all(
+      candidates.map(async (slug) => {
+        const model = await ModelsService.getModelBySlug(slug);
+        if (model.isErr()) {
+          return undefined;
+        }
+
+        const { cost_input, cost_output } = model.value;
+        const cost = cost_input != null && cost_output != null
+          ? cost_input + cost_output
+          : Number.POSITIVE_INFINITY; // Unknown prices sort last.
+
+        return { slug, cost };
+      }),
+    );
+
+    // Filter any models we failed to retrieve.
+    const valid = models.filter((model) => model !== undefined);
+    if (valid.length === 0) {
+      return undefined;
+    }
+
+    const sorted = valid.sort((x, y) => x.cost - y.cost);
+    return sorted.map(({ slug }) => slug);
+  }
+
+  return undefined;
 }
 
 /**

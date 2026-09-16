@@ -21,6 +21,8 @@ const headers = z.object({
   // Bring-your-own-key.
   'ai-api-key': z.string().min(1),
   'ai-base-url': z.url().optional(),
+  'ai-routing-strategy': z.enum(['random', 'weighted', 'cost']).optional(),
+  'ai-routing-weights': z.string().optional(),
   'ai-cache-enabled': z.stringbool().optional(),
   'ai-cache-ttl': z.coerce.number().int().positive().optional(),
   'ai-cache-refresh': z.stringbool().optional(),
