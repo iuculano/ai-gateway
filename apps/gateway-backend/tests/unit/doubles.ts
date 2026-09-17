@@ -515,13 +515,12 @@ export function webhookRow(overrides: RowOverrides<typeof webhooks.$inferSelect>
 export function modelRow(overrides: RowOverrides<typeof models.$inferSelect> = {}) {
   return {
     id: MODEL_ID,
-    source: 'builtin',
     name: 'gpt-4-turbo',
     provider: 'openai',
     display_name: 'GPT-4 Turbo',
     status: 'available',
-    cost_input: '0.000010000000',
-    cost_output: '0.000030000000',
+    cost_input: 0.00001,
+    cost_output: 0.00003,
     cost_cache_read: null,
     context_limit: 128000,
     attachment: false,
@@ -530,7 +529,6 @@ export function modelRow(overrides: RowOverrides<typeof models.$inferSelect> = {
     structured_output: false,
     config: {},
     tags: {},
-    organization_id: null,
     delisted_at: null,
     synced_at: new Date('2026-01-01T00:00:00.000Z'),
     created_at: new Date('2026-01-01T00:00:00.000Z'),

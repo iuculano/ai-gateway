@@ -136,8 +136,8 @@ for (const streaming of [false, true]) {
         modelRow({
           provider: 'openai',
           name: 'test-model',
-          cost_input: '2',
-          cost_output: '8',
+          cost_input: 2,
+          cost_output: 8,
         }),
       ),
     );

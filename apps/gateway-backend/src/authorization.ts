@@ -12,7 +12,6 @@ export const SCOPES = {
   logsRead: 'logs:read',
   logsWrite: 'logs:write',
   modelsRead: 'models:read',
-  modelsWrite: 'models:write',
   promptsRead: 'prompts:read',
   promptsWrite: 'prompts:write',
   tracesRead: 'traces:read',

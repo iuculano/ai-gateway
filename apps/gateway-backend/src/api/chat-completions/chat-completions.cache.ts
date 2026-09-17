@@ -3,6 +3,7 @@ import { createCacheKey } from '@repo/core';
 import { redis } from '@repo/redis';
 import { type LanguageModelMiddleware, simulateReadableStream } from 'ai';
 
+// Basically just https://ai-sdk.dev/docs/advanced/caching
 export function createCacheMiddleware(
   scope: string,
   cache: { hit: boolean },

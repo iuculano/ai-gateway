@@ -36,10 +36,9 @@ export type LogListMeta = LogList['meta'];
 export type LogPayload = Awaited<ReturnType<typeof getLogRequest>>;
 export type LogBatch = Awaited<ReturnType<typeof getLogRequestBatch>>;
 
-/** One provider and every model the catalogue holds for it. */
+/** One provider and every model the catalog holds for it. */
 export type CatalogProvider = CatalogList['data'][number];
 export type CatalogModel = CatalogProvider['models'][number];
-export type ModelSource = CatalogModel['source'];
 export type ModelStatus = CatalogModel['status'];
 
 export type Prompt = PromptList['data'][number];

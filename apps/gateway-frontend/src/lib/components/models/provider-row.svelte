@@ -25,8 +25,6 @@ let {
 const tone = $derived(providerTone(provider.id));
 
 const models = $derived(provider.models);
-const builtinCount = $derived(models.filter((model) => model.source === 'builtin').length);
-const customCount = $derived(models.filter((model) => model.source === 'custom').length);
 const deprecatedCount = $derived(models.filter((model) => model.status === 'deprecated').length);
 const unpricedCount = $derived(models.filter((model) => model.cost_input === null).length);
 
@@ -53,16 +51,10 @@ const maxContext = $derived(
   models.reduce<number | null>((best, model) => Math.max(best ?? 0, model.context_limit ?? 0) || null, null),
 );
 
-/**
- * Freshness of this provider's built-in rows.
- *
- * Stale at three hours - the worker polls hourly, so one missed tick is noise
- * and three is a worker that has stopped. A provider holding only custom rows
- * has never been synced and is not stale, it is simply not the worker's.
- */
+/** A provider is stale after three missed hourly syncs. */
 const sync = $derived.by(() => {
   if (provider.synced_at === null) {
-    return { label: 'Local only', color: '#71717a', glow: 'transparent' };
+    return { label: 'Not synced', color: '#71717a', glow: 'transparent' };
   }
 
   const age = Date.now() - new Date(provider.synced_at).getTime();
@@ -73,7 +65,7 @@ const sync = $derived.by(() => {
 
 const detailItems: DetailItem[] = $derived([
   { label: 'Provider id', value: provider.id },
-  { label: 'Rows', value: `${builtinCount} built-in · ${customCount} custom`, mono: false },
+  { label: 'Rows', value: String(models.length), mono: false },
   { label: 'Unpriced', value: `${unpricedCount} of ${models.length}`, mono: false },
 ]);
 </script>
@@ -87,9 +79,6 @@ const detailItems: DetailItem[] = $derived([
 
 		<span class="text-[12.5px] whitespace-nowrap text-zinc-500 tabular-nums">
 			{models.length}
-			{#if customCount > 0}
-				<span class="text-zinc-600">· {customCount} custom</span>
-			{/if}
 		</span>
 
 		<!-- Ranges rather than an average: what a caller wants from this row is the

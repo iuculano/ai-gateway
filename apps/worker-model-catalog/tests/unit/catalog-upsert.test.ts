@@ -55,8 +55,6 @@ test('maps upstream fields, preserves unknown prices as null, and reports each p
   const insert = database.queriesFor('insert', 'models')[0];
   const values = insert?.calls.find((call) => call.method === 'values')?.args[0] as Record<string, unknown>[];
   expect(values[0]).toMatchObject({
-    source: 'builtin',
-    organization_id: null,
     provider: 'openai',
     name: 'gpt-test',
     display_name: 'GPT Test',

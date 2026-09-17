@@ -33,7 +33,7 @@ const STATUS_TONES = {
  *
  * They are separate facts - `status` is what the provider says about a model,
  * `delisted_at` is that the model stopped appearing at all - but a row that has
- * left the catalogue is the more urgent of the two, and there is one column.
+ * left the catalog is the more urgent of the two, and there is one column.
  */
 function toneFor(model: CatalogModel) {
   return model.delisted_at !== null ? STATUS_TONES.delisted : STATUS_TONES[model.status];
@@ -105,15 +105,6 @@ const priceClass = (value: number | null) => (value === null ? 'text-zinc-600 it
 					>
 						{model.name}
 					</span>
-					{#if model.source === 'custom'}
-						<!-- On the name rather than in Status: which rows are yours is a fact
-						     about identity, and it is what decides whether a row is editable. -->
-						<span
-							class="flex-none rounded-[5px] bg-violet-500/12 px-1.5 py-px text-[10px] font-medium text-violet-400"
-						>
-							Custom
-						</span>
-					{/if}
 				</span>
 
 				<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmtContext(model.context_limit)}</span>

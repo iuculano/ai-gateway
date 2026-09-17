@@ -5,14 +5,7 @@ import { runWithCaller } from '@repo/hono';
 import Services from '../../src/api/webhooks/webhooks.services';
 import { admin, callerFor, prepareSuite, readAuditRows, resetDatabase, seedTenant, type Tenant } from './setup';
 
-/**
- * Webhook tenancy, against a real database.
- *
- * The `eq(organization_id, ...)` predicate in each query is the entire tenant
- * boundary. A forgotten predicate leaks rows and the database will not stop
- * it. Nothing short of a real query can tell whether the predicate is there
- * and correct.
- */
+// Real database tests cover tenant isolation and transaction rollback.
 
 let acme: Tenant;
 let globex: Tenant;
@@ -40,26 +33,15 @@ async function readWebhookRow(id: string) {
   return row;
 }
 
-test('a webhook belongs to the organization that created it', async () => {
+test('creating a webhook assigns caller ownership and persists unset fields as null', async () => {
   const created = await createWebhook(acme);
 
   const row = await readWebhookRow(created.id);
 
   expect(row?.organization_id).toBe(acme.organizationId);
   expect(row?.creator_id).toBe(acme.userId);
-});
-
-test('a webhook with no filter or tags reads back', async () => {
-  // Both columns are nullable and the create body leaves them out, so this is
-  // the ordinary case rather than an edge one - and it is what the response
-  // schema used to reject outright.
-  const created = await createWebhook(acme);
-
-  const fetched = await asCaller(acme, () => Services.getWebhook(created.id));
-
-  expect(fetched.isOk()).toBe(true);
-  expect(fetched._unsafeUnwrap().filter).toBeNull();
-  expect(fetched._unsafeUnwrap().tags).toBeNull();
+  const fetched = (await asCaller(acme, () => Services.getWebhook(created.id)))._unsafeUnwrap();
+  expect(fetched).toMatchObject({ description: null, filter: null, tags: null });
 });
 
 test('another organization cannot read the webhook', async () => {
@@ -68,14 +50,6 @@ test('another organization cannot read the webhook', async () => {
   const result = await asCaller(globex, () => Services.getWebhook(created.id));
 
   expect(result._unsafeUnwrapErr().code).toBe('WEBHOOK_NOT_FOUND');
-});
-
-test('another organization cannot list the webhook', async () => {
-  await createWebhook(acme);
-
-  const page = await asCaller(globex, () => Services.listWebhooks({ limit: 50 }));
-
-  expect(page.data).toHaveLength(0);
 });
 
 test('another organization cannot update the webhook', async () => {
@@ -115,6 +89,9 @@ test('the owner can update and delete it', async () => {
     'webhooks.deleted',
   ]);
   expect(audits[1]?.difference).toEqual({ name: { old: 'deploys', new: 'renamed' } });
+  expect((await asCaller(acme, () => Services.deleteWebhook(created.id)))._unsafeUnwrapErr().code).toBe(
+    'WEBHOOK_NOT_FOUND',
+  );
 });
 
 test('a failing webhook audit write rolls the update back', async () => {
@@ -131,17 +108,6 @@ test('a failing webhook audit write rolls the update back', async () => {
   }
 
   expect((await readWebhookRow(created.id))?.name).toBe('deploys');
-});
-
-test('deleting the same webhook twice refuses the second time', async () => {
-  const created = await createWebhook(acme);
-
-  expect((await asCaller(acme, () => Services.deleteWebhook(created.id))).isOk()).toBe(true);
-
-  // Unlike api-key revocation, deletion is not idempotent: the row is gone, so
-  // the second call is indistinguishable from one for an id that never existed.
-  const second = await asCaller(acme, () => Services.deleteWebhook(created.id));
-  expect(second._unsafeUnwrapErr().code).toBe('WEBHOOK_NOT_FOUND');
 });
 
 test('listing is scoped to the caller even when both organizations have webhooks', async () => {

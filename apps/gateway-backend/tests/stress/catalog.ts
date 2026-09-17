@@ -15,7 +15,7 @@
  *     coerces back.
  */
 
-export interface CatalogueEntry {
+export interface CatalogEntry {
   model: string;
   provider: string;
 
@@ -29,7 +29,7 @@ export interface CatalogueEntry {
   weight: number;
 }
 
-export const CATALOGUE: CatalogueEntry[] = [
+export const CATALOG: CatalogEntry[] = [
   { model: 'gpt-4o-mini', provider: 'openai', cost_input: 0.00000015, cost_output: 0.0000006, weight: 40 },
   { model: 'gpt-4o', provider: 'openai', cost_input: 0.0000025, cost_output: 0.00001, weight: 18 },
   { model: 'gpt-4.1', provider: 'openai', cost_input: 0.000002, cost_output: 0.000008, weight: 12 },
@@ -48,19 +48,19 @@ export const CATALOGUE: CatalogueEntry[] = [
 export const TEAMS = ['platform', 'search', 'billing', 'growth', 'support', 'research'];
 
 /**
- * The rarest model in the catalogue, which the read scenarios filter on.
+ * The rarest model in the catalog, which the read scenarios filter on.
  *
  * Derived rather than written down twice: change a weight above and the
  * high-selectivity scenario follows it instead of silently becoming a
  * low-selectivity one.
  */
-export function rarestModel(): CatalogueEntry {
-  return CATALOGUE.reduce((rarest, entry) => (entry.weight < rarest.weight ? entry : rarest));
+export function rarestModel(): CatalogEntry {
+  return CATALOG.reduce((rarest, entry) => (entry.weight < rarest.weight ? entry : rarest));
 }
 
 /** The most common model, for the other end of the selectivity range. */
-export function commonestModel(): CatalogueEntry {
-  return CATALOGUE.reduce((commonest, entry) => (entry.weight > commonest.weight ? entry : commonest));
+export function commonestModel(): CatalogEntry {
+  return CATALOG.reduce((commonest, entry) => (entry.weight > commonest.weight ? entry : commonest));
 }
 
 /**
@@ -71,6 +71,6 @@ export function commonestModel(): CatalogueEntry {
  * than a range join, and the list is small enough that the duplication costs
  * nothing.
  */
-export function weightedCatalogue(): CatalogueEntry[] {
-  return CATALOGUE.flatMap((entry) => Array.from({ length: entry.weight }, () => entry));
+export function weightedCatalog(): CatalogEntry[] {
+  return CATALOG.flatMap((entry) => Array.from({ length: entry.weight }, () => entry));
 }

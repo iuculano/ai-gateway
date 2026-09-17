@@ -3,45 +3,31 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
 import { runWithCaller } from '@repo/hono';
 import Services from '../../src/api/models/models.services';
-import { admin, callerFor, prepareSuite, readAuditRows, resetDatabase, seedTenant, type Tenant } from './setup';
+import { admin, callerFor, prepareSuite, resetDatabase, seedTenant } from './setup';
 
-/**
- * The model catalogue, against a real database.
- *
- * Built-in models are global, while API-created custom models belong to their
- * caller's organization. These tests also cover whether the rows PostgreSQL
- * actually returns survive the response schema. `cost_input` and `cost_output`
- * are `numeric`, which the driver hands back as strings, and `config`/`tags`
- * are jsonb with defaults. Getting either wrong is a 500 on every read, which
- * is exactly the shape of the bug the webhooks suite found.
- */
+// Catalog models are global and maintained by the sync worker.
 
 beforeAll(prepareSuite);
 
-let tenant: Tenant;
-
 beforeEach(async () => {
   await resetDatabase();
-  tenant = await seedTenant('models');
+  await seedTenant('models');
 });
 
-function asCaller<T>(work: () => Promise<T>): Promise<T> {
-  return runWithCaller(callerFor(tenant, ['models:read', 'models:write']), work);
-}
-
-async function createModel(overrides: Record<string, unknown> = {}) {
-  return asCaller(() =>
-    Services.createModel({
-      name: 'gpt-4-turbo',
-      provider: 'openai',
-      ...overrides,
-      // biome-ignore lint/suspicious/noExplicitAny: the create body is the schema's to police, not this fixture's
-    } as any),
-  );
+async function seedModel(
+  overrides: { name?: string; provider?: string; cost_input?: number; cost_output?: number } = {},
+) {
+  const [model] = await admin`
+    insert into models (name, provider, cost_input, cost_output)
+    values (${overrides.name ?? 'gpt-4-turbo'}, ${overrides.provider ?? 'openai'},
+      ${overrides.cost_input ?? null}, ${overrides.cost_output ?? null}) returning *
+  `;
+  if (!model) throw new Error('Failed to seed catalog model');
+  return model;
 }
 
 test('a model round-trips through the response schema', async () => {
-  const created = await createModel({ cost_input: 0.00001, cost_output: 0.00003 });
+  const created = await seedModel({ cost_input: 0.00001, cost_output: 0.00003 });
 
   const fetched = await Services.getModel(created.id);
 
@@ -50,44 +36,23 @@ test('a model round-trips through the response schema', async () => {
   const model = fetched._unsafeUnwrap();
   expect(model.name).toBe('gpt-4-turbo');
 
-  // The column is numeric, so the driver returns a string. If the schema ever
-  // stops coercing, this is what catches it.
   expect(model.cost_input).toBe(0.00001);
-  expect(typeof model.cost_input).toBe('number');
+  expect(model.created_at).toBeInstanceOf(Date);
+  expect(model.config).toEqual({});
+  expect(model.tags).toEqual({});
 });
 
-test('a model created without config or tags reads back', async () => {
-  // Both columns default to {} rather than null, which is what keeps them out
-  // of the trap the webhooks schema fell into.
-  const created = await createModel();
+test('slug lookups preserve upstream namespaces', async () => {
+  const created = await seedModel({ provider: 'openrouter', name: 'anthropic/claude-sonnet-4' });
+  await seedModel({ name: 'claude-sonnet-4', provider: 'anthropic' });
 
-  const row = await admin`select config, tags from models where id = ${created.id}`;
-  expect(row[0]?.config).toEqual({});
-
-  expect((await Services.getModel(created.id)).isOk()).toBe(true);
-});
-
-test('an unknown id refuses rather than throwing', async () => {
-  const missing = '01912d3f-9b4a-7c3d-8e2f-0000000000ff';
-
-  expect((await Services.getModel(missing))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
-  expect((await asCaller(() => Services.updateModel(missing, { name: 'x' })))._unsafeUnwrapErr().code).toBe(
-    'MODEL_NOT_FOUND',
-  );
-  expect((await asCaller(() => Services.deleteModel(missing)))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
-});
-
-test('getModelBySlug finds a model by provider and name', async () => {
-  const created = await createModel();
-  await createModel({ name: 'claude-opus', provider: 'anthropic' });
-
-  const found = await Services.getModelBySlug('openai/gpt-4-turbo');
+  const found = await Services.getModelBySlug('openrouter/anthropic/claude-sonnet-4');
 
   expect(found._unsafeUnwrap().id).toBe(created.id);
 });
 
 test('getModelBySlug refuses a slug that names nothing', async () => {
-  await createModel();
+  await seedModel();
 
   const result = await Services.getModelBySlug('anthropic/gpt-4-turbo');
 
@@ -96,49 +61,11 @@ test('getModelBySlug refuses a slug that names nothing', async () => {
   expect(result._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
 });
 
-test('an update writes and a delete removes', async () => {
-  const created = await createModel();
-
-  const updated = await asCaller(() => Services.updateModel(created.id, { name: 'gpt-4o' }));
-  expect(updated._unsafeUnwrap().name).toBe('gpt-4o');
-
-  expect((await asCaller(() => Services.deleteModel(created.id))).isOk()).toBe(true);
-  expect(await admin`select 1 from models where id = ${created.id}`).toHaveLength(0);
-
-  const audits = await readAuditRows(created.id);
-  expect(audits.map((audit: { event: string }) => audit.event)).toEqual([
-    'models.created',
-    'models.updated',
-    'models.deleted',
-  ]);
-  expect(audits[1]?.difference).toEqual({ name: { old: 'gpt-4-turbo', new: 'gpt-4o' } });
-
-  // Deletion is not idempotent: the row is gone, so a second call is
-  // indistinguishable from one for an id that never existed.
-  expect((await asCaller(() => Services.deleteModel(created.id)))._unsafeUnwrapErr().code).toBe('MODEL_NOT_FOUND');
-});
-
-test('a failing model audit write rolls the update back', async () => {
-  const created = await createModel();
-
-  await admin.unsafe(
-    "alter table audit_logs add constraint audit_models_integration_block check (event <> 'models.updated')",
-  );
-
-  try {
-    await expect(asCaller(() => Services.updateModel(created.id, { name: 'renamed' }))).rejects.toThrow();
-  } finally {
-    await admin.unsafe('alter table audit_logs drop constraint audit_models_integration_block');
-  }
-
-  expect((await admin`select name from models where id = ${created.id}`)[0]?.name).toBe('gpt-4-turbo');
-});
-
-test('the cursor walks the catalogue exactly once', async () => {
+test('the cursor walks the catalog exactly once', async () => {
   const created = [
-    await createModel({ name: 'one' }),
-    await createModel({ name: 'two' }),
-    await createModel({ name: 'three' }),
+    await seedModel({ name: 'one' }),
+    await seedModel({ name: 'two' }),
+    await seedModel({ name: 'three' }),
   ];
 
   const first = await Services.listModels({ limit: 2 });
@@ -155,10 +82,36 @@ test('the cursor walks the catalogue exactly once', async () => {
 });
 
 test('the provider filter narrows the list', async () => {
-  await createModel();
-  const anthropic = await createModel({ name: 'claude-opus', provider: 'anthropic' });
+  await seedModel();
+  const anthropic = await seedModel({ name: 'claude-opus', provider: 'anthropic' });
 
   const page = await Services.listModels({ limit: 50, provider: 'anthropic' });
 
   expect(page.data.map((model) => model.id)).toEqual([anthropic.id]);
+});
+
+test('provider and model name are globally unique', async () => {
+  await seedModel();
+  await expect(seedModel()).rejects.toThrow();
+  const other = await seedTenant('other-model-reader');
+  const providers = await runWithCaller(callerFor(other, ['models:read']), () => Services.listProviders({ limit: 50 }));
+  expect(providers.data[0]?.models[0]?.name).toBe('gpt-4-turbo');
+});
+
+test('provider pagination keeps all models together and advances alphabetically', async () => {
+  await seedModel({ provider: 'anthropic', name: 'claude-a' });
+  await seedModel({ provider: 'anthropic', name: 'claude-b' });
+  await seedModel({ provider: 'openai', name: 'gpt-a' });
+
+  const first = await Services.listProviders({ limit: 1 });
+  expect(first.data.map((provider) => provider.id)).toEqual(['anthropic']);
+  expect(first.data[0]?.models.map((model) => model.name)).toEqual(['claude-a', 'claude-b']);
+  expect(first.meta).toEqual({ oldest_id: 'anthropic', more_data: true });
+
+  const second = await Services.listProviders({ limit: 1, after_id: first.meta.oldest_id as string });
+  expect(second.data.map((provider) => provider.id)).toEqual(['openai']);
+  expect(second.meta).toEqual({ oldest_id: 'openai', more_data: false });
+
+  const empty = await Services.listProviders({ limit: 1, after_id: 'openai' });
+  expect(empty).toEqual({ data: [], meta: { oldest_id: null, more_data: false } });
 });

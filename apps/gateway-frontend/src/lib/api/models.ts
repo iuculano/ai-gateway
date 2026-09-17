@@ -1,13 +1,23 @@
+import type { InferRequestType } from 'hono/client';
 import { client } from './client';
 
-/**
- * The whole catalogue, grouped by provider.
- *
- * Unpaginated by design - every figure the table shows for a provider is an
- * aggregate over all of its models, so a page boundary would turn each one into
- * a statement about a page. See listProviders in models.services.ts.
- */
-export async function listProviders() {
-  const response = await client.providers.$get();
+type ListProvidersRequest = InferRequestType<(typeof client)['models']['providers']['$get']>;
+export type ListProvidersQuery = NonNullable<ListProvidersRequest['query']>;
+
+export async function listProviders(query: ListProvidersQuery = {}) {
+  const response = await client.models.providers.$get({ query });
   return response.json();
+}
+
+/** Loads the full catalog for playground suggestions. */
+export async function listAllProviders() {
+  let page = await listProviders({ limit: 200 });
+  const data = [...page.data];
+
+  while (page.meta.more_data && page.meta.oldest_id) {
+    page = await listProviders({ limit: 200, after_id: page.meta.oldest_id });
+    data.push(...page.data);
+  }
+
+  return { data };
 }

@@ -1,17 +1,10 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listProviders } from '$lib/api/models';
+import { listAllProviders } from '$lib/api/models';
 import { Input } from '$lib/components/ui/input';
 import { fmtContext, fmtPricePerMillion, providerTone } from '$lib/data/format';
 
-/**
- * A model field that suggests from the catalogue without being limited to it.
- *
- * Free text on purpose. An Azure deployment is named by whoever created it, so
- * it is not in the catalogue and never will be - a strict dropdown would make
- * the gateway's own Azure support unreachable from this page. The catalogue is
- * a source of suggestions here, not an allowlist.
- */
+/** Suggest catalog models while allowing comma-separated routing lists. */
 let {
   value = $bindable(),
   disabled = false,
@@ -73,7 +66,7 @@ $effect(() => {
 
 onMount(async () => {
   try {
-    const result = await listProviders();
+    const result = await listAllProviders();
 
     options = result.data.flatMap((provider) =>
       provider.models
@@ -88,7 +81,7 @@ onMount(async () => {
     );
   } catch {
     // Suggestions are a convenience. Losing them leaves a plain text field,
-    // which is exactly what this was before the catalogue existed.
+    // which is exactly what this was before the catalog existed.
     options = [];
   }
 });

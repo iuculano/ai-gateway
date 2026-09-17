@@ -149,51 +149,57 @@ async function updateWebhook(
 ): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> {
   const caller = getCaller();
 
-  const result = await db.transaction(
-    async (tx): Promise<Result<typeof webhooks.$inferSelect, UpdateWebhookFailure>> => {
-      const [existing] = await tx
+  const result = await db.transaction(async (tx): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> => {
+    // biome-ignore format: looks nicer
+    const [existing] = await tx
         .select()
         .from(webhooks)
-        .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+        .where(and(
+          eq(webhooks.organization_id, caller.organization.id),
+          eq(webhooks.id, id)
+        ))
         .for('update');
 
-      // Either the webhook does not exist, or it belongs to someone else. Both
-      // are the same refusal on purpose.
-      if (!existing) {
-        return err({ code: 'WEBHOOK_NOT_FOUND', id });
-      }
+    // Either the webhook does not exist, or it belongs to someone else. Both
+    // are the same refusal on purpose.
+    if (!existing) {
+      return err({ code: 'WEBHOOK_NOT_FOUND', id });
+    }
 
-      const writeableFields = Object.keys(Schemas.updateWebhook.body.shape);
-      const { updates, difference } = diffFields(existing, request, writeableFields);
+    const writeableFields = Object.keys(Schemas.updateWebhook.body.shape);
+    const { updates, difference } = diffFields(existing, request, writeableFields);
 
-      if (Object.keys(difference).length === 0) {
-        return ok(existing);
-      }
+    if (Object.keys(difference).length === 0) {
+      return ok(existing);
+    }
 
-      const [row] = await tx
+    // biome-ignore format: looks nicer
+    const [row] = await tx
         .update(webhooks)
         .set(updates)
-        .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+        .where(and(
+          eq(webhooks.organization_id, caller.organization.id),
+          eq(webhooks.id, id)
+        ))
         .returning();
 
-      if (!row) {
-        throw new Error('Failed to update webhook');
-      }
+    if (!row) {
+      throw new Error('Failed to update webhook');
+    }
 
-      await AuditLogServices.createAuditLog(
-        {
-          event: 'webhooks.updated',
-          target_type: 'webhook',
-          target_id: row.id,
-          status: 'success',
-          difference,
-        },
-        tx,
-      );
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'webhooks.updated',
+        target_type: 'webhook',
+        target_id: row.id,
+        status: 'success',
+        difference,
+      },
+      tx,
+    );
 
-      return ok(row);
-    },
-  );
+    return ok(row);
+  });
 
   if (result.isErr()) {
     return err(result.error);
@@ -312,32 +318,6 @@ async function listWebhookDeliveries(query: ListWebhookDeliveriesQuery): Promise
 }
 
 /**
- * Queues a delivery.
- *
- * @param webhookId
- * The id of the webhook to notify.
- *
- * @param logId
- * The id of the log to deliver.
- */
-async function submitWebhookRequest(webhookId: string, logId: string) {
-  // biome-ignore format: looks nicer
-  const [result] = await db
-    .insert(webhookOutbox)
-    .values({
-      webhook_id: webhookId,
-      log_id: logId,
-    })
-    .returning();
-
-  if (!result) {
-    throw new Error('Failed to submit webhook request');
-  }
-
-  return result;
-}
-
-/**
  * Queues an explicitly requested webhook delivery.
  *
  * @param webhookId
@@ -378,6 +358,4 @@ export default {
 
   listWebhookOutbox,
   listWebhookDeliveries,
-
-  submitWebhookRequest,
 };

@@ -1,28 +1,28 @@
 import { expect, test } from './api-mock';
-import { CATALOGUE, registerEmptyApp } from './fixtures';
+import { CATALOG, registerEmptyApp } from './fixtures';
 
 test('the authenticated shell loads every primary frontend route', async ({ page, api }) => {
   registerEmptyApp(api);
 
-  let catalogueAttempts = 0;
-  api.get('/api/providers', () => {
-    catalogueAttempts += 1;
-    if (catalogueAttempts === 1) {
+  let catalogAttempts = 0;
+  api.get('/api/models/providers', () => {
+    catalogAttempts += 1;
+    if (catalogAttempts === 1) {
       return {
         status: 503,
-        json: { error: { code: 503, message: 'Catalogue temporarily unavailable.' } },
+        json: { error: { code: 503, message: 'Catalog temporarily unavailable.' } },
       };
     }
 
-    return { json: { data: CATALOGUE } };
+    return { json: { data: CATALOG, meta: { oldest_id: null, more_data: false } } };
   });
 
   await test.step('a representative API failure can be retried', async () => {
     await page.goto('/models');
-    await expect(page.getByText('Catalogue temporarily unavailable.')).toBeVisible();
+    await expect(page.getByText('Catalog temporarily unavailable.')).toBeVisible();
     await page.getByRole('button', { name: 'Retry' }).click();
     await expect(page.getByText('OpenAI', { exact: true })).toBeVisible();
-    expect(catalogueAttempts).toBe(2);
+    expect(catalogAttempts).toBe(2);
   });
 
   const routes = [
