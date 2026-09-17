@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, test } from 'bun:test';
+import { beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { APICallError, InvalidArgumentError, InvalidMessageRoleError, InvalidPromptError, RetryError } from 'ai';
 import type {
   ChatCompletionBody,
@@ -379,10 +379,10 @@ test('catalog pricing is applied to non-streaming logs, including cached input t
   database.respondTo(
     'select',
     'models',
-    rows(catalogRow({ cost_input: '2', cost_output: '8', cost_cache_read: '0.5' })),
+    rows(catalogRow({ name: 'priced-completion', cost_input: 2, cost_output: 8, cost_cache_read: 0.5 })),
   );
 
-  await withCaller(() => Services.createChatCompletion(headers(), body()));
+  await withCaller(() => Services.createChatCompletion(headers(), body({ model: 'openai/priced-completion' })));
 
   expect(logWrites.completed[0]?.entry.input_cost).toBeCloseTo(0.000011, 15);
   expect(logWrites.completed[0]?.entry.output_cost).toBeCloseTo(0.000032, 15);
@@ -433,7 +433,7 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
   database.respondTo(
     'select',
     'models',
-    rows(catalogRow({ cost_input: '2', cost_output: '8', cost_cache_read: null })),
+    rows(catalogRow({ name: 'priced-stream', cost_input: 2, cost_output: 8, cost_cache_read: null })),
   );
 
   aiState.streamParts = [
@@ -450,7 +450,7 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
   await withCaller(async () => {
     for await (const chunk of Services.streamChatCompletion(
       headers(),
-      body({ stream: true, stream_options: { include_usage: true } }),
+      body({ model: 'openai/priced-stream', stream: true, stream_options: { include_usage: true } }),
     )) {
       chunks.push(chunk);
     }
@@ -562,7 +562,7 @@ test.each([
 test('a bare model id is rejected because it is not a catalog slug', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'gpt-bare' })));
 
-  expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'gpt-bare' });
+  expect(failure).toEqual({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
   expect(providerFactory.openai).toHaveLength(0);
   expect(logWrites.started).toHaveLength(0);
 });
@@ -572,7 +572,7 @@ test('an unregistered model is rejected before provider or logging work starts',
 
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/gpt-unknown' })));
 
-  expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'openai/gpt-unknown' });
+  expect(failure).toEqual({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
   expect(providerFactory.openai).toHaveLength(0);
   expect(logWrites.started).toHaveLength(0);
 });
@@ -595,7 +595,7 @@ test('a registered but unsupported provider is rejected before provider or loggi
 test('a model identifier with a provider and no model is a typed refusal', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/' })));
 
-  expect(failure).toMatchObject({ code: 'MODEL_NOT_FOUND', model: 'openai/' });
+  expect(failure).toMatchObject({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
 
   expect(logWrites.started).toHaveLength(0);
 });
@@ -1570,15 +1570,25 @@ test('non-streamed provider authentication failures identify the upstream source
 });
 
 test('weighted model requests select the same candidate in generation and streaming', async () => {
-  database.defaultResponse('select', 'models', rows(catalogRow({ provider: 'anthropic', name: 'routed-claude' })));
-  const config = headers({ 'ai-routing-strategy': 'weighted', 'ai-routing-weights': '0,1' });
+  database.respondTo(
+    'select',
+    'models',
+    rows(catalogRow({ provider: 'anthropic', name: 'routed-claude' })),
+    rows(catalogRow({ name: 'unused' })),
+  );
+  const random = spyOn(Math, 'random').mockReturnValue(0.75);
+  const config = headers({ 'ai-routing-strategy': 'weighted', 'ai-routing-weights': '1,1' });
   const request = body({ model: 'openai/unused,anthropic/routed-claude' });
-  await withCaller(() => Services.createChatCompletion(config, request));
-  await withCaller(async () => {
-    for await (const _chunk of Services.streamChatCompletion(config, request)) {
-      // Drain the stream and finalize its log.
-    }
-  });
+  try {
+    await withCaller(() => Services.createChatCompletion(config, request));
+    await withCaller(async () => {
+      for await (const _chunk of Services.streamChatCompletion(config, request)) {
+        // Drain the stream and finalize its log.
+      }
+    });
+  } finally {
+    random.mockRestore();
+  }
   expect(providerFactory.anthropic).toHaveLength(1);
   expect(providerFactory.openai).toHaveLength(0);
   expect(providerFactory.modelIds).toEqual(['routed-claude']);
@@ -1604,21 +1614,19 @@ test('invalid routing returns HTTP 400 before generation or logging', async () =
   expect(logWrites.started).toHaveLength(0);
 });
 
-test('cost routing reuses the sort order while resolving only the selected model on cache hits', async () => {
+test('cost routing selects the cheapest model and reuses cached catalog lookups', async () => {
   const cheap = catalogRow({ name: 'route-cheap', cost_input: 0, cost_output: 0 });
   database.respondTo(
     'select',
     'models',
     rows(catalogRow({ name: 'route-expensive', cost_input: 5, cost_output: 5 })),
     rows(cheap),
-    rows(cheap),
-    rows(cheap),
   );
   const config = headers({ 'ai-routing-strategy': 'cost' });
   const request = body({ model: 'openai/route-expensive,openai/route-cheap' });
   await withCaller(() => Services.createChatCompletion(config, request));
   await withCaller(() => Services.createChatCompletion(config, request));
-  expect(database.queriesFor('select', 'models')).toHaveLength(4);
+  expect(database.queriesFor('select', 'models')).toHaveLength(2);
   for (const log of logWrites.started) {
     expect(log).toMatchObject({ entry: { provider: 'openai', model: 'route-cheap' } });
   }
