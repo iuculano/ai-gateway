@@ -3,8 +3,8 @@ import { createSchema } from '@repo/hono';
 
 const series = createSchema({
   body: z.object({
-    start_date: z.iso.datetime().optional(),
-    end_date: z.iso.datetime().optional(),
+    start_date: z.coerce.date().optional(),
+    end_date: z.coerce.date().optional(),
     interval: z.enum(['hour', 'day', 'none']).default('none'),
     group_by: z.array(z.enum(['model', 'provider', 'status', 'actor'])).default([]),
     model: z.string().optional(),
@@ -16,19 +16,19 @@ const series = createSchema({
   response: z.object({
     interval: z.enum(['hour', 'day', 'none']),
     group_by: z.array(z.enum(['model', 'provider', 'status', 'actor'])),
-    sealed_through: z.string(),
+    sealed_through: z.date(),
 
     points: z.array(
       z.object({
         // Null when interval is 'none'.
-        bucket: z.string().nullable(),
+        bucket: z.date().nullable(),
 
         // Null unless the dimension was grouped on.
         model: z.string().nullable(),
         provider: z.string().nullable(),
-        status: z.string().nullable(),
-        actor_type: z.string().nullable(),
-        actor_id: z.string().nullable(),
+        status: z.enum(['incomplete', 'complete', 'failed']).nullable(),
+        actor_type: z.enum(['user', 'api_key']).nullable(),
+        actor_id: z.uuid().nullable(),
         actor_label: z.string().nullable(),
 
         requests: z.number(),

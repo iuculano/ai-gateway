@@ -5,14 +5,17 @@ import type { SQL } from 'drizzle-orm';
 import Schemas, { type AnalyticsSeriesBody, type AnalyticsSeriesResponse } from './analytics.schemas';
 
 /**
- * The exclusive end of what the rollup covers, for this organization.
+ * Returns the start of the hour after the latest rollup.
  *
- * The refresh worker never writes the hour in progress, so this is `max(bucket)
- * + 1 hour` rather than "now". An organization with no rollup rows at all falls
- * back to the current hour, which makes an empty range rather than a range
- * running back to the epoch.
+ * For example, if a 14:00 rollup covers 14:00–15:00, this returns 15:00. Logs
+ *
+ * from then onward are read directly. With no rollups, returns the start of the
+ * current hour.
+ *
+ * @param organizationId
+ * The ID of the organization for which to determine the start of live logs.
  */
-async function sealedThrough(organizationId: string): Promise<Date> {
+async function getLiveLogsStart(organizationId: string): Promise<Date> {
   const [row] = await db.execute<{ sealed_through: Date }>(sql`
     select coalesce(
       (select max(${analyticsHourly.bucket}) + interval '1 hour'
@@ -43,7 +46,7 @@ async function sealedThrough(organizationId: string): Promise<Date> {
  */
 async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<AnalyticsSeriesResponse> {
   const organizationId = getCaller().organization.id;
-  const watermark = await sealedThrough(organizationId);
+  const watermark = await getLiveLogsStart(organizationId);
 
   const grouped = new Set(request.group_by);
 
@@ -62,17 +65,8 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     grouped.has('actor') ? sql`unified.actor_id` : sql`null::uuid as actor_id`,
   ];
 
-  // GROUP BY ordinal, not by repeating the expressions.
-  //
-  // Repeating them does not work here: `date_trunc($1, bucket)` in the select
-  // and `date_trunc($4, bucket)` in the group by are different placeholders
-  // even when both carry 'day', and Postgres compares the parse trees rather
-  // than the values - so it rejects the bucket column as ungrouped. Ordinals
-  // sidestep that, and the positions are fixed because the select list above
-  // always emits the same six dimension columns in the same order.
-  //
-  // A dimension that was not grouped on is a null constant in that position and
-  // must be left out, which is why each is conditional.
+  // Group by column positions so repeated date_trunc parameters cannot
+  // conflict. Only include dimensions selected for grouping.
   const groupings: SQL[] = [];
   if (request.interval !== 'none') groupings.push(sql`1`);
   if (grouped.has('model')) groupings.push(sql`2`);
@@ -80,14 +74,11 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
   if (grouped.has('status')) groupings.push(sql`4`);
   if (grouped.has('actor')) groupings.push(sql`5`, sql`6`);
 
-  const startDate = request.start_date ? new Date(request.start_date) : undefined;
-  const endDate = request.end_date ? new Date(request.end_date) : undefined;
+  const startDate = request.start_date;
+  const endDate = request.end_date;
 
-  // The sealed side. `bucket < watermark` is not redundant with the watermark
-  // read above: the worker could commit a newly sealed hour between that read
-  // and this query, and without the bound that hour would be counted once from
-  // the rollup and again from the tail. With it, the two sides partition the
-  // timeline exactly, whatever the worker does concurrently.
+  // The shared watermark prevents double-counting if the rollup advances
+  // mid-query.
   const sealedConditions = [
     sql`${analyticsHourly.organization_id} = ${organizationId}`,
     sql`${analyticsHourly.bucket} < ${watermark}`,
@@ -98,10 +89,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     request.status ? sql`${analyticsHourly.status} = ${request.status}` : undefined,
   ].filter((condition): condition is SQL => condition !== undefined);
 
-  // The live side, read from raw rows and aggregated into the sealed side's
-  // shape. Bounded below by the watermark, so in the steady state this is the
-  // current hour only - and if the refresh worker falls behind, this widens to
-  // cover the gap rather than the dashboard silently losing those hours.
+  // Include logs the rollup has not covered yet.
   const liveConditions = [
     sql`${logs.organization_id} = ${organizationId}`,
     sql`${logs.created_at} >= ${watermark}`,
@@ -112,12 +100,10 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     request.status ? sql`${logs.status} = ${request.status}` : undefined,
   ].filter((condition): condition is SQL => condition !== undefined);
 
-  // A ranking is ordered by size; a trend is ordered by time. Sorting a trend
-  // by volume would draw the line in the wrong order entirely.
+  // Sort breakdowns by volume and time series chronologically.
   const ordering = request.interval === 'none' ? sql`order by requests desc` : sql`order by bucket asc, requests desc`;
 
-  // Only a ranking has a top. Applying it to a trend would silently truncate
-  // the tail of the chart.
+  // Limit breakdowns only; time series need every bucket.
   const limit = request.interval === 'none' && request.limit ? sql`limit ${request.limit}` : sql``;
 
   const rows = await db.execute<Record<string, unknown>>(sql`
@@ -143,9 +129,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
 
       union all
 
-      -- Pre-aggregated to the hour here rather than unioned row by row, so the
-      -- two sides meet at the same grain and the outer aggregate does the same
-      -- arithmetic to both. Served by logs_org_created_idx.
+      -- Aggregate live logs to the same hourly granularity as the rollup.
       select
         date_trunc('hour', ${logs.created_at}),
         ${logs.model},
@@ -159,8 +143,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
         coalesce(sum(${logs.input_cost}), 0),
         coalesce(sum(${logs.output_cost}), 0),
         coalesce(sum(${logs.response_time_ms}), 0),
-        -- count(column), not count(*): a row that never recorded a latency must
-        -- not inflate the denominator of the average.
+        -- Exclude missing latencies from the average.
         count(${logs.response_time_ms}),
         min(${logs.response_time_ms}),
         max(${logs.response_time_ms})
@@ -176,9 +159,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
         sum(unified.output_tokens)::bigint as output_tokens,
         sum(unified.input_cost)            as cost_input,
         sum(unified.output_cost)           as cost_output,
-        -- Reconstructed from the accumulators rather than averaged. Averaging
-        -- stored hourly averages is only correct when every hour carried the
-        -- same request count, which is never true in practice.
+        -- Calculate the weighted average from totals.
         round(sum(unified.latency_sum)::numeric / nullif(sum(unified.latency_count), 0)) as average_latency_ms,
         min(unified.latency_min)                                                         as minimum_latency_ms,
         max(unified.latency_max)                                                         as maximum_latency_ms
@@ -187,9 +168,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     )
     select
       aggregated.*,
-      -- Resolved after aggregation, not before: actor_id is a grouping key, so
-      -- joining per source row would be the same lookup repeated millions of
-      -- times. Two joins because one column addresses two tables.
+      -- Resolve actor names once per aggregate.
       coalesce(${apiKeys.name}, ${users.username}) as actor_label
     from aggregated
     left join ${apiKeys} on aggregated.actor_type = 'api_key' and ${apiKeys.id} = aggregated.actor_id
@@ -205,7 +184,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     const costOutput = Number(row.cost_output ?? 0);
 
     return {
-      bucket: row.bucket instanceof Date ? row.bucket.toISOString() : null,
+      bucket: row.bucket ?? null,
 
       model: (row.model as string | null) ?? null,
       provider: (row.provider as string | null) ?? null,
@@ -232,7 +211,7 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
   return Schemas.series.response.parse({
     interval: request.interval,
     group_by: request.group_by,
-    sealed_through: watermark.toISOString(),
+    sealed_through: watermark,
     points,
   });
 }
