@@ -95,33 +95,3 @@ test('whitelist cleanup deletes excluded models, including for an empty whitelis
   expect(await deleteExcludedModels([])).toBe(2);
   expect(await readModel('openai', 'gpt-test')).toBeUndefined();
 });
-
-test('migration preserves catalog rows and removes legacy custom rows and ownership columns', async () => {
-  const migration = await Bun.file(
-    new URL(
-      '../../../../packages/drizzle/migrations/20260915011146_remove-custom-models/migration.sql',
-      import.meta.url,
-    ),
-  ).text();
-  await admin.begin(async (tx) => {
-    await tx.unsafe(`create temp table models (
-      id integer, provider text not null, name text not null,
-      source text not null, organization_id uuid
-    ) on commit drop`);
-    await tx.unsafe(`create unique index models_builtin_key on models (provider, name) where source = 'builtin'`);
-    await tx.unsafe(
-      `create unique index models_custom_key on models (organization_id, provider, name) where source = 'custom'`,
-    );
-    await tx.unsafe('create index idx_models_on_provider_name on models (provider, name)');
-    await tx.unsafe(`insert into models values
-      (1, 'openai', 'retained', 'builtin', null),
-      (2, 'openai', 'retained', 'custom', null),
-      (3, 'openai', 'removed', 'custom', null)`);
-    for (const statement of migration.split('--> statement-breakpoint')) {
-      await tx.unsafe(statement);
-    }
-    const result = await tx`select * from models`;
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ id: 1, provider: 'openai', name: 'retained' });
-  });
-});

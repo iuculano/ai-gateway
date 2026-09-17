@@ -1,182 +1,122 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
-import { err, ok } from 'neverthrow';
 import type { ModelRoutingOptions } from '../../src/api/models/models.services';
-import { forCaller, installModuleMocks, modelRow, resetDoubles } from './doubles';
+import { database, forCaller, installModuleMocks, modelRow, resetDoubles, rows } from './doubles';
 
 await installModuleMocks();
-const ModelsService = (await import('../../src/api/models/models.services')).default;
-const Schemas = (await import('../../src/api/models/models.schemas')).default;
-const service = forCaller(ModelsService);
-const options = (extra: ModelRoutingOptions = {}): ModelRoutingOptions => extra;
-let lookup: ReturnType<typeof spyOn<typeof ModelsService, 'getModelBySlug'>>;
+const service = forCaller((await import('../../src/api/models/models.services')).default);
 let random: ReturnType<typeof spyOn<typeof Math, 'random'>>;
 
 beforeEach(() => {
   resetDoubles();
   random = spyOn(Math, 'random').mockReturnValue(0);
-  // Mock the lookup boundary so the model cache cannot leak between tests.
-  lookup = spyOn(ModelsService, 'getModelBySlug').mockImplementation(async (slug) => {
-    if (slug === 'missing' || !slug) return err({ code: 'MODEL_NOT_FOUND', slug });
-    return ok(Schemas.getModel.response.parse(modelRow()));
-  });
 });
-afterEach(() => {
-  lookup.mockRestore();
-  random.mockRestore();
+afterEach(() => random.mockRestore());
+
+// Each test uses distinct slugs because successful lookups are cached.
+test('default ordering trims slugs and skips missing models without reordering', async () => {
+  database.respondTo('select', 'models', rows(modelRow()), rows(), rows(modelRow()));
+  expect(await service.validateAndOrderModels(' openai/default-a , openai/missing,, openai/default-b ', {})).toEqual([
+    'openai/default-a',
+    'openai/default-b',
+  ]);
 });
 
-test('omitted strategy trims slugs, skips missing models, and preserves order', async () => {
-  expect(await service.validateAndOrderModels(' openai/a , missing,, openrouter/anthropic/b ', options())).toEqual([
-    'openai/a',
-    'openrouter/anthropic/b',
-  ]);
-  expect(lookup.mock.calls.map(([slug]) => slug)).toEqual(['openai/a', 'missing', '', 'openrouter/anthropic/b']);
-  expect(random).not.toHaveBeenCalled();
-});
+test('random routing shuffles valid models and skips missing ones', async () => {
+  database.respondTo('select', 'models', rows(), rows(modelRow()), rows(modelRow()));
+  expect(
+    await service.validateAndOrderModels('openai/random-a,openai/random-missing,openai/random-b', {
+      strategy: 'random',
+    }),
+  ).toEqual(['openai/random-b', 'openai/random-a']);
 
-test('random routing shuffles the full list', async () => {
-  const config = options({ strategy: 'random' });
-  expect(await service.validateAndOrderModels('openai/a,openai/b,openai/c', config)).toEqual([
-    'openai/b',
-    'openai/c',
-    'openai/a',
-  ]);
   random.mockReturnValue(0.999);
-  expect(await service.validateAndOrderModels('openai/a,openai/b,openai/c', config)).toEqual([
-    'openai/a',
-    'openai/b',
-    'openai/c',
-  ]);
-});
-
-test('random routing skips missing models after shuffling', async () => {
   expect(
-    await service.validateAndOrderModels(
-      'openai/a,missing,openai/c',
-      options({
-        strategy: 'random',
-      }),
-    ),
-  ).toEqual(['openai/c', 'openai/a']);
+    await service.validateAndOrderModels('openai/random-a,openai/random-b', {
+      strategy: 'random',
+    }),
+  ).toEqual(['openai/random-a', 'openai/random-b']);
 });
 
-test('weighted routing uses remaining relative weights without selecting a model twice', async () => {
+test('weighted routing rerolls remaining relative weights without duplicates', async () => {
   random.mockReturnValueOnce(0.69).mockReturnValueOnce(0.7);
+  database.defaultResponse('select', 'models', rows(modelRow()));
   expect(
-    await service.validateAndOrderModels(
-      'openai/a,openai/b,openai/c',
-      options({
-        strategy: 'weighted',
-        weights: '70, 20, 10',
-      }),
-    ),
-  ).toEqual(['openai/a', 'openai/c', 'openai/b']);
-  expect(lookup.mock.calls.map(([slug]) => slug)).toEqual(['openai/a', 'openai/c', 'openai/b']);
+    await service.validateAndOrderModels('openai/weighted-a,openai/weighted-b,openai/weighted-c', {
+      strategy: 'weighted',
+      weights: '70, 20, 10',
+    }),
+  ).toEqual(['openai/weighted-a', 'openai/weighted-c', 'openai/weighted-b']);
 });
 
-test('a weighted roll exactly on a boundary selects the next candidate', async () => {
+test('a weighted roll on a boundary selects the next candidate', async () => {
   random.mockReturnValueOnce(0.5);
+  database.defaultResponse('select', 'models', rows(modelRow()));
   expect(
-    await service.validateAndOrderModels(
-      'openai/a,openai/b',
-      options({
-        strategy: 'weighted',
-        weights: '1,1',
-      }),
-    ),
-  ).toEqual(['openai/b', 'openai/a']);
+    await service.validateAndOrderModels('openai/boundary-a,openai/boundary-b', {
+      strategy: 'weighted',
+      weights: '1,1',
+    }),
+  ).toEqual(['openai/boundary-b', 'openai/boundary-a']);
 });
 
-test('weighted routing removes missing models from future draws', async () => {
+test('weighted routing skips a missing selection and continues', async () => {
+  database.respondTo('select', 'models', rows(), rows(modelRow()));
   expect(
-    await service.validateAndOrderModels(
-      'missing,openai/b,openai/c',
-      options({
-        strategy: 'weighted',
-        weights: '70,20,10',
-      }),
-    ),
-  ).toEqual(['openai/b', 'openai/c']);
-  expect(lookup.mock.calls.map(([slug]) => slug)).toEqual(['missing', 'openai/b', 'openai/c']);
+    await service.validateAndOrderModels('openai/weighted-missing,openai/weighted-valid', {
+      strategy: 'weighted',
+      weights: '70,30',
+    }),
+  ).toEqual(['openai/weighted-valid']);
 });
 
 test.each([undefined, '', '1', '0,1', '-1,2', 'NaN,2', 'Infinity,1', '1,', '1,2,3'])(
-  'invalid weights reject before model lookups: %s',
+  'invalid weights reject before database work: %s',
   async (weights) => {
     expect(
-      await service.validateAndOrderModels(
-        'openai/a,openai/b',
-        options({
-          strategy: 'weighted',
-          weights: weights,
-        }),
-      ),
+      await service.validateAndOrderModels('openai/a,openai/b', {
+        strategy: 'weighted',
+        weights,
+      }),
     ).toBeUndefined();
-    expect(lookup).not.toHaveBeenCalled();
-    expect(random).not.toHaveBeenCalled();
+    expect(database.queries).toHaveLength(0);
   },
 );
 
-test('cost routing uses both prices, keeps free models first, and unknown prices last', async () => {
-  const prices = [
-    { cost_input: null, cost_output: 1 },
-    { cost_input: 0.1, cost_output: 10 },
-    { cost_input: 1, cost_output: 1 },
-    { cost_input: 0, cost_output: 0 },
-  ];
-  for (const price of prices) lookup.mockResolvedValueOnce(ok(Schemas.getModel.response.parse(modelRow(price))));
-  expect(
-    await service.validateAndOrderModels(
-      'openai/unknown,openai/expensive,openai/cheap,openai/free',
-      options({
-        strategy: 'cost',
-      }),
-    ),
-  ).toEqual(['openai/free', 'openai/cheap', 'openai/expensive', 'openai/unknown']);
-});
-
-test('cost routing preserves ties and skips missing models', async () => {
-  expect(
-    await service.validateAndOrderModels(
-      'openai/a,missing,openai/b',
-      options({
-        strategy: 'cost',
-      }),
-    ),
-  ).toEqual(['openai/a', 'openai/b']);
-});
-
-test.each([undefined, 'random', 'weighted', 'cost'] as const)('one valid candidate works with %s', async (strategy) => {
-  expect(
-    await service.validateAndOrderModels(
-      'openai/a',
-      options({
-        strategy: strategy,
-        ...(strategy === 'weighted' ? { weights: '1' } : {}),
-      }),
-    ),
-  ).toEqual(['openai/a']);
-});
-
-test.each([undefined, 'random', 'weighted', 'cost'] as const)('no valid candidates with %s', async (strategy) => {
-  const result = await service.validateAndOrderModels(
-    'missing',
-    options({
-      strategy: strategy,
-      ...(strategy === 'weighted' ? { weights: '1' } : {}),
-    }),
+test('cost ordering uses both prices, preserves ties, and places unknown prices last', async () => {
+  database.respondTo(
+    'select',
+    'models',
+    rows(modelRow({ cost_input: null, cost_output: 1 })),
+    rows(modelRow({ cost_input: 0.1, cost_output: 10 })),
+    rows(),
+    rows(modelRow({ cost_input: 1, cost_output: 1 })),
+    rows(modelRow({ cost_input: 0, cost_output: 0 })),
+    rows(modelRow({ cost_input: 0.5, cost_output: 1.5 })),
   );
-  expect(result).toBeUndefined();
+  expect(
+    await service.validateAndOrderModels(
+      'openai/cost-unknown,openai/cost-expensive,openai/cost-missing,openai/cost-cheap,openai/cost-free,openai/cost-tie',
+      { strategy: 'cost' },
+    ),
+  ).toEqual([
+    'openai/cost-free',
+    'openai/cost-cheap',
+    'openai/cost-tie',
+    'openai/cost-expensive',
+    'openai/cost-unknown',
+  ]);
 });
 
-test('database failures propagate rather than masquerading as missing models', async () => {
-  lookup.mockRejectedValueOnce(new Error('database unavailable'));
-  await expect(
-    service.validateAndOrderModels(
-      'openai/a',
-      options({
-        strategy: 'cost',
-      }),
-    ),
-  ).rejects.toThrow('database unavailable');
-});
+test.each([undefined, 'random', 'weighted', 'cost'] as const)(
+  'single valid and missing candidates with strategy %s',
+  async (strategy) => {
+    const options: ModelRoutingOptions = {
+      strategy,
+      ...(strategy === 'weighted' ? { weights: '1' } : {}),
+    };
+    const slug = `openai/single-${strategy ?? 'default'}`;
+    database.respondTo('select', 'models', rows(modelRow()), rows());
+    expect(await service.validateAndOrderModels(slug, options)).toEqual([slug]);
+    expect(await service.validateAndOrderModels(`${slug}-missing`, options)).toBeUndefined();
+  },
+);

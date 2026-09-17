@@ -451,7 +451,7 @@ const allScenarios: GroupedScenario[] = [
   },
 
   analytics('analytics', 'analytics series (all time)', {}),
-  analytics('analytics', 'analytics series (last 24h)', { start_date: dayAgo }),
+  analytics('analytics', 'analytics series (last 24h)', { start_date: new Date(dayAgo) }),
   analytics('analytics', `analytics series (model=${common.model})`, { model: common.model }),
 ];
 
