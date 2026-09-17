@@ -1,5 +1,5 @@
 import { probe, toPage } from '@repo/core';
-import { and, asc, db, desc, eq, lt, or } from '@repo/drizzle';
+import { and, asc, db, desc, eq, gt, lt, max, sql } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
 import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
@@ -7,6 +7,7 @@ import Schemas, {
   type GetModelResponse,
   type ListModelsRequest,
   type ListModelsResponse,
+  type ListProvidersQuery,
   type ListProvidersResponse,
 } from './models.schemas';
 
@@ -21,10 +22,6 @@ type ModelNotFoundFailure = {
   id: string;
 };
 
-/**
- * Carries the slug rather than an id, because that is what the caller asked
- * with and an id would be an answer this operation never found.
- */
 type ModelNotFoundBySlugFailure = {
   code: 'MODEL_NOT_FOUND';
   slug: string;
@@ -41,13 +38,19 @@ export type GetModelBySlugFailure = ModelNotFoundBySlugFailure;
  * The ID of the model to retrieve.
  */
 async function getModel(id: string): Promise<Result<GetModelResponse, GetModelFailure>> {
-  const result = await db.select().from(models).where(eq(models.id, id));
+  // biome-ignore format: looks nicer
+  const [row] = await db
+    .select()
+    .from(models)
+    .where(
+      eq(models.id, id)
+    );
 
-  if (!result[0]) {
+  if (!row) {
     return err({ code: 'MODEL_NOT_FOUND', id });
   }
 
-  const parsed = Schemas.getModel.response.parse(result[0]);
+  const parsed = Schemas.getModel.response.parse(row);
   return ok(parsed);
 }
 
@@ -55,9 +58,10 @@ async function getModel(id: string): Promise<Result<GetModelResponse, GetModelFa
  * Retrieves a single model by its `provider/name` slug.
  *
  * @param slug
- * The slug to look up, as `provider/name`.
+ * The slug to look up.
  */
 async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, GetModelBySlugFailure>> {
+  // Can't have a slug with a / at the start or end.
   const separator = slug.indexOf('/');
   if (separator <= 0 || separator === slug.length - 1) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
@@ -69,7 +73,7 @@ async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, Ge
   }
 
   // biome-ignore format: looks nicer
-  const [result] = await db
+  const [row] = await db
     .select()
     .from(models)
     .where(and(
@@ -77,11 +81,11 @@ async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, Ge
       eq(models.name, slug.slice(separator + 1))
     ));
 
-  if (!result) {
+  if (!row) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
-  const parsed = Schemas.getModel.response.parse(result);
+  const parsed = Schemas.getModel.response.parse(row);
   modelCache.set(slug, parsed);
   return ok(parsed);
 }
@@ -91,6 +95,74 @@ export type ModelRoutingOptions = {
   weights?: string;
 };
 
+/**
+ * Retrieves a list of models, filtered by the given criteria.
+ *
+ * @param query
+ * The request object containing the filter criteria.
+ */
+async function listModels(query: ListModelsRequest): Promise<ListModelsResponse> {
+  const conditions = [
+    query.name ? eq(models.name, query.name) : undefined,
+    query.provider ? eq(models.provider, query.provider) : undefined,
+    query.after_id ? lt(models.id, query.after_id) : undefined,
+  ];
+
+  // biome-ignore format: looks nicer
+  const rows = await db
+    .select()
+    .from(models)
+    .where(and(...conditions))
+    .orderBy(desc(models.id))
+    .limit(probe(query.limit));
+
+  const page = toPage(rows, query.limit);
+
+  const parsed = Schemas.listModels.response.parse(page);
+  return parsed;
+}
+
+/**
+ * Retrieves a page of providers with their full model lists.
+ *
+ * Providers and their models are returned alphabetically.
+ */
+async function listProviders(query: ListProvidersQuery): Promise<ListProvidersResponse> {
+  // biome-ignore format: looks nicer
+  const rows = await db
+    .select({
+      id: models.provider,
+      synced_at: max(models.synced_at),
+      models: sql<GetModelResponse[]>`jsonb_agg(${models} ORDER BY ${models.name})`
+        .mapWith((rows: GetModelResponse[]) => rows.map((row) => ({
+          ...row,
+          created_at: new Date(row.created_at),
+          updated_at: new Date(row.updated_at),
+          synced_at: row.synced_at === null ? null : new Date(row.synced_at),
+          delisted_at: row.delisted_at === null ? null : new Date(row.delisted_at),
+        }))),
+    })
+    .from(models)
+    .where(query.after_id ? gt(models.provider, query.after_id) : undefined)
+    .groupBy(models.provider)
+    .orderBy(asc(models.provider))
+    .limit(probe(query.limit));
+
+  const page = toPage(rows, query.limit);
+
+  const parsed = Schemas.listProviders.response.parse(page);
+  return parsed;
+}
+
+/**
+ * Validates and orders a list of models based on the provided routing options.
+ *
+ * @param models
+ * Comma separated list of models.
+ *
+ * @param options
+ * The routing options to use for ordering the models.
+ */
 async function validateAndOrderModels(models: string, options: ModelRoutingOptions): Promise<string[] | undefined> {
   // So you can't do something like "openai/a,,google/b" and get an empty
   // string as a candidate.
@@ -102,7 +174,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
   if (!strategy) {
     const output: string[] = [];
     for (const slug of candidates) {
-      const model = await ModelsService.getModelBySlug(slug);
+      const model = await getModelBySlug(slug);
       if (model.isErr()) {
         continue;
       }
@@ -158,7 +230,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
         if (roll < 0 || weirdness) {
           remaining.splice(index, 1); // Remove candidate from future rolls
 
-          const model = await ModelsService.getModelBySlug(candidate.slug);
+          const model = await getModelBySlug(candidate.slug);
           if (model.isOk()) {
             output.push(candidate.slug);
           }
@@ -181,7 +253,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
 
     const output: string[] = [];
     for (const slug of candidates) {
-      const model = await ModelsService.getModelBySlug(slug);
+      const model = await getModelBySlug(slug);
       if (model.isErr()) {
         continue;
       }
@@ -196,7 +268,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
     // Grab the slug and cost so we can sort.
     const models = await Promise.all(
       candidates.map(async (slug) => {
-        const model = await ModelsService.getModelBySlug(slug);
+        const model = await getModelBySlug(slug);
         if (model.isErr()) {
           return undefined;
         }
@@ -223,80 +295,10 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
   return undefined;
 }
 
-/**
- * Retrieves a list of models, filtered by the given criteria.
- *
- * Deliberately not a Result: an empty page is a page, and there is no outcome
- * here the caller could correct.
- *
- * @param request
- * The request object containing the filter criteria.
- */
-async function listModels(request: ListModelsRequest): Promise<ListModelsResponse> {
-  const conditions = [
-    request.name ? eq(models.name, request.name) : undefined,
-    request.provider ? eq(models.provider, request.provider) : undefined,
-    request.after_id ? lt(models.id, request.after_id) : undefined,
-  ].filter((x) => x !== undefined);
-
-  const whereClause = conditions.length ? and(...conditions) : undefined;
-
-  const rows = await db.select().from(models).where(whereClause).orderBy(desc(models.id)).limit(probe(request.limit));
-
-  const parsed = Schemas.listModels.response.parse(toPage(rows, request.limit));
-
-  return parsed;
-}
-
-/**
- * The whole catalog, grouped by provider.
- *
- * Unpaginated on purpose. Every figure the dashboard shows for a provider - the
- * price range, the model count, the widest context - is an aggregate over all
- * of that provider's models, and a page boundary running through the middle of
- * one would turn each of those into a statement about a page instead. At the
- * low hundreds of rows the catalog holds, that is a trade worth making;
- * listModels remains for anything that wants a cursor.
- *
- * Scoped to global rows plus the caller's own. Built-ins carry no
- * organization_id and belong to everyone; custom rows belong to exactly one
- * organization and must not be visible to another.
- *
- * Deliberately not a Result: an empty catalog is a catalog, and there is no
- * outcome here a caller could correct.
- */
-async function listProviders(): Promise<ListProvidersResponse> {
-  const organizationId = getCaller().organization.id;
-
-  const rows = await db
-    .select()
-    .from(models)
-    .where(or(isNull(models.organization_id), eq(models.organization_id, organizationId)))
-    .orderBy(asc(models.provider), asc(models.name));
-
-  // Grouped from the raw rows rather than parsed ones. The response shape
-  // transforms dates into strings, so it is not idempotent - running it over
-  // its own output would reject every timestamp it had already converted.
-  const grouped = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const existing = grouped.get(row.provider);
-    if (existing) {
-      existing.push(row);
-    } else {
-      grouped.set(row.provider, [row]);
-    }
-  }
-
-  const data = [...grouped.entries()].map(([provider, providerRows]) => ({
-    id: provider,
-    synced_at: providerRows.reduce<Date | null>(
-      (latest, row) => (row.synced_at && (!latest || row.synced_at > latest) ? row.synced_at : latest),
-      null,
-    ),
-    models: providerRows,
-  }));
-
-  return Schemas.listProviders.response.parse({ data });
-}
-
-export default { getModel, getModelBySlug, getModelsBySlugs, listModels, listProviders };
+export default {
+  getModel,
+  getModelBySlug,
+  listModels,
+  listProviders,
+  validateAndOrderModels,
+};

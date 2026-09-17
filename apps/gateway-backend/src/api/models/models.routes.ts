@@ -56,9 +56,12 @@ const listModels = createRoute({
 
 const listProviders = createRoute({
   method: 'get' as const,
-  path: '/providers',
+  path: '/models/providers',
   security: bearerSecurity,
   middleware: [authorize({ scopes: [SCOPES.modelsRead] })],
+  request: {
+    query: Schemas.listProviders.query,
+  },
   responses: {
     ...validatedProtectedRouteErrors,
     200: {

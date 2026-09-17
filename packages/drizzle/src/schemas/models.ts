@@ -12,9 +12,9 @@ export const models = pgTable(
     status: text({ enum: ['available', 'beta', 'deprecated'] })
       .notNull()
       .default('available'),
-    cost_input: numeric({ precision: 20, scale: 12 }).$type<number>(),
-    cost_output: numeric({ precision: 20, scale: 12 }).$type<number>(),
-    cost_cache_read: numeric({ precision: 20, scale: 12 }).$type<number>(),
+    cost_input: numeric({ precision: 20, scale: 12, mode: 'number' }),
+    cost_output: numeric({ precision: 20, scale: 12, mode: 'number' }),
+    cost_cache_read: numeric({ precision: 20, scale: 12, mode: 'number' }),
     context_limit: integer(),
     attachment: boolean().notNull().default(false),
     reasoning: boolean().notNull().default(false),

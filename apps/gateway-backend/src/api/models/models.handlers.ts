@@ -52,13 +52,14 @@ const listModels = defineOpenAPIRoute({
 });
 
 /**
- * GET /providers
- * Retrieve the whole catalog, grouped by provider.
+ * GET /models/providers
+ * Retrieve a page of providers with their models.
  */
 const listProviders = defineOpenAPIRoute({
   route: Routes.listProviders,
   handler: async (c) => {
-    const result = await Services.listProviders();
+    const query = c.req.valid('query');
+    const result = await Services.listProviders(query);
 
     return c.json(result, 200);
   },

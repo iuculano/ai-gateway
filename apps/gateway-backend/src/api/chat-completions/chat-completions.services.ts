@@ -228,9 +228,6 @@ function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage
 
   for (const message of messages) {
     switch (message.role) {
-      // `developer` is OpenAI's successor to `system`. The SDK has no separate
-      // role for it, and every provider behind this gateway treats the two the
-      // same way, so it is folded onto system rather than dropped.
       case 'system':
       case 'developer':
         converted.push({
@@ -260,8 +257,6 @@ function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage
 
         const text = message.content == null ? '' : flattenText(message.content);
 
-        // A turn can be text, tool calls, or both. Text is only emitted when
-        // there is some, so a pure tool-call turn does not carry an empty part.
         converted.push({
           role: 'assistant',
           content: [
