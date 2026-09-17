@@ -149,10 +149,9 @@ async function updateWebhook(
 ): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> {
   const caller = getCaller();
 
-  const result = await db.transaction(
-    async (tx): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> => {
-      // biome-ignore format: looks nicer
-      const [existing] = await tx
+  const result = await db.transaction(async (tx): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> => {
+    // biome-ignore format: looks nicer
+    const [existing] = await tx
         .select()
         .from(webhooks)
         .where(and(
@@ -161,21 +160,21 @@ async function updateWebhook(
         ))
         .for('update');
 
-      // Either the webhook does not exist, or it belongs to someone else. Both
-      // are the same refusal on purpose.
-      if (!existing) {
-        return err({ code: 'WEBHOOK_NOT_FOUND', id });
-      }
+    // Either the webhook does not exist, or it belongs to someone else. Both
+    // are the same refusal on purpose.
+    if (!existing) {
+      return err({ code: 'WEBHOOK_NOT_FOUND', id });
+    }
 
-      const writeableFields = Object.keys(Schemas.updateWebhook.body.shape);
-      const { updates, difference } = diffFields(existing, request, writeableFields);
+    const writeableFields = Object.keys(Schemas.updateWebhook.body.shape);
+    const { updates, difference } = diffFields(existing, request, writeableFields);
 
-      if (Object.keys(difference).length === 0) {
-        return ok(existing);
-      }
+    if (Object.keys(difference).length === 0) {
+      return ok(existing);
+    }
 
-      // biome-ignore format: looks nicer
-      const [row] = await tx
+    // biome-ignore format: looks nicer
+    const [row] = await tx
         .update(webhooks)
         .set(updates)
         .where(and(
@@ -184,24 +183,23 @@ async function updateWebhook(
         ))
         .returning();
 
-      if (!row) {
-        throw new Error('Failed to update webhook');
-      }
+    if (!row) {
+      throw new Error('Failed to update webhook');
+    }
 
-      await AuditLogServices.createAuditLog(
-        {
-          event: 'webhooks.updated',
-          target_type: 'webhook',
-          target_id: row.id,
-          status: 'success',
-          difference,
-        },
-        tx,
-      );
+    await AuditLogServices.createAuditLog(
+      {
+        event: 'webhooks.updated',
+        target_type: 'webhook',
+        target_id: row.id,
+        status: 'success',
+        difference,
+      },
+      tx,
+    );
 
-      return ok(row);
-    },
-  );
+    return ok(row);
+  });
 
   if (result.isErr()) {
     return err(result.error);
