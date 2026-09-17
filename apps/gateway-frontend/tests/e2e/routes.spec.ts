@@ -5,7 +5,7 @@ test('the authenticated shell loads every primary frontend route', async ({ page
   registerEmptyApp(api);
 
   let catalogAttempts = 0;
-  api.get('/api/providers', () => {
+  api.get('/api/models/providers', () => {
     catalogAttempts += 1;
     if (catalogAttempts === 1) {
       return {
@@ -14,7 +14,7 @@ test('the authenticated shell loads every primary frontend route', async ({ page
       };
     }
 
-    return { json: { data: CATALOG } };
+    return { json: { data: CATALOG, meta: { oldest_id: null, more_data: false } } };
   });
 
   await test.step('a representative API failure can be retried', async () => {

@@ -78,7 +78,7 @@ test('an organization with no logs receives a zero-valued analytics series', asy
   expect(analytics).toEqual({
     interval: 'none',
     group_by: [],
-    sealed_through: expect.any(String),
+    sealed_through: expect.any(Date),
     points: [
       {
         bucket: null,
