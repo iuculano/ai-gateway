@@ -8,6 +8,8 @@ import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import ProviderRow from '$lib/components/models/provider-row.svelte';
 import { timeAgo } from '$lib/data/format';
 
+const PAGE_SIZE = 20;
+
 // Shared with ProviderRow so the header and the rows sit in one grid.
 const COLS = '24px 1.7fr 118px 1.1fr 1.1fr 104px 92px 96px';
 
@@ -22,33 +24,53 @@ const COLUMNS = [
   { label: 'Status' },
 ];
 
-// Local state rather than a store in $lib/state. Those exist for pages whose
-// tables feed each other or whose rows are edited; this is one read-only table
-// behind one unpaginated request, and a store would only add indirection.
 let providers: CatalogProvider[] = $state([]);
 let loading = $state(true);
 let error: string | null = $state(null);
+let meta: Awaited<ReturnType<typeof listProviders>>['meta'] | null = $state(null);
+let pageIndex = $state(0);
+let cursors: string[] = $state([]);
+let requestId = 0;
 
 let expandedProvider: string | null = $state(null);
 let search = $state('');
 
-async function load() {
+async function load({ index = pageIndex }: { index?: number } = {}) {
+  const request = ++requestId;
   loading = true;
   error = null;
 
   try {
-    const result = await listProviders();
+    const after = index === 0 ? undefined : cursors[index - 1];
+    const result = await listProviders({ limit: PAGE_SIZE, after_id: after });
+    if (request !== requestId) return;
+
     providers = result.data;
+    meta = result.meta;
+    pageIndex = index;
+    expandedProvider = null;
   } catch (cause) {
+    if (request !== requestId) return;
     error = cause instanceof Error ? cause.message : 'Failed to load the catalog.';
   } finally {
-    loading = false;
+    if (request === requestId) loading = false;
   }
 }
 
-// Once on mount, not in an $effect - an effect would re-run on the state the
-// load itself mutates and hammer the endpoint on any error.
-onMount(load);
+function nextPage() {
+  if (!meta?.more_data || !meta.oldest_id || loading) return;
+  cursors = [...cursors.slice(0, pageIndex), meta.oldest_id];
+  load({ index: pageIndex + 1 });
+}
+
+function previousPage() {
+  if (pageIndex === 0 || loading) return;
+  load({ index: pageIndex - 1 });
+}
+
+onMount(() => {
+  load();
+});
 
 /** Filter the catalog by provider or model name. */
 const filtered = $derived.by(() => {
@@ -95,12 +117,13 @@ const lastSynced = $derived.by(() => {
 	loadingLabel="Loading catalog…"
 	emptyTitle={providers.length === 0 ? 'No providers in the catalog' : 'No providers match your filters'}
 	emptyHint={providers.length === 0 ? 'The catalog worker populates this on its first sync.' : undefined}
-	onretry={load}
+	onretry={() => load()}
+	showFooter={pageIndex > 0 || (meta?.more_data ?? false)}
 >
 	{#snippet toolbar()}
 		<input
 			type="search"
-			placeholder="Search providers and models…"
+			placeholder="Search this page…"
 			bind:value={search}
 			class="h-8 w-64 rounded-lg border border-line-strong bg-surface-3 px-2.5 text-[12.5px] text-zinc-200 placeholder:text-zinc-600 focus:border-line-strong focus:outline-none"
 		/>
@@ -108,7 +131,7 @@ const lastSynced = $derived.by(() => {
 			<span class="font-medium text-zinc-100 tabular-nums">{shownCount.toLocaleString()}</span>
 			of <span class="font-medium text-zinc-200 tabular-nums">{allModels.length.toLocaleString()}</span> models
 			<span class="mx-1 text-zinc-600">·</span>
-			<span class="font-medium text-zinc-200 tabular-nums">{providers.length.toLocaleString()}</span> providers
+			<span class="font-medium text-zinc-200 tabular-nums">{providers.length.toLocaleString()}</span> providers on this page
 			<span class="mx-1 text-zinc-600">·</span>
 			<span class="font-medium tabular-nums {unpricedCount > 0 ? 'text-amber-400' : 'text-zinc-200'}">{unpricedCount.toLocaleString()}</span> unpriced
 			<span class="mx-1 text-zinc-600">·</span>
@@ -118,7 +141,7 @@ const lastSynced = $derived.by(() => {
 			>{lastSynced ? timeAgo(lastSynced) : '—'}</span>
 		</span>
 		<div class="ml-auto flex items-center gap-2.5">
-			<ToolbarButton onclick={load} disabled={loading}>
+			<ToolbarButton onclick={() => load()} disabled={loading}>
 				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
 				Refresh
 			</ToolbarButton>
@@ -133,4 +156,17 @@ const lastSynced = $derived.by(() => {
 			ontoggle={() => (expandedProvider = expandedProvider === provider.id ? null : provider.id)}
 		/>
 	{/each}
+	{#snippet footer()}
+		<div class="flex items-center justify-center gap-3">
+			<ToolbarButton disabled={pageIndex === 0 || loading} onclick={previousPage}>
+				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9.5 4L6 8l3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+				Previous
+			</ToolbarButton>
+			<span class="min-w-[64px] text-center text-[12.5px] text-zinc-500">Page {pageIndex + 1}</span>
+			<ToolbarButton disabled={!meta?.more_data || loading} onclick={nextPage}>
+				Next
+				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M6.5 4L10 8l-3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			</ToolbarButton>
+		</div>
+	{/snippet}
 </TableCard>

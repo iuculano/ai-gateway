@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listProviders } from '$lib/api/models';
+import { listAllProviders } from '$lib/api/models';
 import { Input } from '$lib/components/ui/input';
 import { fmtContext, fmtPricePerMillion, providerTone } from '$lib/data/format';
 
@@ -66,7 +66,7 @@ $effect(() => {
 
 onMount(async () => {
   try {
-    const result = await listProviders();
+    const result = await listAllProviders();
 
     options = result.data.flatMap((provider) =>
       provider.models
