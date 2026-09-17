@@ -1,24 +1,19 @@
 import { z } from '@hono/zod-openapi';
+import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
 import { createSchema } from '@repo/hono';
+import { createInsertSchema, createSelectSchema, createUpdateSchema } from 'drizzle-orm/zod';
 
-const webhookShape = z.object({
-  id: z.uuidv7(),
-  creator_id: z.uuid().nullable(),
-  name: z.string(),
-  description: z.string().nullish().optional(),
-  endpoint: z.string(),
-  filter: z.record(z.string(), z.string()).nullish().optional(),
-  tags: z.record(z.string(), z.string()).nullish().optional(),
-  created_at: z.date().transform((date) => date.toISOString()),
-  updated_at: z.date().transform((date) => date.toISOString()),
-});
+const webhookResponse = createSelectSchema(webhooks, {
+  filter: z.record(z.string(), z.string()).nullable(),
+  tags: z.record(z.string(), z.string()).nullable(),
+}).omit({ organization_id: true });
 
 const getWebhook = createSchema({
   params: z.object({
     id: z.uuidv7(),
   }),
 
-  response: webhookShape,
+  response: webhookResponse,
 });
 
 const listWebhooks = createSchema({
@@ -29,7 +24,7 @@ const listWebhooks = createSchema({
   }),
 
   response: z.object({
-    data: z.array(webhookShape),
+    data: z.array(webhookResponse),
     meta: z.object({
       oldest_id: z.uuidv7().nullable(),
       more_data: z.boolean(),
@@ -38,14 +33,20 @@ const listWebhooks = createSchema({
 });
 
 const createWebhook = createSchema({
-  body: webhookShape.omit({
-    id: true,
-    creator_id: true,
-    created_at: true,
-    updated_at: true,
-  }),
+  body: createInsertSchema(webhooks)
+    .omit({
+      id: true, // server-generated
+      organization_id: true, // supplied from the caller
+      created_at: true, // server-generated
+      updated_at: true, // server-generated
+      creator_id: true, // supplied from the caller
+    })
+    .extend({
+      filter: z.record(z.string(), z.string()).nullish(),
+      tags: z.record(z.string(), z.string()).nullish(),
+    }),
 
-  response: webhookShape,
+  response: webhookResponse,
 });
 
 const updateWebhook = createSchema({
@@ -53,14 +54,20 @@ const updateWebhook = createSchema({
     id: z.uuidv7(),
   }),
 
-  body: webhookShape.partial().omit({
-    id: true,
-    creator_id: true,
-    created_at: true,
-    updated_at: true,
-  }),
+  body: createUpdateSchema(webhooks)
+    .omit({
+      id: true, // server-generated
+      organization_id: true, // supplied from the caller
+      created_at: true, // server-generated
+      updated_at: true, // server-generated
+      creator_id: true, // supplied from the caller
+    })
+    .extend({
+      filter: z.record(z.string(), z.string()).nullish(),
+      tags: z.record(z.string(), z.string()).nullish(),
+    }),
 
-  response: webhookShape,
+  response: webhookResponse,
 });
 
 const deleteWebhook = createSchema({
@@ -80,14 +87,7 @@ const listWebhookOutbox = createSchema({
   }),
 
   response: z.object({
-    data: z.array(
-      z.object({
-        id: z.uuidv7(),
-        webhook_id: z.uuidv7(),
-        log_id: z.uuidv7(),
-        created_at: z.date().transform((date) => date.toISOString()),
-      }),
-    ),
+    data: z.array(createSelectSchema(webhookOutbox)),
     meta: z.object({
       oldest_id: z.uuidv7().nullable(),
       more_data: z.boolean(),
@@ -102,15 +102,7 @@ const listWebhookDeliveries = createSchema({
   }),
 
   response: z.object({
-    data: z.array(
-      z.object({
-        id: z.uuidv7(),
-        outbox_id: z.uuidv7(),
-        webhook_id: z.uuidv7(),
-        status_code: z.coerce.number().int(),
-        created_at: z.date().transform((date) => date.toISOString()),
-      }),
-    ),
+    data: z.array(createSelectSchema(webhookDeliveries)),
     meta: z.object({
       oldest_id: z.uuidv7().nullable(),
       more_data: z.boolean(),

@@ -150,11 +150,15 @@ async function updateWebhook(
   const caller = getCaller();
 
   const result = await db.transaction(
-    async (tx): Promise<Result<typeof webhooks.$inferSelect, UpdateWebhookFailure>> => {
+    async (tx): Promise<Result<UpdateWebhookResponse, UpdateWebhookFailure>> => {
+      // biome-ignore format: looks nicer
       const [existing] = await tx
         .select()
         .from(webhooks)
-        .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+        .where(and(
+          eq(webhooks.organization_id, caller.organization.id),
+          eq(webhooks.id, id)
+        ))
         .for('update');
 
       // Either the webhook does not exist, or it belongs to someone else. Both
@@ -170,10 +174,14 @@ async function updateWebhook(
         return ok(existing);
       }
 
+      // biome-ignore format: looks nicer
       const [row] = await tx
         .update(webhooks)
         .set(updates)
-        .where(and(eq(webhooks.organization_id, caller.organization.id), eq(webhooks.id, id)))
+        .where(and(
+          eq(webhooks.organization_id, caller.organization.id),
+          eq(webhooks.id, id)
+        ))
         .returning();
 
       if (!row) {
@@ -312,32 +320,6 @@ async function listWebhookDeliveries(query: ListWebhookDeliveriesQuery): Promise
 }
 
 /**
- * Queues a delivery.
- *
- * @param webhookId
- * The id of the webhook to notify.
- *
- * @param logId
- * The id of the log to deliver.
- */
-async function submitWebhookRequest(webhookId: string, logId: string) {
-  // biome-ignore format: looks nicer
-  const [result] = await db
-    .insert(webhookOutbox)
-    .values({
-      webhook_id: webhookId,
-      log_id: logId,
-    })
-    .returning();
-
-  if (!result) {
-    throw new Error('Failed to submit webhook request');
-  }
-
-  return result;
-}
-
-/**
  * Queues an explicitly requested webhook delivery.
  *
  * @param webhookId
@@ -378,6 +360,4 @@ export default {
 
   listWebhookOutbox,
   listWebhookDeliveries,
-
-  submitWebhookRequest,
 };
