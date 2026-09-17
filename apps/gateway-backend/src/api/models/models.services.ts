@@ -202,9 +202,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
     }
 
     // Requested models and their weights together.
-    const remaining = candidates
-      .map((slug, index) => ({ slug, weight: weights[index] as number }));
-
+    const remaining = candidates.map((slug, index) => ({ slug, weight: weights[index] as number }));
 
     const output: string[] = [];
 
@@ -274,9 +272,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
         }
 
         const { cost_input, cost_output } = model.value;
-        const cost = cost_input != null && cost_output != null
-          ? cost_input + cost_output
-          : Number.POSITIVE_INFINITY; // Unknown prices sort last.
+        const cost = cost_input != null && cost_output != null ? cost_input + cost_output : Number.POSITIVE_INFINITY; // Unknown prices sort last.
 
         return { slug, cost };
       }),
