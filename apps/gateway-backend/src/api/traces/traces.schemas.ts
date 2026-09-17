@@ -171,27 +171,11 @@ const createTrace = createSchema({
   response: createTraceResponse,
 });
 
-/**
- * A W3C trace id as it is stored.
- *
- * Read paths are strict where ingestion is forgiving: `createTraceBody` accepts
- * either case because an OTLP exporter chooses it, and normalizes on the way
- * in. By the time an id is being looked up it has already been through that,
- * so anything else is a caller bug worth a 400 rather than a silent miss.
- */
 const traceId = z
   .string()
   .regex(/^[0-9a-f]{32}$/, 'Expected a lowercase 32-character W3C trace id')
   .refine((value) => value !== '0'.repeat(32), 'The all-zero W3C trace id is invalid');
 
-/**
- * One trace summary.
- *
- * `total_input_tokens`, `total_output_tokens`, `total_cost` and `log_count` are
- * trusted aggregates: the read model derives them from canonical logs rather
- * than from anything a customer exporter claimed. `span_count`, `tool_count`
- * and the timings come from accepted span metadata. See traces.services.ts.
- */
 const responseTimestamp = z.date().transform((date) => date.toISOString());
 
 const traceShape = z.object({
@@ -214,21 +198,9 @@ const traceShape = z.object({
   updated_at: responseTimestamp,
 });
 
-/**
- * One row of the waterfall, whichever table supplied it.
- *
- * The backend owns parent resolution, ordering and depth, so the frontend
- * renders this list top to bottom without knowing that spans and logs are
- * different records. `provider_attempt` is part of the contract but is not
- * emitted yet - attempts are owned by the main gateway plan.
- */
 const traceNode = z.object({
-  // A span id for application spans and for the gateway's own span. Falls back
-  // to `log:<uuid>` when a client reuses an id the gateway already issued.
   id: z.string(),
   parent_id: z.string().nullable(),
-
-  // Indentation level, pre-computed from the resolved parent chain.
   depth: z.number().int().nonnegative(),
 
   source: z.enum(['application_span', 'gateway_log', 'provider_attempt']),
@@ -236,8 +208,6 @@ const traceNode = z.object({
   name: z.string(),
   status: z.enum(['unset', 'ok', 'error']),
 
-  // Both relative to the trace's earliest node, so a bar can be positioned
-  // without the client doing date arithmetic across two record types.
   start_offset_ms: z.number().int().nonnegative(),
   duration_ms: z.number().int().nonnegative(),
 
@@ -246,14 +216,7 @@ const traceNode = z.object({
   input_tokens: z.number().int().nullable(),
   output_tokens: z.number().int().nullable(),
   cost: z.coerce.number().nullable(),
-
-  // Set on gateway logs, which is what makes the payload endpoints reachable
-  // from a node. Null on everything else.
   log_id: z.uuidv7().nullable(),
-
-  // Bounded, non-content metadata only: service and scope for a span, the
-  // caller's tags for a log. Span attributes are not retained - see the
-  // content policy in CUSTOMER_APPLICATION_TRACING_BATTLE_PLAN.md.
   attributes: z.record(z.string(), z.string()),
 });
 
@@ -280,15 +243,7 @@ const getTrace = createSchema({
 
   response: z.object({
     trace: traceShape.extend({
-      // Whether the waterfall below is everything there is. `partial` means
-      // spans are still open, absent, or arrived without a final status - it is
-      // about the detail, not about whether the run succeeded, which is what
-      // `status` reports.
       detail_status: z.enum(['complete', 'partial']),
-
-      // How wide the waterfall is, from the earliest node to the latest end.
-      // Distinct from `duration_ms`, which stays null until the trace is known
-      // to have finished; a chart still has to be drawn before then.
       window_ms: z.number().int().nonnegative(),
     }),
 
