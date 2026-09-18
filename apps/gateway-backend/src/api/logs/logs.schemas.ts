@@ -65,6 +65,7 @@ const batch = createSchema({
 
 const listLogs = createSchema({
   query: z.object({
+    operation: z.enum(['chat.completions', 'embeddings']).optional(),
     model: z.string().optional(),
     provider: z.string().optional(),
     status: z.enum(['incomplete', 'complete', 'failed']).optional(),

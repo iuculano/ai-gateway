@@ -18,6 +18,9 @@ export const logs = pgTable(
     organization_id: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: 'restrict' }),
+    operation: text({ enum: ['chat', 'embeddings'] })
+      .notNull()
+      .default('chat'),
     model: text().notNull(),
     provider: text().notNull(),
     trace_id: text(),

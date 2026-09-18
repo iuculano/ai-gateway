@@ -6,6 +6,7 @@ export * from './logs';
 export * from './models';
 export * from './organizations';
 export * from './prompts';
+export * from './provider-credentials';
 export * from './traces';
 export * from './users';
 export * from './webhooks';

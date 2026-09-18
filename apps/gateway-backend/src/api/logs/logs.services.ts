@@ -202,6 +202,7 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
   const conditions = [
     eq(logs.organization_id, caller.organization.id),
     query.model ? eq(logs.model, query.model) : undefined,
+    query.operation ? eq(logs.operation, query.operation) : undefined,
     query.provider ? eq(logs.provider, query.provider) : undefined,
     query.status ? eq(logs.status, query.status) : undefined,
     query.trace_id ? eq(logs.trace_id, query.trace_id) : undefined,
@@ -327,6 +328,7 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
 async function startLog(
   organizationId: string,
   entry: {
+    operation?: 'chat.completions' | 'embeddings';
     model: string;
     provider: string;
     tags?: Record<string, string>;
@@ -339,6 +341,7 @@ async function startLog(
     .insert(logs)
     .values({
       organization_id: organizationId,
+      operation: entry.operation ?? 'chat.completions',
       model: entry.model,
       provider: entry.provider,
       ...(trace
