@@ -22,9 +22,9 @@
     "stress:gateway": "bun run tests/stress/gateway.stress.ts"
   },
   "dependencies": {
-    "@ai-sdk/azure": "^4.0.70",
+    "@ai-sdk/azure": "^4.0.74",
     "@ai-sdk/openai": "^4.0.45",
-    "@ai-sdk/provider": "4.0.14",
+    "@ai-sdk/provider": "4.0.17",
     "@hono/swagger-ui": "^0.6.1",
     "@hono/zod-openapi": "^1.6.3",
     "@repo/auth": "workspace:*",
@@ -33,12 +33,12 @@
     "@repo/hono": "workspace:*",
     "@repo/object-storage": "workspace:*",
     "@repo/redis": "workspace:*",
-    "ai": "^7.0.98",
+    "ai": "^7.0.106",
     "drizzle-orm": "^1.0.0-rc.5-5935859",
-    "hono": "^4.13.7",
+    "hono": "^4.13.8",
     "lru-cache": "^11.5.2",
     "neverthrow": "^8.2.0",
-    "zod": "^4.6.2"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@repo/test-helpers": "workspace:*",
