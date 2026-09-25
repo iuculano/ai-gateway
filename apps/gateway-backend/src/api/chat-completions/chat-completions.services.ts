@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { createAzure } from '@ai-sdk/azure';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createCacheKey, type Logger, parseTags } from '@repo/core';
 import { getActorId, getCaller, getLogger } from '@repo/hono';
 import {
   APICallError,
+  type CallSettings,
   type FinishReason,
   generateText,
   InvalidArgumentError,
@@ -18,6 +22,7 @@ import {
   type ModelMessage,
   RetryError,
   streamText,
+  type ToolChoice,
   type ToolSet,
   tool,
   wrapLanguageModel,
@@ -48,8 +53,7 @@ const providerCache = new LRUCache<string, LanguageModelInstance>({
   ttl: 1000 * 60 * 60, // 1 hour
 });
 
-/** The providers this gateway can reach. */
-const PROVIDERS = ['openai', 'azure'] as const;
+const PROVIDERS = ['openai', 'azure', 'google', 'anthropic', 'openrouter'] as const;
 
 type Provider = (typeof PROVIDERS)[number];
 
@@ -123,8 +127,14 @@ type ProviderTimeoutFailure = {
   cause: unknown;
 };
 
+type RoutingFailure = {
+  code: 'INVALID_MODEL_ROUTING';
+  message: string;
+};
+
 // The public service failure unions.
 export type CreateChatCompletionFailure =
+  | RoutingFailure
   | ModelNotFoundFailure
   | UnsupportedModelProviderFailure
   | UnknownToolCallFailure
@@ -145,27 +155,21 @@ type ProviderFailure =
   | ProviderFailedFailure
   | ProviderTimeoutFailure;
 
-/**
- * Resolves a request's `model` to something callable.
- *
- * @param model
- * The `model` field from the request body. May be a `provider/model` slug or
- * just a model name.
- *
- * @param apiKey
- * The caller's upstream provider credential, from the ai-api-key header.
- *
- * @param baseUrl
- * Optional override for the provider's base URL.
- *
- * @returns
- * The registered model, its callable instance, and provider metadata.
- */
+/** Selects a catalog model and creates or reuses its provider instance. */
 async function resolveModel(
-  model: string,
-  apiKey: string,
-  baseUrl?: string,
-): Promise<Result<ResolvedModel, ModelNotFoundFailure | UnsupportedModelProviderFailure>> {
+  requestedModels: string,
+  headers: ChatCompletionHeaders,
+): Promise<Result<ResolvedModel, RoutingFailure | ModelNotFoundFailure | UnsupportedModelProviderFailure>> {
+  const selected = await ModelsService.validateAndOrderModels(requestedModels, {
+    strategy: headers['ai-routing-strategy'],
+    weights: headers['ai-routing-weights'],
+  });
+  if (!selected) {
+    return err({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
+  }
+  const model = selected[0] as string;
+  const apiKey = headers['ai-api-key'];
+  const baseUrl = headers['ai-base-url'];
   const registered = await ModelsService.getModelBySlug(model);
   if (registered.isErr()) {
     return err({ code: 'MODEL_NOT_FOUND', model });
@@ -191,30 +195,37 @@ async function resolveModel(
     return ok({ provider, modelId, instance: cached, info });
   }
 
-  // Use the chat model explicitly; the bare factory targets the Responses API.
-  const instance =
-    provider === 'openai'
-      ? createOpenAI({ apiKey: apiKey, baseURL: baseUrl }).chat(modelId)
-      : createAzure({ apiKey: apiKey, baseURL: baseUrl }).chat(modelId);
+  const config = { apiKey: apiKey, baseURL: baseUrl };
+  let instance: LanguageModelInstance;
+  switch (provider) {
+    case 'openai':
+      instance = createOpenAI(config).chat(modelId);
+      break;
+    case 'azure':
+      instance = createAzure(config).chat(modelId);
+      break;
+    case 'google':
+      instance = createGoogleGenerativeAI(config)(modelId);
+      break;
+    case 'anthropic':
+      instance = createAnthropic(config)(modelId);
+      break;
+    case 'openrouter':
+      instance = createOpenRouter(config)(modelId);
+      break;
+  }
 
   providerCache.set(cacheKey, instance);
 
   return ok({ provider, modelId, instance, info });
 }
 
-/**
- * Helper to flattens OpenAI's `string | TextPart[]` content into a plain
- * string.
- */
 function flattenText(content: string | Array<{ type: 'text'; text: string }>): string {
   return typeof content === 'string' ? content : content.map((part) => part.text).join('');
 }
 
 /**
  * Translates OpenAI messages into the SDK's message model.
- *
- * OpenAI tool results contain only a call id, while the SDK also requires the
- * tool name. Earlier assistant calls are indexed to supply it.
  *
  * @param messages
  * The request's messages, in order.
@@ -265,9 +276,6 @@ function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage
               type: 'tool-call' as const,
               toolCallId: call.id,
               toolName: call.function.name,
-              // OpenAI sends arguments as a JSON string; the SDK wants the
-              // parsed value. A model can emit invalid JSON, so a parse failure
-              // falls back to the raw string rather than failing the request.
               input: safeParseJson(call.function.arguments),
             })),
           ],
@@ -300,9 +308,7 @@ function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage
   return ok(converted);
 }
 
-/**
- * JSON.parse that yields the original string instead of throwing.
- */
+/** Preserves malformed tool arguments as a string. */
 function safeParseJson(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -311,28 +317,14 @@ function safeParseJson(value: string): unknown {
   }
 }
 
-/**
- * Rejects parameters that are part of the OpenAI contract but that this
- * gateway cannot actually honour.
- *
- * Accepting a parameter and quietly ignoring it is worse than refusing it: the
- * caller believes it took effect. Everything named here is a 400 that says so.
- *
- * @param body
- * The validated request body.
- */
 function checkSupported(
   body: ChatCompletionBody,
 ): Result<void, UnsupportedResponseFormatFailure | TopLogprobsRequiresLogprobsFailure> {
-  // Structured output would have to be routed through the SDK's `output`
-  // option, which changes the result shape and the streaming contract. Until
-  // that is built, saying no is the honest answer.
+  // Structured output needs the SDK's output option, which is not implemented here.
   if (body.response_format && body.response_format.type !== 'text') {
     return err({ code: 'UNSUPPORTED_RESPONSE_FORMAT', response_format: body.response_format.type });
   }
 
-  // top_logprobs is meaningless without logprobs, and OpenAI rejects the
-  // combination too.
   if (body.top_logprobs != null && !body.logprobs) {
     return err({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
   }
@@ -349,7 +341,7 @@ function checkSupported(
  * @param headers
  * The gateway headers, which carry the retry and timeout overrides.
  */
-function toCallSettings(body: ChatCompletionBody, headers: ChatCompletionHeaders) {
+function toCallSettings(body: ChatCompletionBody, headers: ChatCompletionHeaders): CallSettings & { timeout?: number } {
   // max_completion_tokens supersedes max_tokens upstream, so it wins here too.
   const maxOutputTokens = body.max_completion_tokens ?? body.max_tokens;
   const stopSequences = body.stop == null ? undefined : typeof body.stop === 'string' ? [body.stop] : body.stop;
@@ -371,9 +363,6 @@ function toCallSettings(body: ChatCompletionBody, headers: ChatCompletionHeaders
  * The settings that have no cross-provider equivalent and ride along in the
  * provider's own namespace.
  *
- * Azure is OpenAI underneath and reuses the same option names, so both
- * providers read from the `openai` namespace.
- *
  * @param body
  * The validated request body.
  */
@@ -385,24 +374,20 @@ function toProviderOptions(body: ChatCompletionBody): Record<string, Record<stri
     ...(body.reasoning_effort != null ? { reasoningEffort: body.reasoning_effort } : {}),
     ...(body.store != null ? { store: body.store } : {}),
     ...(body.metadata != null ? { metadata: body.metadata } : {}),
-    // Cast because zod infers a literal-typed shape that TypeScript will not
-    // widen to JSONValue on its own; the value is plain JSON either way.
     ...(body.prediction != null ? { prediction: body.prediction as JSONValue } : {}),
     ...(body.service_tier != null ? { serviceTier: body.service_tier } : {}),
     ...(body.verbosity != null ? { textVerbosity: body.verbosity } : {}),
     ...(body.prompt_cache_key != null ? { promptCacheKey: body.prompt_cache_key } : {}),
     ...(body.safety_identifier != null ? { safetyIdentifier: body.safety_identifier } : {}),
 
-    // The provider spells this with an underscore; OpenAI's wire format uses a
-    // hyphen. Passing the wire spelling straight through would be rejected.
+    // The SDK uses in_memory; the request uses in-memory.
     ...(body.prompt_cache_retention != null
       ? {
           promptCacheRetention: body.prompt_cache_retention === 'in-memory' ? 'in_memory' : body.prompt_cache_retention,
         }
       : {}),
 
-    // One field upstream: a number means "return this many alternatives",
-    // a bare true means "just the chosen token".
+    // The SDK accepts true or the number of alternative tokens.
     ...(body.logprobs ? { logprobs: body.top_logprobs ?? true } : {}),
   };
 
@@ -411,11 +396,6 @@ function toProviderOptions(body: ChatCompletionBody): Record<string, Record<stri
 
 /**
  * Translates OpenAI tool definitions into an SDK tool set.
- *
- * None of these carry an `execute`, which is deliberate: a gateway forwards
- * tool calls back to its caller rather than running them. Without an executor
- * the SDK stops at the tool call and hands it back, which is exactly the
- * pass-through behaviour wanted here.
  *
  * @param body
  * The validated request body.
@@ -436,10 +416,7 @@ function toTools(body: ChatCompletionBody): ToolSet | undefined {
   return tools;
 }
 
-/**
- * Translates the OpenAI tool_choice into the SDK's equivalent.
- */
-function toToolChoice(body: ChatCompletionBody) {
+function toToolChoice(body: ChatCompletionBody): ToolChoice<ToolSet> | undefined {
   if (body.tool_choice == null) {
     return undefined;
   }
@@ -451,14 +428,7 @@ function toToolChoice(body: ChatCompletionBody) {
   return { type: 'tool' as const, toolName: body.tool_choice.function.name };
 }
 
-/**
- * Collapses the SDK's finish reason onto OpenAI's smaller set.
- *
- * `error` and `other` have no counterpart upstream. They land on 'stop', which
- * is lossy - but a generation that reached this point did produce a response,
- * and inventing a finish_reason outside the documented enum would break clients
- * that switch on it.
- */
+/** SDK finish reasons without an OpenAI equivalent map to stop. */
 function mapFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   switch (reason) {
     case 'length':
@@ -475,9 +445,6 @@ function mapFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   }
 }
 
-/**
- * Translates SDK usage into the OpenAI usage block.
- */
 function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
   const promptTokens = usage.inputTokens ?? 0;
   const completionTokens = usage.outputTokens ?? 0;
@@ -494,18 +461,6 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
   };
 }
 
-/**
- * Classifies whatever the SDK threw into an expected service outcome.
- *
- * Caller-actionable provider 4xx responses are preserved; upstream failures are
- * translated to gateway failures.
- *
- * @param error
- * The thrown value.
- *
- * @returns
- * A typed failure for the handler to translate.
- */
 function toProviderFailure(error: unknown): ProviderFailure {
   // RetryError hides the provider error that determines the response status.
   if (RetryError.isInstance(error)) {
@@ -536,8 +491,6 @@ function toProviderFailure(error: unknown): ProviderFailure {
     return { code: 'PROVIDER_FAILED', message: error.message, cause: error };
   }
 
-  // AbortSignal.timeout() rejects with a DOMException named TimeoutError, which
-  // is what the ai-timeout-ms header ends up producing.
   if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
     return { code: 'PROVIDER_TIMEOUT', cause: error };
   }
@@ -545,12 +498,8 @@ function toProviderFailure(error: unknown): ProviderFailure {
   return { code: 'PROVIDER_FAILED', message: 'Upstream provider call failed', cause: error };
 }
 
-/**
- * An open log, carrying the tenant and request logger so detached streaming
- * continuations do not have to look either up after the ambient scope ends.
- */
+/** Captures request context for streaming continuations. */
 interface OpenLog {
-  /** The log's tags, kept for the webhook fan-out that runs when it closes. */
   tags?: Record<string, string>;
 
   id: string;
@@ -558,18 +507,6 @@ interface OpenLog {
   logger: Logger;
 }
 
-/**
- * Opens a log for a call that is about to be made.
- *
- * @param headers
- * The gateway headers, carrying the ai-log-tags control.
- *
- * @param model
- * The resolved model, whose provider and id are recorded on the row.
- *
- * @returns
- * The open log, or null if it could not be opened.
- */
 async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Promise<OpenLog | null> {
   // Capture request-scoped state before a streaming continuation can outlive it.
   const caller = getCaller();
@@ -594,31 +531,6 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
   }
 }
 
-/**
- * Stores the payloads for a finished call and closes the log.
- *
- * Failures are logged but remain non-fatal because the provider response already
- * exists. Tokens and catalogue-derived costs are recorded when prices are
- * available; missing prices leave the database defaults untouched.
- *
- * @param log
- * The log opened by openLog, or null if there is none.
- *
- * @param headers
- * The gateway headers, carrying the ai-log-omit-* controls.
- *
- * @param request
- * The validated request body, stored as the request object.
- *
- * @param response
- * The completion returned to the caller, stored as the response object.
- *
- * @param model
- * The registered model whose catalogue pricing is used for accounting.
- *
- * @param responseTimeMs
- * Wall-clock time spent in the provider call.
- */
 async function closeLog(
   log: OpenLog | null,
   headers: ChatCompletionHeaders,
@@ -636,7 +548,7 @@ async function closeLog(
     await LogsService.completeLog(log.organizationId, log.id, {
       request: request,
       response: response,
-      // The row and its accounting survive either omit header; see openLog.
+      // Omit headers exclude payloads, not usage or costs.
       omitRequest: headers['ai-log-omit-request'],
       omitResponse: headers['ai-log-omit-response'],
       gateway_cache_hit: cacheHit,
@@ -651,14 +563,6 @@ async function closeLog(
   }
 }
 
-/**
- * Calculates dollar costs from prices stored per million tokens.
- *
- * Cached input tokens use the catalogue's cache-read price when one is
- * published. If it is absent, the normal input price is used for the complete
- * input total; this is the least surprising fallback for providers that do not
- * publish a separate cache price.
- */
 function calculateCosts(
   usage: ChatCompletionUsage,
   model: Pick<GetModelResponse, 'cost_input' | 'cost_output' | 'cost_cache_read'>,
@@ -668,8 +572,7 @@ function calculateCosts(
 
   if (model.cost_input != null) {
     const inputTokens = usage.prompt_tokens - cachedTokens;
-    const cachedInputCost =
-      model.cost_cache_read == null ? cachedTokens * model.cost_input : cachedTokens * model.cost_cache_read;
+    const cachedInputCost = cachedTokens * (model.cost_cache_read ?? model.cost_input);
     costs.input_cost = (inputTokens * model.cost_input + cachedInputCost) / 1_000_000;
   }
 
@@ -680,18 +583,6 @@ function calculateCosts(
   return costs;
 }
 
-/**
- * Marks a log failed, keeping the request payload for inspection.
- *
- * @param log
- * The log opened by openLog, or null if there is none.
- *
- * @param headers
- * The gateway headers, carrying the ai-log-omit-request control.
- *
- * @param request
- * The validated request body.
- */
 async function abandonLog(
   log: OpenLog | null,
   headers: ChatCompletionHeaders,
@@ -711,22 +602,7 @@ async function abandonLog(
   }
 }
 
-/**
- * Queues the log for the webhook the request named, if it named one.
- *
- * Validation runs before inference so an invalid webhook cannot incur provider
- * usage before the request is rejected.
- *
- * @param headers
- * The gateway headers, carrying the ai-webhook-id control.
- *
- * @param log
- * The log opened for this request, or null when it could not be opened.
- *
- * @returns
- * Ok when no delivery was requested or it was queued, otherwise the expected
- * reason it could not be queued.
- */
+/** Validate the webhook before incurring provider usage. */
 async function queueWebhook(
   headers: ChatCompletionHeaders,
   log: OpenLog | null,
@@ -750,7 +626,11 @@ async function queueWebhook(
   return ok(undefined);
 }
 
-function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders, cache: { hit: boolean }) {
+function cacheModel(
+  model: ResolvedModel,
+  headers: ChatCompletionHeaders,
+  cache: { hit: boolean },
+): LanguageModelInstance {
   if (!headers['ai-cache-enabled']) {
     return model.instance;
   }
@@ -775,19 +655,8 @@ function cacheModel(model: ResolvedModel, headers: ChatCompletionHeaders, cache:
 }
 
 /**
- * Generates a chat completion.
+ * Generate a non-streaming chat completion.
  *
- * @param headers
- * The gateway headers, including the upstream credential.
- *
- * @param body
- * The validated request body.
- *
- * @param onLog
- * Receives the log id in time for the handler to expose it as a response header.
- *
- * @returns
- * A completion in OpenAI's chat.completion shape, or an expected refusal.
  */
 async function createChatCompletion(
   headers: ChatCompletionHeaders,
@@ -799,7 +668,7 @@ async function createChatCompletion(
     return err(supported.error);
   }
 
-  const resolved = await resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  const resolved = await resolveModel(body.model, headers);
   if (resolved.isErr()) {
     return err(resolved.error);
   }
@@ -811,6 +680,7 @@ async function createChatCompletion(
 
   const model = resolved.value;
   const tools = toTools(body);
+  const providerOptions = toProviderOptions(body);
 
   const log = await openLog(headers, model);
   if (log) {
@@ -837,7 +707,7 @@ async function createChatCompletion(
 
       ...toCallSettings(body, headers),
       ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
-      ...(toProviderOptions(body) ? { providerOptions: toProviderOptions(body) } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
     });
   } catch (error) {
     await abandonLog(log, headers, body);
@@ -852,7 +722,6 @@ async function createChatCompletion(
     type: 'function' as const,
     function: {
       name: call.toolName,
-      // Back to a JSON string, which is what the OpenAI contract specifies.
       arguments: JSON.stringify(call.input ?? {}),
     },
   }));
@@ -867,8 +736,6 @@ async function createChatCompletion(
         index: 0,
         message: {
           role: 'assistant',
-          // Null rather than an empty string when the turn was tool calls
-          // only - clients switch on exactly this.
           content: result.text.length > 0 ? result.text : null,
           refusal: null,
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
@@ -886,10 +753,7 @@ async function createChatCompletion(
 }
 
 /**
- * Generates a chat completion as a stream of chat.completion.chunk frames.
- *
- * The caller is responsible for framing these as SSE and for the terminating
- * [DONE] sentinel.
+ * Generates a a stream of chat completion chunks.
  *
  * @param headers
  * The gateway headers, including the upstream credential.
@@ -899,10 +763,6 @@ async function createChatCompletion(
  *
  * @param onLog
  * Receives the log id before the handler commits the SSE response headers.
- *
- * @returns
- * Stream results; early errors can become HTTP responses, while errors after the
- * first chunk terminate the already-committed stream.
  */
 async function* streamChatCompletion(
   headers: ChatCompletionHeaders,
@@ -915,7 +775,7 @@ async function* streamChatCompletion(
     return;
   }
 
-  const resolved = await resolveModel(body.model, headers['ai-api-key'], headers['ai-base-url']);
+  const resolved = await resolveModel(body.model, headers);
   if (resolved.isErr()) {
     yield err(resolved.error);
     return;
@@ -929,6 +789,7 @@ async function* streamChatCompletion(
 
   const model = resolved.value;
   const tools = toTools(body);
+  const providerOptions = toProviderOptions(body);
 
   const log = await openLog(headers, model);
   if (log) {
@@ -958,7 +819,7 @@ async function* streamChatCompletion(
 
       ...toCallSettings(body, headers),
       ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
-      ...(toProviderOptions(body) ? { providerOptions: toProviderOptions(body) } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
 
       // Surface SDK stream failures instead of ending the response silently.
       onError: ({ error }) => {
@@ -971,9 +832,7 @@ async function* streamChatCompletion(
     return;
   }
 
-  // Provider metadata arrives only after generation, so waiting for it would
-  // buffer the stream. Generate stable frame metadata up front; streamed model
-  // ids therefore echo the request rather than a provider-resolved version.
+  // Generate metadata locally to avoid waiting for the provider to finish.
   const id = `chatcmpl-${randomUUID().replaceAll('-', '')}`;
   const created = Math.floor(Date.now() / 1000);
   const modelId = model.modelId;
@@ -989,8 +848,7 @@ async function* streamChatCompletion(
     choices: [{ index: 0, delta: delta, finish_reason: finishReason }],
   });
 
-  // Tool calls stream as fragments identified by an opaque id; the wire format
-  // wants a positional index instead, so ids are assigned one on first sight.
+  // OpenAI chunks identify tool calls by index; the SDK uses IDs.
   const toolCallIndexes = new Map<string, number>();
 
   // Delay the first yield until the provider responds so rejections can still
@@ -1062,8 +920,6 @@ async function* streamChatCompletion(
       case 'error': {
         await abandonLog(log, headers, body);
 
-        // onError has already classified this. An Err makes the handler stop
-        // rather than closing the stream as if it had succeeded.
         yield err(streamError ?? toProviderFailure(part.error));
         return;
       }
@@ -1081,17 +937,13 @@ async function* streamChatCompletion(
     return;
   }
 
-  // A provider that answered with nothing at all never tripped the gate above,
-  // and a stream whose only frame is a finish reason is malformed. Emit the
-  // opening frame it is owed first.
+  // Empty streams still need an opening role frame.
   if (!opened) {
     yield ok(frame({ role: 'assistant', content: '' }, null));
   }
 
-  // The terminating frame: an empty delta plus the finish reason.
   yield ok(frame({}, finishReason));
 
-  // Usage rides in a trailing frame with no choices, and only when asked for.
   if (body.stream_options?.include_usage && usage) {
     yield ok({
       id: id,
@@ -1103,8 +955,6 @@ async function* streamChatCompletion(
     });
   }
 
-  // Logged only once the stream has run to completion, which is the first
-  // moment the assembled response is actually final.
   const completion: ChatCompletion = {
     id: id,
     object: 'chat.completion',
@@ -1123,8 +973,6 @@ async function* streamChatCompletion(
         finish_reason: finishReason,
       },
     ],
-    // A provider that never sent a usage frame leaves zeroes rather than a
-    // missing block, so the stored shape stays the same either way.
     usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 

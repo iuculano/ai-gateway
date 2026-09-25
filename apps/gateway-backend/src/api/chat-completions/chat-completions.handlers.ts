@@ -128,9 +128,12 @@ function toChatCompletionHttpException(
   const { code } = failure;
 
   switch (code) {
+    case 'INVALID_MODEL_ROUTING':
+      return new HTTPException(400, { message: failure.message });
+
     case 'MODEL_NOT_FOUND':
       return new HTTPException(404, {
-        message: `Model '${failure.model}' is not registered in the catalogue`,
+        message: `Model '${failure.model}' is not registered in the catalog`,
       });
 
     case 'UNSUPPORTED_MODEL_PROVIDER':
