@@ -1,6 +1,8 @@
 import { logger } from '@repo/core';
 import { environment } from '../environment';
-import { upsertCatalog } from './catalog-upsert';
+import { deleteExcludedModels, upsertCatalog } from './catalog-upsert';
+
+const providerWhitelist = new Set(environment.CATALOG_PROVIDER_WHITELIST);
 
 /**
  * One model as a specific provider sells it.
@@ -77,17 +79,17 @@ export interface SelectedOffering {
  * something actually changed.
  *
  * In memory, which is not where it belongs - it should be a row, so that a
- * restart does not re-download and re-upsert an unchanged catalogue. It moves
- * there when the catalogue tables land. The cost until then is one wasted 4 MB
+ * restart does not re-download and re-upsert an unchanged catalog. It moves
+ * there when the catalog tables land. The cost until then is one wasted 4 MB
  * fetch per process start.
  */
 let lastEtag: string | undefined;
 
 /**
- * Fetches the catalogue, unless models.dev says it has not changed.
+ * Fetches the catalog, unless models.dev says it has not changed.
  *
  * @returns
- * The parsed catalogue, or null when the upstream answered 304 and there is
+ * The parsed catalog, or null when the upstream answered 304 and there is
  * nothing to do.
  */
 async function fetchCatalog(): Promise<Catalog | null> {
@@ -112,31 +114,36 @@ async function fetchCatalog(): Promise<Catalog | null> {
 
   // Only after a successful parse. Recording it earlier would mean a body that
   // arrived truncated or malformed still suppressed the next fetch, and the
-  // catalogue would stay stale until the upstream happened to change again.
+  // catalog would stay stale until the upstream happened to change again.
   lastEtag = response.headers.get('etag') ?? undefined;
 
   return catalog;
 }
 
-/** Flattens a models.dev snapshot into rows for the catalogue upsert. */
+/** Flattens a models.dev snapshot into rows for the catalog upsert. */
 function selectOfferings(catalog: Catalog): SelectedOffering[] {
-  return Object.entries(catalog.providers).flatMap(([provider, entry]) =>
-    Object.values(entry.models).map((offering) => ({ provider, offering })),
-  );
+  return Object.entries(catalog.providers)
+    .filter(([provider]) => providerWhitelist.has(provider))
+    .flatMap(([provider, entry]) => Object.values(entry.models).map((offering) => ({ provider, offering })));
 }
 
 /**
  * One pass: fetch if changed, flatten the provider offerings, and upsert.
  *
  * Throws on a failed fetch or an unparseable body. The caller decides what that
- * means - a catalogue that is a few hours stale is not an outage, so a failed
+ * means - a catalog that is a few hours stale is not an outage, so a failed
  * tick is logged and the next one simply tries again.
  */
 export async function tickModelCatalog(): Promise<void> {
+  // Apply local configuration even when the upstream catalog returns 304.
+  const deleted = await deleteExcludedModels(environment.CATALOG_PROVIDER_WHITELIST);
+  if (deleted > 0) {
+    logger.info({ deleted }, 'Deleted models from excluded providers');
+  }
   const catalog = await fetchCatalog();
 
   if (!catalog) {
-    logger.debug('models.dev catalogue is unchanged');
+    logger.debug('models.dev catalog is unchanged');
     return;
   }
 
@@ -146,13 +153,13 @@ export async function tickModelCatalog(): Promise<void> {
 
   logger.info(
     {
-      providers: Object.keys(catalog.providers).length,
+      providers: new Set(offerings.map((item) => item.provider)).size,
       offerings: offerings.length,
       unpriced: unpriced,
       written: summary.written,
       delisted: summary.delisted,
       confirmed: summary.confirmed,
     },
-    'Synced models.dev catalogue',
+    'Synced models.dev catalog',
   );
 }

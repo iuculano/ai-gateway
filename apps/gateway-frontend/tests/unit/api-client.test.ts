@@ -36,6 +36,27 @@ test('upstream 401 preserves the provider error without navigating away', async 
 
 test('gateway 401 still redirects to login', async () => {
   fetchSpy.mockResolvedValue(Response.json({ error: { message: 'Unauthorized' } }, { status: 401 }));
-  await expect(client.providers.$get()).rejects.toEqual(new ApiError(401, 'Session expired.'));
+  await expect(client.models.providers.$get({ query: {} })).rejects.toEqual(new ApiError(401, 'Session expired.'));
   expect(location.href).toBe('/auth/login');
+});
+
+test('the catalog loader follows provider cursors and combines pages', async () => {
+  const { listAllProviders } = await import('../../src/lib/api/models');
+  fetchSpy
+    .mockResolvedValueOnce(
+      Response.json({
+        data: [{ id: 'anthropic', synced_at: null, models: [] }],
+        meta: { oldest_id: 'anthropic', more_data: true },
+      }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({
+        data: [{ id: 'openai', synced_at: null, models: [] }],
+        meta: { oldest_id: 'openai', more_data: false },
+      }),
+    );
+
+  expect((await listAllProviders()).data.map((provider) => provider.id)).toEqual(['anthropic', 'openai']);
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+  expect(String(fetchSpy.mock.calls[1]?.[0])).toContain('after_id=anthropic');
 });

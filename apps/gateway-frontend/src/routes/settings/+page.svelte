@@ -357,7 +357,7 @@ function save() {
 			</SettingRow>
 		</SettingsSection>
 
-		<SettingsSection title="Models" description="What the catalogue is allowed to route to, above whatever each model row says.">
+		<SettingsSection title="Models" description="What the catalog is allowed to route to, above whatever each model row says.">
 			<SettingRow
 				label="Models with no published price"
 				description="Four of OpenAI's models publish no price at all. Unpriced is not free, and this decides whether it is spendable."
@@ -373,7 +373,7 @@ function save() {
 				</Select.Root>
 			</SettingRow>
 
-			<SettingRow label="Block deprecated models" description="Refuse any model the catalogue marks deprecated or has delisted upstream." pending="Not wired">
+			<SettingRow label="Block deprecated models" description="Refuse any model the catalog marks deprecated or has delisted upstream." pending="Not wired">
 				<Switch bind:checked={policy.blockDeprecated} />
 			</SettingRow>
 		</SettingsSection>

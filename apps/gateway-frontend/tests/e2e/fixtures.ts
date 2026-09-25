@@ -228,14 +228,13 @@ export const FAILED_TRACE_DETAIL: TraceDetail = {
   ],
 };
 
-export const CATALOGUE: CatalogProvider[] = [
+export const CATALOG: CatalogProvider[] = [
   {
     id: 'openai',
     synced_at: UPDATED_AT,
     models: [
       {
         id: IDS.model,
-        source: 'builtin',
         name: 'gpt-5',
         provider: 'openai',
         display_name: 'GPT-5',
@@ -248,6 +247,8 @@ export const CATALOGUE: CatalogProvider[] = [
         reasoning: true,
         tool_call: true,
         structured_output: true,
+        config: null,
+        tags: null,
         delisted_at: null,
         synced_at: UPDATED_AT,
         created_at: CREATED_AT,
@@ -272,7 +273,7 @@ export function emptySeries(request: RecordedApiRequest): SeriesResponse {
 export function registerEmptyApp(api: ApiMock): void {
   api.get('/api/api-keys/count', { json: { count: 0, estimated: false } });
   api.get('/api/api-keys', { json: { data: [], meta: PAGE_META } });
-  api.get('/api/providers', { json: { data: [] } });
+  api.get('/api/models/providers', { json: { data: [], meta: { oldest_id: null, more_data: false } } });
   api.get('/api/prompts', { json: { data: [], meta: PAGE_META } });
   api.post('/api/internal/actors/resolve', {
     json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },

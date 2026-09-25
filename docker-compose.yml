@@ -45,8 +45,11 @@ services:
       timeout:  5s
       retries:  5
 
+  # MinIO no longer publishes its images - gone from Dockerhub and quay.io now
+  # requires auth... Chainguard seems to wokr here
   minio:
-    image:   quay.io/minio/minio:latest
+    image:   cgr.dev/chainguard/minio:latest
+    user:    "0:0"
     restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
@@ -66,7 +69,7 @@ services:
   # MinIO has no declarative bucket config, so without this the first log write
   # fails against an empty server.
   minio-init:
-    image:      quay.io/minio/mc:latest
+    image:      cgr.dev/chainguard/minio:latest
     depends_on:
       minio:
         condition: service_healthy

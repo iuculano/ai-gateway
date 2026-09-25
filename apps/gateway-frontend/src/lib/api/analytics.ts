@@ -1,4 +1,4 @@
-import type { AnalyticsSeriesResponse } from 'gateway-backend/schemas/analytics';
+import type { InferResponseType } from 'hono/client';
 import { topCallerReferences } from '$lib/data/caller-ranking';
 import { resolveActorNames } from './actors';
 import { client } from './client';
@@ -40,9 +40,5 @@ export async function fetchSeries(request: SeriesRequest) {
   return { ...result, points: result.points.map((point) => ({ ...point, actor_label: actorName(point) })) };
 }
 
-// Taken from the backend's own schema rather than inferred off the client.
-// The RPC client's response type collapses to `never` through the status-code
-// pick, and a chart silently typed as `never` compiles right up until it is
-// read. Same import style as chat-completions.
-export type SeriesResponse = AnalyticsSeriesResponse;
-export type SeriesPoint = AnalyticsSeriesResponse['points'][number];
+export type SeriesResponse = InferResponseType<typeof client.analytics.series.$post, 200>;
+export type SeriesPoint = SeriesResponse['points'][number];

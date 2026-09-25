@@ -35,7 +35,6 @@ const caller = {
       'logs:read',
       'logs:write',
       'models:read',
-      'models:write',
       'webhooks:read',
       'webhooks:write',
     ],
@@ -158,10 +157,8 @@ test('model handlers map MODEL_NOT_FOUND to 404', async () => {
   database.respondTo('select', 'models', rows());
   expect((await request(`/models/${MODEL_ID}`)).status).toBe(404);
 
-  database.respondTo('select', 'models', rows());
   expect((await patch(`/models/${MODEL_ID}`, { name: 'renamed' })).status).toBe(404);
 
-  database.respondTo('delete', 'models', rows());
   expect((await request(`/models/${MODEL_ID}`, { method: 'DELETE' })).status).toBe(404);
 });
 
@@ -174,4 +171,53 @@ test('webhook handlers map WEBHOOK_NOT_FOUND to 404', async () => {
 
   database.respondTo('delete', 'webhooks', rows());
   expect((await request(`/webhooks/${WEBHOOK_ID}`, { method: 'DELETE' })).status).toBe(404);
+});
+
+test('model catalog has no create endpoint', async () => {
+  expect(
+    (
+      await request('/models', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'manual-model', provider: 'openai' }),
+      })
+    ).status,
+  ).toBe(404);
+  expect(database.queriesFor('insert', 'models')).toHaveLength(0);
+});
+
+test('provider catalog is served at /models/providers before the model ID route', async () => {
+  database.respondTo('select', 'models', rows());
+
+  const response = await app.request('/v1/models/providers');
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ data: [], meta: { oldest_id: null, more_data: false } });
+  expect((await app.request('/v1/providers')).status).toBe(404);
+});
+
+test('provider pages trim the probe group and return a provider cursor', async () => {
+  database.respondTo(
+    'select',
+    'models',
+    rows({ id: 'anthropic', synced_at: null, models: [] }, { id: 'openai', synced_at: null, models: [] }),
+  );
+  const response = await app.request('/v1/models/providers?limit=1');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    data: [{ id: 'anthropic', synced_at: null, models: [] }],
+    meta: { oldest_id: 'anthropic', more_data: true },
+  });
+  expect(database.queriesFor('select', 'models')[0]?.calls.find((call) => call.method === 'limit')?.args).toEqual([2]);
+
+  database.respondTo('select', 'models', rows({ id: 'openai', synced_at: null, models: [] }));
+  const next = await app.request('/v1/models/providers?limit=1&after_id=anthropic');
+  expect(next.status).toBe(200);
+  expect(await next.json()).toMatchObject({ meta: { oldest_id: 'openai', more_data: false } });
+});
+
+test.each(['0', '201', '1.5', 'abc'])('invalid provider page limit returns 400: %s', async (limit) => {
+  const response = await app.request(`/v1/models/providers?limit=${limit}`);
+  expect(response.status).toBe(400);
+  expect(database.queriesFor('select', 'models')).toHaveLength(0);
 });

@@ -1,5 +1,5 @@
 import type { SQL } from 'bun';
-import { TEAMS, weightedCatalogue } from './catalogue';
+import { TEAMS, weightedCatalog } from './catalog';
 
 /**
  * Bulk-generates inference log rows.
@@ -147,7 +147,7 @@ const INSERT = `
 -- extract elements from a scalar". Routing through ::text is what makes
 -- postgres parse the contents rather than quote them.
 with
-catalogue as (
+catalog as (
   select
     ord::int                        as pick,
     entry->>'model'                 as model,
@@ -163,7 +163,7 @@ teams as (
 series as (
   select
     $2::timestamptz + ((i * $3::double precision) * interval '1 millisecond') as created_at,
-    (floor(random() * (select count(*) from catalogue)) + 1)::int             as catalogue_pick,
+    (floor(random() * (select count(*) from catalog)) + 1)::int             as catalog_pick,
     (floor(random() * (select count(*) from teams)) + 1)::int                 as team_pick,
     random() as status_roll,
     random() as env_roll,
@@ -196,7 +196,7 @@ shaped as (
     (10 + floor(s.output_roll * s.output_roll * 3000))::int                      as output_tokens,
     (120 + floor(s.latency_roll * s.latency_roll * s.latency_roll * 24000))::int as response_time_ms
   from series s
-  join catalogue c on c.pick = s.catalogue_pick
+  join catalog c on c.pick = s.catalog_pick
   join teams t     on t.pick = s.team_pick
 )
 insert into logs (
@@ -280,7 +280,7 @@ export async function seedLogs(admin: SQL, options: SeedOptions): Promise<void> 
   const stepMilliseconds = windowMilliseconds / count;
   const windowStart = new Date(Date.now() - windowMilliseconds);
 
-  const catalogue = JSON.stringify(weightedCatalogue());
+  const catalog = JSON.stringify(weightedCatalog());
   const teams = JSON.stringify(TEAMS);
 
   for (let first = 0; first < count; first += chunkSize) {
@@ -290,7 +290,7 @@ export async function seedLogs(admin: SQL, options: SeedOptions): Promise<void> 
       organizationId,
       windowStart.toISOString(),
       stepMilliseconds,
-      catalogue,
+      catalog,
       teams,
       first,
       last,

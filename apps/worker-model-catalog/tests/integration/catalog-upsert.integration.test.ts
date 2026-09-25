@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import type { SelectedOffering } from '../../src/worker/catalog-sync';
-import { upsertCatalog } from '../../src/worker/catalog-upsert';
+import { deleteExcludedModels, upsertCatalog } from '../../src/worker/catalog-upsert';
 import { admin, prepareSuite, resetDatabase } from './setup';
 
 const firstSnapshot: SelectedOffering[] = [
@@ -31,9 +31,9 @@ afterAll(async () => {
   await admin.close();
 });
 
-async function readModel(source: string, provider: string, name: string) {
+async function readModel(provider: string, name: string) {
   const [row] = await admin`
-    select * from models where source = ${source} and provider = ${provider} and name = ${name}
+    select * from models where provider = ${provider} and name = ${name}
   `;
 
   return row;
@@ -42,8 +42,7 @@ async function readModel(source: string, provider: string, name: string) {
 test('writes the upstream shape without turning an unknown price into free', async () => {
   expect(await upsertCatalog(firstSnapshot)).toEqual({ written: 3, delisted: 0, confirmed: 3 });
 
-  expect(await readModel('builtin', 'openai', 'gpt-test')).toMatchObject({
-    organization_id: null,
+  expect(await readModel('openai', 'gpt-test')).toMatchObject({
     display_name: 'GPT Test',
     status: 'beta',
     cost_input: '1.250000000000',
@@ -55,32 +54,18 @@ test('writes the upstream shape without turning an unknown price into free', asy
     tool_call: true,
     structured_output: true,
   });
-  expect(await readModel('builtin', 'openai', 'unpriced')).toMatchObject({
+  expect(await readModel('openai', 'unpriced')).toMatchObject({
     cost_input: null,
     cost_output: null,
     cost_cache_read: null,
   });
 });
 
-test('is idempotent, delists only providers present in the snapshot, and leaves custom rows alone', async () => {
-  const [organization] = await admin`
-    insert into organizations (external_id, external_idp, name, slug)
-    values ('catalog-test', 'test-idp', 'Catalog Test', 'catalog-test')
-    returning id
-  `;
-  if (!organization) {
-    throw new Error('Failed to seed the catalog integration test');
-  }
-
-  await admin`
-    insert into models (organization_id, source, provider, name, display_name, tags)
-    values (${organization.id}, 'custom', 'openai', 'gpt-test', 'My Deployment', '{"owner":"operator"}')
-  `;
-
+test('is idempotent, delists only providers present in the snapshot, and preserves providers absent from the snapshot', async () => {
   await upsertCatalog(firstSnapshot);
-  const before = await readModel('builtin', 'openai', 'gpt-test');
+  const before = await readModel('openai', 'gpt-test');
   expect(await upsertCatalog(firstSnapshot)).toEqual({ written: 0, delisted: 0, confirmed: 3 });
-  const unchanged = await readModel('builtin', 'openai', 'gpt-test');
+  const unchanged = await readModel('openai', 'gpt-test');
   expect(unchanged?.updated_at).toEqual(before?.updated_at);
 
   const nextSnapshot: SelectedOffering[] = [
@@ -91,16 +76,22 @@ test('is idempotent, delists only providers present in the snapshot, and leaves 
   ];
   expect(await upsertCatalog(nextSnapshot)).toEqual({ written: 1, delisted: 1, confirmed: 1 });
 
-  expect(await readModel('builtin', 'openai', 'gpt-test')).toMatchObject({
+  expect(await readModel('openai', 'gpt-test')).toMatchObject({
     display_name: 'GPT Test Updated',
     delisted_at: null,
   });
-  expect((await readModel('builtin', 'openai', 'unpriced'))?.delisted_at).toBeInstanceOf(Date);
-  expect((await readModel('builtin', 'azure', 'azure-test'))?.delisted_at).toBeNull();
-  expect(await readModel('custom', 'openai', 'gpt-test')).toMatchObject({
-    display_name: 'My Deployment',
-    tags: { owner: 'operator' },
-    synced_at: null,
-    delisted_at: null,
-  });
+  expect((await readModel('openai', 'unpriced'))?.delisted_at).toBeInstanceOf(Date);
+  expect((await readModel('azure', 'azure-test'))?.delisted_at).toBeNull();
+});
+
+test('whitelist cleanup deletes excluded models, including for an empty whitelist', async () => {
+  await upsertCatalog(firstSnapshot);
+
+  expect(await deleteExcludedModels(['openai'])).toBe(1);
+  expect(await readModel('azure', 'azure-test')).toBeUndefined();
+  expect(await readModel('openai', 'gpt-test')).toBeDefined();
+  expect(await deleteExcludedModels(['openai'])).toBe(0);
+
+  expect(await deleteExcludedModels([])).toBe(2);
+  expect(await readModel('openai', 'gpt-test')).toBeUndefined();
 });

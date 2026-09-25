@@ -6,6 +6,15 @@ const environmentSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'trace']).default('info'),
   WORKER_ENABLED: z.stringbool().default(true),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
+  CATALOG_PROVIDER_WHITELIST: z
+    .string()
+    .default('openai,azure,google,anthropic,openrouter')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((provider) => provider.trim())
+        .filter(Boolean),
+    ),
   CATALOG_SOURCE_URL: z.url().default('https://models.dev/catalog.json'),
   CATALOG_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   POSTGRES_CONNECTION_STRING: z.url(),

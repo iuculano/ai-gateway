@@ -145,7 +145,7 @@ export function fmtCostTotal(dollars: number): string {
 }
 
 /**
- * A catalogue price, in dollars per million tokens.
+ * A catalog price, in dollars per million tokens.
  *
  * null is not zero. An unpublished price and a genuinely free one are different
  * claims, and rendering the first as '$0.00' is how a gateway ends up quietly

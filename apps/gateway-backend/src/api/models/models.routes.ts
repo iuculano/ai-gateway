@@ -56,13 +56,16 @@ const listModels = createRoute({
 
 const listProviders = createRoute({
   method: 'get' as const,
-  path: '/providers',
+  path: '/models/providers',
   security: bearerSecurity,
   middleware: [authorize({ scopes: [SCOPES.modelsRead] })],
+  request: {
+    query: Schemas.listProviders.query,
+  },
   responses: {
     ...validatedProtectedRouteErrors,
     200: {
-      description: 'Catalogue retrieved successfully',
+      description: 'Catalog retrieved successfully',
       content: {
         'application/json': {
           schema: Schemas.listProviders.response,
@@ -72,100 +75,4 @@ const listProviders = createRoute({
   },
 });
 
-const createModel = createRoute({
-  method: 'post' as const,
-  path: '/models',
-  security: bearerSecurity,
-  middleware: [authorize({ scopes: [SCOPES.modelsWrite] })],
-  request: {
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.createModel.body,
-        },
-      },
-    },
-  },
-  responses: {
-    ...validatedProtectedRouteErrors,
-    201: {
-      description: 'Model created successfully',
-      content: {
-        'application/json': {
-          schema: Schemas.createModel.response,
-        },
-      },
-    },
-  },
-});
-
-const updateModel = createRoute({
-  method: 'patch' as const,
-  path: '/models/{id}',
-  security: bearerSecurity,
-  middleware: [authorize({ scopes: [SCOPES.modelsWrite] })],
-  request: {
-    params: Schemas.getModel.params,
-    body: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: Schemas.updateModel.body,
-        },
-      },
-    },
-  },
-  responses: {
-    ...validatedProtectedRouteErrors,
-    200: {
-      description: 'Model updated successfully',
-      content: {
-        'application/json': {
-          schema: Schemas.updateModel.response,
-        },
-      },
-    },
-    404: {
-      description: 'Model not found',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
-  },
-});
-
-const deleteModel = createRoute({
-  method: 'delete' as const,
-  path: '/models/{id}',
-  security: bearerSecurity,
-  middleware: [authorize({ scopes: [SCOPES.modelsWrite] })],
-  request: {
-    params: Schemas.deleteModel.params,
-  },
-  responses: {
-    ...validatedProtectedRouteErrors,
-    204: {
-      description: 'Model deleted successfully',
-    },
-    404: {
-      description: 'Model not found',
-      content: {
-        'application/json': {
-          schema: httpError,
-        },
-      },
-    },
-  },
-});
-
-export default {
-  getModel,
-  listModels,
-  listProviders,
-  createModel,
-  updateModel,
-  deleteModel,
-};
+export default { getModel, listModels, listProviders };

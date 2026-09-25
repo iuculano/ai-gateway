@@ -13,11 +13,11 @@ test('resolves users, API keys and system actors in input order, including dupli
   const result = await Services.resolveActors({
     actors: [user, { actor_type: 'api_key', actor_id: KEY_ID }, { actor_type: 'system', actor_id: null }, user],
   });
-  expect(result.data.map((actor) => actor.display)).toEqual([
-    { name: 'Alex' },
-    { name: 'Deployment' },
-    { name: 'System' },
-    { name: 'Alex' },
+  expect(result.data).toEqual([
+    { ...user, display: { name: 'Alex' } },
+    { actor_type: 'api_key', actor_id: KEY_ID, display: { name: 'Deployment' } },
+    { actor_type: 'system', actor_id: null, display: { name: 'System' } },
+    { ...user, display: { name: 'Alex' } },
   ]);
 });
 
@@ -38,6 +38,7 @@ test('empty batches and system actors resolve without database results', async (
   expect(await Services.resolveActors({ actors: [{ actor_type: 'system', actor_id: null }] })).toEqual({
     data: [{ actor_type: 'system', actor_id: null, display: { name: 'System' } }],
   });
+  expect(database.queries).toHaveLength(0);
 });
 
 test('validation accepts 250 references and rejects 251 or missing non-system IDs', () => {
