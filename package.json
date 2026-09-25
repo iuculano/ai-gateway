@@ -33,7 +33,7 @@
     "cookie": "0.7.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
-    "turbo": "^2.10.12"
+    "@biomejs/biome": "2.5.14",
+    "turbo": "^2.11.2"
   }
 }

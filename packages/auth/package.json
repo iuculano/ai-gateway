@@ -16,9 +16,9 @@
     "@repo/drizzle": "workspace:*",
     "@repo/hono": "workspace:*",
     "@repo/redis": "workspace:*",
-    "hono": "^4.13.7",
+    "hono": "^4.13.8",
     "jose": "^6.2.12",
-    "lru-cache": "^11.5.2"
+    "lru-cache": "^11.5.3"
   },
   "devDependencies": {
     "@repo/test-helpers": "workspace:*",
