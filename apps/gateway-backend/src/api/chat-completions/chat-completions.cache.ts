@@ -7,12 +7,12 @@ import { type LanguageModelMiddleware, simulateReadableStream } from 'ai';
 export function createCacheMiddleware(
   scope: string,
   cache: { hit: boolean },
-  { ttl = 300, refresh = false }: { ttl?: number; refresh?: boolean } = {},
+  options: { ttl?: number; refresh?: boolean } = {},
 ): LanguageModelMiddleware {
   return {
     wrapGenerate: async ({ doGenerate, params }) => {
       const key = createCacheKey('chat-completions:generate:', { scope, params });
-      const cached = refresh ? null : await redis.get(key);
+      const cached = options.refresh ? null : await redis.get(key);
 
       if (cached !== null) {
         cache.hit = true;
@@ -24,13 +24,13 @@ export function createCacheMiddleware(
       }
 
       const result = await doGenerate();
-      await redis.set(key, JSON.stringify(result), { expiration: { type: 'EX', value: ttl } });
+      await redis.set(key, JSON.stringify(result), { expiration: { type: 'EX', value: options.ttl ?? 300 } });
       return result;
     },
 
     wrapStream: async ({ doStream, params }) => {
       const key = createCacheKey('chat-completions:stream:', { scope, params });
-      const cached = refresh ? null : await redis.get(key);
+      const cached = options.refresh ? null : await redis.get(key);
 
       if (cached !== null) {
         cache.hit = true;
@@ -53,7 +53,7 @@ export function createCacheMiddleware(
           controller.enqueue(chunk);
         },
         async flush() {
-          await redis.set(key, JSON.stringify(chunks), { expiration: { type: 'EX', value: ttl } });
+          await redis.set(key, JSON.stringify(chunks), { expiration: { type: 'EX', value: options.ttl ?? 300 } });
         },
       });
 
