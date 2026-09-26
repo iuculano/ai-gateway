@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "drizzle-orm": "^1.0.0-rc.5-5935859",
-    "zod": "^4.6.2"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

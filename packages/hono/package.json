@@ -20,7 +20,7 @@
     "@hono/zod-openapi": "^1.6.3",
     "@repo/core": "workspace:*",
     "@repo/redis": "workspace:*",
-    "hono": "^4.13.7"
+    "hono": "^4.13.8"
   },
   "devDependencies": {
     "@repo/test-helpers": "workspace:*",
