@@ -16,7 +16,7 @@
     "@repo/core": "workspace:*",
     "@repo/drizzle": "workspace:*",
     "@repo/hono": "workspace:*",
-    "hono": "^4.13.8"
+    "hono": "^4.13.9"
   },
   "devDependencies": {
     "@repo/test-helpers": "workspace:*",
