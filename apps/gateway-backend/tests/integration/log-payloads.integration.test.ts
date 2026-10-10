@@ -37,6 +37,7 @@ test('request and response payloads round-trip through MinIO and are deleted wit
   };
 
   const id = await LogServices.startLog(acme.organizationId, {
+    operation: 'chat',
     model: 'integration-model',
     provider: 'test-provider',
     actor_type: 'user',
@@ -81,6 +82,7 @@ test('request and response payloads round-trip through MinIO and are deleted wit
 
 test('payload omission leaves the skipped side undiscoverable and unstored', async () => {
   const id = await LogServices.startLog(acme.organizationId, {
+    operation: 'chat',
     model: 'integration-model',
     provider: 'test-provider',
     actor_type: 'user',
@@ -105,6 +107,7 @@ test('payload omission leaves the skipped side undiscoverable and unstored', asy
 test('a failed inference retains its request but never advertises a response', async () => {
   const request = { model: 'integration-model', messages: [{ role: 'user', content: 'fail' }] };
   const id = await LogServices.startLog(acme.organizationId, {
+    operation: 'chat',
     model: 'integration-model',
     provider: 'test-provider',
     actor_type: 'user',
@@ -125,8 +128,18 @@ test('a failed inference retains its request but never advertises a response', a
 
 test('a batch returns healthy payloads when another referenced object is missing', async () => {
   const actor = { actor_type: 'user', actor_id: acme.userId } as const;
-  const first = await LogServices.startLog(acme.organizationId, { model: 'one', provider: 'test-provider', ...actor });
-  const second = await LogServices.startLog(acme.organizationId, { model: 'two', provider: 'test-provider', ...actor });
+  const first = await LogServices.startLog(acme.organizationId, {
+    operation: 'chat',
+    model: 'one',
+    provider: 'test-provider',
+    ...actor,
+  });
+  const second = await LogServices.startLog(acme.organizationId, {
+    operation: 'chat',
+    model: 'two',
+    provider: 'test-provider',
+    ...actor,
+  });
   await LogServices.completeLog(acme.organizationId, first, {
     request: { value: 'one' },
     response: {},

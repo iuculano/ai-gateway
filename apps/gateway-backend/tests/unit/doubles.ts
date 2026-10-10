@@ -547,6 +547,7 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
   return {
     id: LOG_ID,
     organization_id: ORGANIZATION_ID,
+    operation: 'chat',
     model: 'gpt-4-turbo',
     provider: 'openai',
     trace_id: null,

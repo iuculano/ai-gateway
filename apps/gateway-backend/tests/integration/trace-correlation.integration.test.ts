@@ -21,6 +21,7 @@ function openCorrelatedLog(tenant: Tenant, spanId: string): Promise<string> {
     callerFor(tenant),
     () =>
       LogServices.startLog(tenant.organizationId, {
+        operation: 'chat',
         model: 'integration-model',
         provider: 'test-provider',
         actor_type: 'user',
