@@ -82,6 +82,7 @@ export const PROMPT_VERSION: PromptVersion = {
 
 export const SUCCESS_LOG: Log = {
   id: IDS.successLog,
+  operation: 'chat',
   model: 'gpt-5',
   provider: 'openai',
 
