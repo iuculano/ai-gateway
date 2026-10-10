@@ -7,20 +7,15 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createCacheKey, type Logger, parseTags } from '@repo/core';
 import { getActorId, getCaller, getLogger } from '@repo/hono';
 import {
-  APICallError,
   type CallSettings,
   type FinishReason,
   generateText,
-  InvalidArgumentError,
-  InvalidMessageRoleError,
-  InvalidPromptError,
   type JSONSchema7,
   type JSONValue,
   jsonSchema,
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
-  RetryError,
   streamText,
   type ToolChoice,
   type ToolSet,
@@ -29,9 +24,14 @@ import {
 } from 'ai';
 import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
+import {
+  type ModelResolutionFailure,
+  type ProviderFailure,
+  resolveModel as resolveCatalogModel,
+  toProviderFailure,
+} from '../../lib/ai-sdk-providers';
 import LogsService from '../logs/logs.services';
 import type { GetModelResponse } from '../models/models.schemas';
-import ModelsService from '../models/models.services';
 import WebhookServices from '../webhooks/webhooks.services';
 import { createCacheMiddleware } from './chat-completions.cache';
 import type {
@@ -69,17 +69,6 @@ interface ResolvedModel {
 }
 
 // The underlying error definitions.
-type ModelNotFoundFailure = {
-  code: 'MODEL_NOT_FOUND';
-  model: string;
-};
-
-type UnsupportedModelProviderFailure = {
-  code: 'UNSUPPORTED_MODEL_PROVIDER';
-  model: string;
-  provider: string;
-};
-
 type UnknownToolCallFailure = {
   code: 'UNKNOWN_TOOL_CALL';
   tool_call_id: string;
@@ -103,82 +92,38 @@ type WebhookNotFoundFailure = {
   id: string;
 };
 
-type ProviderInvalidRequestFailure = {
-  code: 'PROVIDER_INVALID_REQUEST';
-  message: string;
-  cause: unknown;
-};
-
-type ProviderRejectedRequestFailure = {
-  code: 'PROVIDER_REJECTED_REQUEST';
-  status: number;
-  message: string;
-  cause: unknown;
-};
-
-type ProviderFailedFailure = {
-  code: 'PROVIDER_FAILED';
-  message: string;
-  cause: unknown;
-};
-
-type ProviderTimeoutFailure = {
-  code: 'PROVIDER_TIMEOUT';
-  cause: unknown;
-};
-
-type RoutingFailure = {
-  code: 'INVALID_MODEL_ROUTING';
-  message: string;
-};
-
 // The public service failure unions.
 export type CreateChatCompletionFailure =
-  | RoutingFailure
-  | ModelNotFoundFailure
-  | UnsupportedModelProviderFailure
+  | ModelResolutionFailure
   | UnknownToolCallFailure
   | UnsupportedResponseFormatFailure
   | TopLogprobsRequiresLogprobsFailure
   | WebhookLogUnavailableFailure
   | WebhookNotFoundFailure
-  | ProviderInvalidRequestFailure
-  | ProviderRejectedRequestFailure
-  | ProviderFailedFailure
-  | ProviderTimeoutFailure;
+  | ProviderFailure;
 
 export type StreamChatCompletionFailure = CreateChatCompletionFailure;
-
-type ProviderFailure =
-  | ProviderInvalidRequestFailure
-  | ProviderRejectedRequestFailure
-  | ProviderFailedFailure
-  | ProviderTimeoutFailure;
 
 /** Selects a catalog model and creates or reuses its provider instance. */
 async function resolveModel(
   requestedModels: string,
   headers: ChatCompletionHeaders,
-): Promise<Result<ResolvedModel, RoutingFailure | ModelNotFoundFailure | UnsupportedModelProviderFailure>> {
-  const selected = await ModelsService.validateAndOrderModels(requestedModels, {
+): Promise<Result<ResolvedModel, ModelResolutionFailure>> {
+  const resolved = await resolveCatalogModel(requestedModels, {
     strategy: headers['ai-routing-strategy'],
     weights: headers['ai-routing-weights'],
   });
-  if (!selected) {
-    return err({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
-  }
-  const model = selected[0] as string;
-  const apiKey = headers['ai-api-key'];
-  const baseUrl = headers['ai-base-url'];
-  const registered = await ModelsService.getModelBySlug(model);
-  if (registered.isErr()) {
-    return err({ code: 'MODEL_NOT_FOUND', model });
+  if (resolved.isErr()) {
+    return err(resolved.error);
   }
 
-  const info = registered.value;
+  const info = resolved.value;
   if (!isProvider(info.provider)) {
-    return err({ code: 'UNSUPPORTED_MODEL_PROVIDER', model, provider: info.provider });
+    return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
+
+  const apiKey = headers['ai-api-key'];
+  const baseUrl = headers['ai-base-url'];
 
   const provider = info.provider;
   const modelId = info.name;
@@ -233,7 +178,7 @@ function flattenText(content: string | Array<{ type: 'text'; text: string }>): s
  * @returns
  * The equivalent SDK messages.
  */
-function toModelMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[], UnknownToolCallFailure> {
+function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[], UnknownToolCallFailure> {
   const toolNamesByCallId = new Map<string, string>();
   const converted: ModelMessage[] = [];
 
@@ -341,7 +286,10 @@ function checkSupported(
  * @param headers
  * The gateway headers, which carry the retry and timeout overrides.
  */
-function toCallSettings(body: ChatCompletionBody, headers: ChatCompletionHeaders): CallSettings & { timeout?: number } {
+function toSdkCallSettings(
+  body: ChatCompletionBody,
+  headers: ChatCompletionHeaders,
+): CallSettings & { timeout?: number } {
   // max_completion_tokens supersedes max_tokens upstream, so it wins here too.
   const maxOutputTokens = body.max_completion_tokens ?? body.max_tokens;
   const stopSequences = body.stop == null ? undefined : typeof body.stop === 'string' ? [body.stop] : body.stop;
@@ -366,7 +314,7 @@ function toCallSettings(body: ChatCompletionBody, headers: ChatCompletionHeaders
  * @param body
  * The validated request body.
  */
-function toProviderOptions(body: ChatCompletionBody): Record<string, Record<string, JSONValue>> | undefined {
+function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<string, JSONValue>> | undefined {
   const options: Record<string, JSONValue> = {
     ...(body.logit_bias != null ? { logitBias: body.logit_bias } : {}),
     ...(body.parallel_tool_calls != null ? { parallelToolCalls: body.parallel_tool_calls } : {}),
@@ -400,7 +348,7 @@ function toProviderOptions(body: ChatCompletionBody): Record<string, Record<stri
  * @param body
  * The validated request body.
  */
-function toTools(body: ChatCompletionBody): ToolSet | undefined {
+function toSdkTools(body: ChatCompletionBody): ToolSet | undefined {
   if (!body.tools?.length) {
     return undefined;
   }
@@ -416,7 +364,7 @@ function toTools(body: ChatCompletionBody): ToolSet | undefined {
   return tools;
 }
 
-function toToolChoice(body: ChatCompletionBody): ToolChoice<ToolSet> | undefined {
+function toSdkToolChoice(body: ChatCompletionBody): ToolChoice<ToolSet> | undefined {
   if (body.tool_choice == null) {
     return undefined;
   }
@@ -429,7 +377,7 @@ function toToolChoice(body: ChatCompletionBody): ToolChoice<ToolSet> | undefined
 }
 
 /** SDK finish reasons without an OpenAI equivalent map to stop. */
-function mapFinishReason(reason: FinishReason): ChatCompletionFinishReason {
+function toOpenAIFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   switch (reason) {
     case 'length':
       return 'length';
@@ -445,7 +393,7 @@ function mapFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   }
 }
 
-function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
+function toOpenAIUsage(usage: LanguageModelUsage): ChatCompletionUsage {
   const promptTokens = usage.inputTokens ?? 0;
   const completionTokens = usage.outputTokens ?? 0;
 
@@ -459,43 +407,6 @@ function toUsage(usage: LanguageModelUsage): ChatCompletionUsage {
     ...(cachedTokens != null ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
     ...(reasoningTokens != null ? { completion_tokens_details: { reasoning_tokens: reasoningTokens } } : {}),
   };
-}
-
-function toProviderFailure(error: unknown): ProviderFailure {
-  // RetryError hides the provider error that determines the response status.
-  if (RetryError.isInstance(error)) {
-    // An abort represents the caller's timeout rather than a provider response.
-    if (error.reason === 'abort') {
-      return { code: 'PROVIDER_TIMEOUT', cause: error };
-    }
-
-    return toProviderFailure(error.lastError);
-  }
-
-  // These SDK errors identify request problems before an upstream response exists.
-  if (
-    InvalidPromptError.isInstance(error) ||
-    InvalidMessageRoleError.isInstance(error) ||
-    InvalidArgumentError.isInstance(error)
-  ) {
-    return { code: 'PROVIDER_INVALID_REQUEST', message: error.message, cause: error };
-  }
-
-  if (APICallError.isInstance(error)) {
-    const status = error.statusCode;
-
-    if (status != null && status >= 400 && status < 500) {
-      return { code: 'PROVIDER_REJECTED_REQUEST', status, message: error.message, cause: error };
-    }
-
-    return { code: 'PROVIDER_FAILED', message: error.message, cause: error };
-  }
-
-  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-    return { code: 'PROVIDER_TIMEOUT', cause: error };
-  }
-
-  return { code: 'PROVIDER_FAILED', message: 'Upstream provider call failed', cause: error };
 }
 
 /** Captures request context for streaming continuations. */
@@ -517,6 +428,7 @@ async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Pr
 
   try {
     const id = await LogsService.startLog(organizationId, {
+      operation: 'chat',
       model: model.modelId,
       provider: model.provider,
       tags: tags,
@@ -673,14 +585,14 @@ async function createChatCompletion(
     return err(resolved.error);
   }
 
-  const messages = toModelMessages(body.messages);
+  const messages = toSdkMessages(body.messages);
   if (messages.isErr()) {
     return err(messages.error);
   }
 
   const model = resolved.value;
-  const tools = toTools(body);
-  const providerOptions = toProviderOptions(body);
+  const tools = toSdkTools(body);
+  const providerOptions = toSdkProviderOptions(body);
 
   const log = await openLog(headers, model);
   if (log) {
@@ -705,8 +617,8 @@ async function createChatCompletion(
       // Preserve caller message order instead of hoisting system messages into instructions.
       allowSystemInMessages: true,
 
-      ...toCallSettings(body, headers),
-      ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
+      ...toSdkCallSettings(body, headers),
+      ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
       ...(providerOptions ? { providerOptions } : {}),
     });
   } catch (error) {
@@ -741,10 +653,10 @@ async function createChatCompletion(
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         },
         logprobs: null,
-        finish_reason: mapFinishReason(result.finishReason),
+        finish_reason: toOpenAIFinishReason(result.finishReason),
       },
     ],
-    usage: toUsage(result.totalUsage),
+    usage: toOpenAIUsage(result.totalUsage),
   };
 
   await closeLog(log, headers, body, completion, model.info, responseTimeMs, cache.hit);
@@ -781,15 +693,15 @@ async function* streamChatCompletion(
     return;
   }
 
-  const messages = toModelMessages(body.messages);
+  const messages = toSdkMessages(body.messages);
   if (messages.isErr()) {
     yield err(messages.error);
     return;
   }
 
   const model = resolved.value;
-  const tools = toTools(body);
-  const providerOptions = toProviderOptions(body);
+  const tools = toSdkTools(body);
+  const providerOptions = toSdkProviderOptions(body);
 
   const log = await openLog(headers, model);
   if (log) {
@@ -817,8 +729,8 @@ async function* streamChatCompletion(
       // Preserve caller message order instead of hoisting system messages into instructions.
       allowSystemInMessages: true,
 
-      ...toCallSettings(body, headers),
-      ...(tools ? { tools: tools, toolChoice: toToolChoice(body) } : {}),
+      ...toSdkCallSettings(body, headers),
+      ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
       ...(providerOptions ? { providerOptions } : {}),
 
       // Surface SDK stream failures instead of ending the response silently.
@@ -913,8 +825,8 @@ async function* streamChatCompletion(
       }
 
       case 'finish':
-        finishReason = mapFinishReason(part.finishReason);
-        usage = toUsage(part.totalUsage);
+        finishReason = toOpenAIFinishReason(part.finishReason);
+        usage = toOpenAIUsage(part.totalUsage);
         break;
 
       case 'error': {

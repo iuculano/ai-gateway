@@ -5,6 +5,7 @@ import { consumeFixedWindowCounter } from '@repo/redis';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import type { Result } from 'neverthrow';
+import { toProviderHttpException } from '../../lib/ai-sdk-providers';
 import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
 import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from './chat-completions.schemas';
@@ -128,19 +129,6 @@ function toChatCompletionHttpException(
   const { code } = failure;
 
   switch (code) {
-    case 'INVALID_MODEL_ROUTING':
-      return new HTTPException(400, { message: failure.message });
-
-    case 'MODEL_NOT_FOUND':
-      return new HTTPException(404, {
-        message: `Model '${failure.model}' is not registered in the catalog`,
-      });
-
-    case 'UNSUPPORTED_MODEL_PROVIDER':
-      return new HTTPException(400, {
-        message: `Model '${failure.model}' uses unsupported provider '${failure.provider}'`,
-      });
-
     case 'UNKNOWN_TOOL_CALL':
       return new HTTPException(400, {
         message:
@@ -168,37 +156,14 @@ function toChatCompletionHttpException(
         message: `No webhook with id '${failure.id}'`,
       });
 
+    case 'MODEL_INVALID_ROUTING':
+    case 'MODEL_NOT_FOUND':
+    case 'MODEL_UNSUPPORTED_PROVIDER':
     case 'PROVIDER_INVALID_REQUEST':
-      return new HTTPException(400, {
-        message: failure.message,
-        cause: failure.cause,
-      });
-
     case 'PROVIDER_REJECTED_REQUEST':
-      return new HTTPException(failure.status as 400, {
-        // Authentication errors can echo the supplied secret and provider URLs.
-        message:
-          failure.status === 401
-            ? 'Invalid provider API key. Check your credentials and try again.'
-            : `Upstream provider rejected the request: ${failure.message}`,
-        cause: failure.status === 401 ? undefined : failure.cause,
-        res: new Response(null, { headers: { 'ai-error-source': 'upstream' } }),
-      });
-
     case 'PROVIDER_FAILED':
-      return new HTTPException(502, {
-        message:
-          failure.message === 'Upstream provider call failed'
-            ? failure.message
-            : `Upstream provider failed: ${failure.message}`,
-        cause: failure.cause,
-      });
-
     case 'PROVIDER_TIMEOUT':
-      return new HTTPException(504, {
-        message: 'Upstream provider timed out',
-        cause: failure.cause,
-      });
+      return toProviderHttpException(failure);
 
     default:
       return assertNever(code);
