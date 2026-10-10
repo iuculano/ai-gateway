@@ -4,6 +4,8 @@ import analyticsHandlers from './api/analytics/analytics.handlers';
 import apiKeyHandlers from './api/api-keys/api-keys.handlers';
 import auditLogHandlers from './api/audit-logs/audit-logs.handlers';
 import chatCompletionHandlers from './api/chat-completions/chat-completions.handlers';
+import decisionHandlers from './api/decisions/decisions.handlers';
+import embeddingHandlers from './api/embeddings/embeddings.handlers';
 import guardrailHandlers from './api/guardrails/guardrails.handlers';
 import healthHandlers from './api/health/health.handlers';
 import logHandlers from './api/logs/logs.handlers';
@@ -26,6 +28,8 @@ export const apiRoutes = new OpenAPIHono()
   .route('/', apiKeyHandlers)
   .route('/', auditLogHandlers)
   .route('/', chatCompletionHandlers)
+  .route('/', decisionHandlers)
+  .route('/', embeddingHandlers)
   .route('/', guardrailHandlers)
   .route('/', logHandlers)
   .route('/', modelHandlers)
