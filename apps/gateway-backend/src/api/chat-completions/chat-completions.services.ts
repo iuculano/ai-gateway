@@ -109,7 +109,7 @@ async function resolveModel(
   requestedModels: string,
   headers: ChatCompletionHeaders,
 ): Promise<Result<ResolvedModel, ModelResolutionFailure>> {
-  const resolved = await resolveCatalogModel(requestedModels, {
+  const resolved = await resolveCatalogModel(requestedModels, 'chat', {
     strategy: headers['ai-routing-strategy'],
     weights: headers['ai-routing-weights'],
   });

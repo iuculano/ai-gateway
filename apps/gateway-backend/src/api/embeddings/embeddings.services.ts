@@ -59,7 +59,7 @@ async function createEmbedding(
   headers: EmbeddingHeaders,
   body: EmbeddingBody,
 ): Promise<Result<EmbeddingList, CreateEmbeddingFailure>> {
-  const resolved = await resolveModel(body.model, {
+  const resolved = await resolveModel(body.model, 'embedding', {
     strategy: headers['ai-routing-strategy'],
     weights: headers['ai-routing-weights'],
   });

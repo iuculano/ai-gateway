@@ -105,6 +105,7 @@ async function listModels(query: ListModelsRequest): Promise<ListModelsResponse>
   const conditions = [
     query.name ? eq(models.name, query.name) : undefined,
     query.provider ? eq(models.provider, query.provider) : undefined,
+    query.type ? eq(models.type, query.type) : undefined,
     query.after_id ? lt(models.id, query.after_id) : undefined,
   ];
 

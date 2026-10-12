@@ -158,7 +158,7 @@ async function createDecision(
   headers: CreateDecisionHeaders,
   body: CreateDecisionBody,
 ): Promise<Result<CreateDecisionResponse, CreateDecisionFailure>> {
-  const resolved = await resolveModel(body.model, {
+  const resolved = await resolveModel(body.model, 'decision', {
     strategy: headers['ai-routing-strategy'],
     weights: headers['ai-routing-weights'],
   });
@@ -226,6 +226,7 @@ async function createDecision(
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     ...(info.cost_input != null ? { input_cost: (inputTokens * info.cost_input) / 1_000_000 } : {}),
+    ...(info.cost_output != null ? { output_cost: (outputTokens * info.cost_output) / 1_000_000 } : {}),
     response_time_ms: Math.round(responseTimeMs),
   });
 
