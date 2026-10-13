@@ -96,7 +96,11 @@ function body(overrides: Partial<EmbeddingBody> = {}): EmbeddingBody {
 
 beforeEach(() => {
   resetDoubles();
-  database.defaultResponse('select', 'models', rows(modelRow({ name: 'test-embedding', cost_input: 0.02 })));
+  database.defaultResponse(
+    'select',
+    'models',
+    rows(modelRow({ name: 'test-embedding', type: 'embedding', cost_input: 0.02 })),
+  );
   logWrites.installDefaults();
   aiState.reset();
   httpCaller.permissions = { scopes: ['embeddings:write'] };
@@ -157,7 +161,11 @@ test('base64 encoding returns little-endian float32 bytes', async () => {
 });
 
 test('a provider with no embedding models is refused before any log is opened', async () => {
-  database.respondTo('select', 'models', rows(modelRow({ provider: 'anthropic', name: 'claude-embed' })));
+  database.respondTo(
+    'select',
+    'models',
+    rows(modelRow({ provider: 'anthropic', name: 'claude-embed', type: 'embedding' })),
+  );
 
   const failure = expectErr(
     await withCaller(() => Services.createEmbedding(headers(), body({ model: 'anthropic/claude-embed' }))),

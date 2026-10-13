@@ -6,6 +6,7 @@ import { admin, prepareSuite, resetDatabase } from './setup';
 const firstSnapshot: SelectedOffering[] = [
   {
     provider: 'openai',
+    type: 'chat',
     offering: {
       id: 'gpt-test',
       name: 'GPT Test',
@@ -19,8 +20,8 @@ const firstSnapshot: SelectedOffering[] = [
       description: 'Catalog-owned description',
     },
   },
-  { provider: 'openai', offering: { id: 'unpriced' } },
-  { provider: 'azure', offering: { id: 'azure-test', cost: { input: 2, output: 8 } } },
+  { provider: 'openai', type: 'chat', offering: { id: 'unpriced' } },
+  { provider: 'azure', type: 'chat', offering: { id: 'azure-test', cost: { input: 2, output: 8 } } },
 ];
 
 beforeAll(prepareSuite);
@@ -31,9 +32,9 @@ afterAll(async () => {
   await admin.close();
 });
 
-async function readModel(provider: string, name: string) {
+async function readModel(provider: string, name: string, type = 'chat') {
   const [row] = await admin`
-    select * from models where provider = ${provider} and name = ${name}
+    select * from models where provider = ${provider} and name = ${name} and type = ${type}
   `;
 
   return row;
@@ -71,6 +72,7 @@ test('is idempotent, delists only providers present in the snapshot, and preserv
   const nextSnapshot: SelectedOffering[] = [
     {
       provider: 'openai',
+      type: 'chat',
       offering: { ...firstSnapshot[0]?.offering, id: 'gpt-test', name: 'GPT Test Updated' },
     },
   ];
@@ -94,4 +96,35 @@ test('whitelist cleanup deletes excluded models, including for an empty whitelis
 
   expect(await deleteExcludedModels([])).toBe(2);
   expect(await readModel('openai', 'gpt-test')).toBeUndefined();
+});
+
+test('a model sold through two endpoints is two rows, and each is delisted on its own', async () => {
+  const luna = { id: 'gpt-6-luna', cost: { input: 0.1, output: 0.5 } };
+  const both: SelectedOffering[] = [
+    { provider: 'openai', type: 'chat', offering: luna },
+    { provider: 'openai', type: 'decision', offering: { ...luna, cost: { input: 0.1, output: 0 } } },
+  ];
+
+  expect(await upsertCatalog(both)).toEqual({ written: 2, delisted: 0, confirmed: 2 });
+  expect(Number((await readModel('openai', 'gpt-6-luna', 'decision'))?.cost_output)).toBe(0);
+
+  // Only decision rows in this snapshot: the chat row is out of scope, not missing.
+  expect(await upsertCatalog([{ provider: 'openai', type: 'decision', offering: { id: 'other' } }])).toMatchObject({
+    delisted: 1,
+  });
+  expect((await readModel('openai', 'gpt-6-luna', 'decision'))?.delisted_at).toBeInstanceOf(Date);
+  expect((await readModel('openai', 'gpt-6-luna', 'chat'))?.delisted_at).toBeNull();
+});
+
+test('a redirect is stored and survives a resync', async () => {
+  const redirect: SelectedOffering = {
+    provider: 'typesafe-ai',
+    type: 'decision',
+    offering: { id: 'jev-latest' },
+    redirect_to: 'jev',
+  };
+
+  await upsertCatalog([redirect]);
+  expect(await upsertCatalog([redirect])).toMatchObject({ written: 0 });
+  expect((await readModel('typesafe-ai', 'jev-latest', 'decision'))?.redirect_to).toBe('jev');
 });

@@ -159,7 +159,7 @@ beforeEach(() => {
   database.defaultResponse(
     'select',
     'models',
-    rows(modelRow({ name: 'gpt-6-luna', cost_input: 0.1, cost_output: 0.5 })),
+    rows(modelRow({ name: 'gpt-6-luna', type: 'decision', cost_input: 0.1, cost_output: 0 })),
   );
   logWrites.installDefaults();
   decisionState.reset();
@@ -196,13 +196,12 @@ test('questions are translated for the SDK and answers come back in the OpenAI s
   });
 });
 
-test('only input tokens are billed, whatever the catalog output price is', async () => {
+test('costs come from the decision row, which prices output as free', async () => {
   await withCaller(() => Services.createDecision(headers(), body()));
 
   const entry = logWrites.completed[0]?.entry;
-  expect(entry).toMatchObject({ input_tokens: 60, output_tokens: 12 });
+  expect(entry).toMatchObject({ input_tokens: 60, output_tokens: 12, output_cost: 0 });
   expect(entry?.input_cost).toBeCloseTo(0.000006, 15);
-  expect(entry).not.toHaveProperty('output_cost');
 });
 
 test('a refused question comes back as a refusal alongside the other answers', async () => {

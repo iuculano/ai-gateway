@@ -14,7 +14,7 @@ const actualDrizzle = await import('@repo/drizzle');
 // catalog-sync slice.
 mock.module('@repo/drizzle', () => ({ ...actualDrizzle, db }));
 
-const { tickModelCatalog } = await import('../../src/worker/catalog-sync');
+const { selectOfferings, tickModelCatalog, toModelType } = await import('../../src/worker/catalog-sync');
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
@@ -57,6 +57,7 @@ test('writes only whitelisted providers in a changed catalog and reuses its ETag
     rows(),
     rows(),
     rows(),
+    rows(),
     rows({ id: 'openai/gpt-test' }),
   );
 
@@ -75,16 +76,21 @@ test('writes only whitelisted providers in a changed catalog and reuses its ETag
     expect.objectContaining({ provider: 'anthropic', name: 'claude', cost_input: null }),
     expect.objectContaining({ provider: 'openrouter', name: 'anthropic/claude', cost_input: null }),
     expect.objectContaining({ provider: 'additional-provider', name: 'additional' }),
+    expect.objectContaining({ provider: 'openai', name: 'gpt-6-luna', type: 'decision', cost_output: 0 }),
   ]);
   expect(database.queriesFor('delete', 'models')).toHaveLength(2);
-  expect(database.queries).toHaveLength(10);
+  // One delist per provider and type, then one confirmation.
+  expect(database.queriesFor('update', 'models')).toHaveLength(8);
+  expect(database.queries).toHaveLength(11);
   expect(requests[0]?.headers).toEqual({});
   expect(requests[1]?.headers).toEqual({ 'if-none-match': '"catalog-revision-1"' });
 });
 
-test('a snapshot containing only excluded providers still deletes excluded models', async () => {
+test('a snapshot containing only excluded providers still deletes excluded models and writes only the overlay', async () => {
   database.reset();
   database.respondTo('delete', 'models', rows({ id: 'excluded' }));
+  database.respondTo('insert', 'models', rows());
+  database.respondTo('update', 'models', rows(), rows());
   globalThis.fetch = mock(async () =>
     Response.json({
       providers: { unsupported: { id: 'unsupported', models: { unknown: { id: 'unknown' } } } },
@@ -95,5 +101,37 @@ test('a snapshot containing only excluded providers still deletes excluded model
   await tickModelCatalog();
 
   expect(database.queriesFor('delete', 'models')).toHaveLength(1);
-  expect(database.queriesFor('insert', 'models')).toHaveLength(0);
+  const insert = database.queriesFor('insert', 'models')[0];
+  expect(insert?.calls.find((call) => call.method === 'values')?.args[0]).toEqual([
+    expect.objectContaining({ provider: 'openai', name: 'gpt-6-luna', type: 'decision' }),
+  ]);
+});
+
+test.each([
+  [{ id: 'gpt-5' }, 'chat'],
+  [{ id: 'text-embedding-3-small' }, 'embedding'],
+  [{ id: 'gemini-Embedding-001' }, 'embedding'],
+  [{ id: 'bge-m3', type: 'embedding' }, 'embedding'],
+  [{ id: 'bge-reranker-v2-m3', type: 'reranking' }, null],
+])('%o is typed %p', (offering, type) => {
+  expect(toModelType(offering)).toBe(type as ReturnType<typeof toModelType>);
+});
+
+test('the overlay adds a decision row beside the chat row of the same name, and unserved types are dropped', () => {
+  const selected = selectOfferings({
+    providers: {
+      openai: {
+        id: 'openai',
+        models: {
+          'gpt-6-luna': { id: 'gpt-6-luna', cost: { input: 0.1, output: 0.5 } },
+          reranker: { id: 'reranker', type: 'reranking' },
+        },
+      },
+    },
+  });
+
+  expect(selected.map((item) => `${item.provider}/${item.type}/${item.offering.id}`)).toEqual([
+    'openai/chat/gpt-6-luna',
+    'openai/decision/gpt-6-luna',
+  ]);
 });

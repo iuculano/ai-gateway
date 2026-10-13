@@ -517,6 +517,8 @@ export function modelRow(overrides: RowOverrides<typeof models.$inferSelect> = {
     id: MODEL_ID,
     name: 'gpt-4-turbo',
     provider: 'openai',
+    type: 'chat',
+    redirect_to: null,
     display_name: 'GPT-4 Turbo',
     status: 'available',
     cost_input: 0.00001,
