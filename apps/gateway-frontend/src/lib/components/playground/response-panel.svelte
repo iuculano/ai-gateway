@@ -55,7 +55,7 @@ let {
    * mode puts its model selector here.
    *
    * When supplied, the view controls move to a row of their own underneath. In
-   * a 300px column a selector, two tabs and a copy button do not share 42px,
+   * a 300px column a selector, two tabs and a copy button do not share 48px,
    * and the alternative was dropping one of them.
    */
   header?: Snippet;
