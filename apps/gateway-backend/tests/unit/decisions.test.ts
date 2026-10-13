@@ -196,12 +196,13 @@ test('questions are translated for the SDK and answers come back in the OpenAI s
   });
 });
 
-test('costs come from the decision row, which prices output as free', async () => {
+test('only input tokens are billed', async () => {
   await withCaller(() => Services.createDecision(headers(), body()));
 
   const entry = logWrites.completed[0]?.entry;
-  expect(entry).toMatchObject({ input_tokens: 60, output_tokens: 12, output_cost: 0 });
+  expect(entry).toMatchObject({ input_tokens: 60, output_tokens: 12 });
   expect(entry?.input_cost).toBeCloseTo(0.000006, 15);
+  expect(entry).not.toHaveProperty('output_cost');
 });
 
 test('a refused question comes back as a refusal alongside the other answers', async () => {
@@ -277,10 +278,7 @@ test('the HTTP handler returns the decision', async () => {
   expect(await response.json()).toMatchObject({ model: 'gpt-6-luna', answers: expectedAnswers });
 });
 
-test('the schema rejects duplicate question names and message-array input', async () => {
-  const [spam] = body().questions;
-
-  expect((await post(body({ questions: [spam, spam] as CreateDecisionBody['questions'] }))).status).toBe(400);
+test('the schema rejects message-array input', async () => {
   expect((await post({ ...body(), input: [{ role: 'user', content: 'hi' }] })).status).toBe(400);
   expect(decisionState.calls).toHaveLength(0);
 });

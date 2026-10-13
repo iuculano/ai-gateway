@@ -23,7 +23,7 @@ const responseHeaders = z.object({
 
 const body = z.object({
   model: z.string().min(1), // This is a little special here and can be 'provider/model' instead...
-  input: z.union([z.string(), z.array(z.string()).min(1).max(2048)]),
+  input: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(2048)]),
   dimensions: z.number().int().positive().nullish(),
   encoding_format: z.enum(['float', 'base64']).nullish(),
   user: z.string().nullish(),

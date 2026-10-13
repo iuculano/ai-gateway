@@ -220,3 +220,15 @@ test('the HTTP handler requires the embeddings:write scope', async () => {
   expect(aiState.calls).toHaveLength(0);
   expect(Object.keys(objects.stored)).toHaveLength(0);
 });
+
+test.each([[''], [['first', '']]])('an empty input %p is a 400 before any provider call', async (input) => {
+  const response = await app.request('/v1/embeddings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'ai-api-key': 'upstream-secret' },
+    body: JSON.stringify(body({ input })),
+  });
+
+  expect(response.status).toBe(400);
+  expect(aiState.calls).toHaveLength(0);
+  expect(logWrites.started).toHaveLength(0);
+});
