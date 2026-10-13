@@ -27,7 +27,9 @@ let {
      exactly as they did under block layout when nothing asks. -->
 <div class="flex flex-col overflow-hidden rounded-[9px] border border-line bg-surface-2">
 	{#if title || header || actions}
-		<div class="flex min-h-[42px] items-center justify-between gap-3 border-b border-line py-2 pr-2.5 pl-3">
+		<!-- 48px fits a 32px control plus padding, so a header with tabs or
+		     buttons is the same height as one with only a title. -->
+		<div class="flex min-h-12 items-center justify-between gap-3 border-b border-line py-2 pr-2.5 pl-3">
 			{#if header}
 				{@render header()}
 			{:else}
