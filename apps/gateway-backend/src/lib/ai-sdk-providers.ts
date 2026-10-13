@@ -1,5 +1,6 @@
 import { STATUS_CODES } from 'node:http';
 import { assertNever } from '@repo/core';
+import type { ModelType } from '@repo/drizzle/schemas';
 import { APICallError, InvalidArgumentError, InvalidMessageRoleError, InvalidPromptError, RetryError } from 'ai';
 import { HTTPException } from 'hono/http-exception';
 import { err, ok, type Result } from 'neverthrow';
@@ -62,6 +63,9 @@ export type ProviderFailure =
  * @param requested
  * The request's model field: one 'provider/model' slug, or several to route between.
  *
+ * @param type
+ * The endpoint asking. A slug with no catalog row of this type is not found.
+ *
  * @param routing
  * The routing strategy and weights from the gateway headers.
  *
@@ -70,15 +74,16 @@ export type ProviderFailure =
  */
 export async function resolveModel(
   requested: string,
+  type: ModelType,
   routing: ModelRoutingOptions,
 ): Promise<Result<GetModelResponse, ModelRoutingFailure | ModelNotFoundFailure>> {
-  const selected = await ModelsService.validateAndOrderModels(requested, routing);
+  const selected = await ModelsService.validateAndOrderModels(requested, type, routing);
   if (!selected) {
     return err({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
   }
 
   const model = selected[0] as string;
-  const registered = await ModelsService.getModelBySlug(model);
+  const registered = await ModelsService.getModelBySlug(model, type);
   if (registered.isErr()) {
     return err({ code: 'MODEL_NOT_FOUND', model });
   }

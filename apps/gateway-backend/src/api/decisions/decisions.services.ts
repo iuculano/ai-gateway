@@ -38,6 +38,10 @@ function createModel(info: GetModelResponse, headers: CreateDecisionHeaders): De
     case 'typesafe-ai':
       return createTypeSafeAi(config).decisionModel(info.name);
 
+    // seemingly unsupported
+    // case 'openrouter':
+    //   return createOpenRouter(config).decisionModel(info.name);
+
     default:
       return undefined;
   }
@@ -226,7 +230,6 @@ async function createDecision(
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     ...(info.cost_input != null ? { input_cost: (inputTokens * info.cost_input) / 1_000_000 } : {}),
-    ...(info.cost_output != null ? { output_cost: (outputTokens * info.cost_output) / 1_000_000 } : {}),
     response_time_ms: Math.round(responseTimeMs),
   });
 
