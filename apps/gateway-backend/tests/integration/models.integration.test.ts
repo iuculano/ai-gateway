@@ -46,7 +46,7 @@ test('slug lookups preserve upstream namespaces', async () => {
   const created = await seedModel({ provider: 'openrouter', name: 'anthropic/claude-sonnet-4' });
   await seedModel({ name: 'claude-sonnet-4', provider: 'anthropic' });
 
-  const found = await Services.getModelBySlug('openrouter/anthropic/claude-sonnet-4');
+  const found = await Services.getModelBySlug('openrouter/anthropic/claude-sonnet-4', 'chat');
 
   expect(found._unsafeUnwrap().id).toBe(created.id);
 });
@@ -54,7 +54,7 @@ test('slug lookups preserve upstream namespaces', async () => {
 test('getModelBySlug refuses a slug that names nothing', async () => {
   await seedModel();
 
-  const result = await Services.getModelBySlug('anthropic/gpt-4-turbo');
+  const result = await Services.getModelBySlug('anthropic/gpt-4-turbo', 'chat');
 
   // The provider and the name both have to match - a real model name under the
   // wrong provider is not a match.

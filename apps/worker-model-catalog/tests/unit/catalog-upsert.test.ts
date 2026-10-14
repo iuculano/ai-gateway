@@ -15,6 +15,7 @@ const { upsertCatalog } = await import('../../src/worker/catalog-upsert');
 const selected: SelectedOffering[] = [
   {
     provider: 'openai',
+    type: 'chat',
     offering: {
       id: 'gpt-test',
       name: 'GPT Test',
@@ -30,7 +31,7 @@ const selected: SelectedOffering[] = [
       cost: { input: 1.25, output: 5, cache_read: 0.25, cache_write: 2.5, reasoning: 3 },
     },
   },
-  { provider: 'openai', offering: { id: 'unpriced' } },
+  { provider: 'openai', type: 'chat', offering: { id: 'unpriced' } },
 ];
 
 beforeEach(() => {
@@ -57,6 +58,8 @@ test('maps upstream fields, preserves unknown prices as null, and reports each p
   expect(values[0]).toMatchObject({
     provider: 'openai',
     name: 'gpt-test',
+    type: 'chat',
+    redirect_to: null,
     display_name: 'GPT Test',
     status: 'beta',
     cost_input: 1.25,

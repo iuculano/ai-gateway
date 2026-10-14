@@ -29,8 +29,6 @@ async function checkPostgres(): Promise<boolean> {
  */
 async function checkPostgresTables(requiredTables: string[]): Promise<boolean> {
   try {
-    requiredTables = requiredTables || [];
-
     // Assume that the database connection is valid and just grab the table
     // names.
     const result = await db.execute(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`);

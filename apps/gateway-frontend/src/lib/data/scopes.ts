@@ -24,6 +24,8 @@ export const SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Chat completions · Write',
     desc: 'Send inference requests through the gateway',
   },
+  { id: 'decisions:write', label: 'Decisions · Write', desc: 'Make decisions through the gateway' },
+  { id: 'embeddings:write', label: 'Embeddings · Write', desc: 'Create embeddings through the gateway' },
   {
     id: 'guardrails:read',
     label: 'Guardrails · Read',

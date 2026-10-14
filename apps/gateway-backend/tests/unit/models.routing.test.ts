@@ -15,23 +15,22 @@ afterEach(() => random.mockRestore());
 // Each test uses distinct slugs because successful lookups are cached.
 test('default ordering trims slugs and skips missing models without reordering', async () => {
   database.respondTo('select', 'models', rows(modelRow()), rows(), rows(modelRow()));
-  expect(await service.validateAndOrderModels(' openai/default-a , openai/missing,, openai/default-b ', {})).toEqual([
-    'openai/default-a',
-    'openai/default-b',
-  ]);
+  expect(
+    await service.validateAndOrderModels(' openai/default-a , openai/missing,, openai/default-b ', 'chat', {}),
+  ).toEqual(['openai/default-a', 'openai/default-b']);
 });
 
 test('random routing shuffles valid models and skips missing ones', async () => {
   database.respondTo('select', 'models', rows(), rows(modelRow()), rows(modelRow()));
   expect(
-    await service.validateAndOrderModels('openai/random-a,openai/random-missing,openai/random-b', {
+    await service.validateAndOrderModels('openai/random-a,openai/random-missing,openai/random-b', 'chat', {
       strategy: 'random',
     }),
   ).toEqual(['openai/random-b', 'openai/random-a']);
 
   random.mockReturnValue(0.999);
   expect(
-    await service.validateAndOrderModels('openai/random-a,openai/random-b', {
+    await service.validateAndOrderModels('openai/random-a,openai/random-b', 'chat', {
       strategy: 'random',
     }),
   ).toEqual(['openai/random-a', 'openai/random-b']);
@@ -41,7 +40,7 @@ test('weighted routing rerolls remaining relative weights without duplicates', a
   random.mockReturnValueOnce(0.69).mockReturnValueOnce(0.7);
   database.defaultResponse('select', 'models', rows(modelRow()));
   expect(
-    await service.validateAndOrderModels('openai/weighted-a,openai/weighted-b,openai/weighted-c', {
+    await service.validateAndOrderModels('openai/weighted-a,openai/weighted-b,openai/weighted-c', 'chat', {
       strategy: 'weighted',
       weights: '70, 20, 10',
     }),
@@ -52,7 +51,7 @@ test('a weighted roll on a boundary selects the next candidate', async () => {
   random.mockReturnValueOnce(0.5);
   database.defaultResponse('select', 'models', rows(modelRow()));
   expect(
-    await service.validateAndOrderModels('openai/boundary-a,openai/boundary-b', {
+    await service.validateAndOrderModels('openai/boundary-a,openai/boundary-b', 'chat', {
       strategy: 'weighted',
       weights: '1,1',
     }),
@@ -62,7 +61,7 @@ test('a weighted roll on a boundary selects the next candidate', async () => {
 test('weighted routing skips a missing selection and continues', async () => {
   database.respondTo('select', 'models', rows(), rows(modelRow()));
   expect(
-    await service.validateAndOrderModels('openai/weighted-missing,openai/weighted-valid', {
+    await service.validateAndOrderModels('openai/weighted-missing,openai/weighted-valid', 'chat', {
       strategy: 'weighted',
       weights: '70,30',
     }),
@@ -73,7 +72,7 @@ test.each([undefined, '', '1', '0,1', '-1,2', 'NaN,2', 'Infinity,1', '1,', '1,2,
   'invalid weights reject before database work: %s',
   async (weights) => {
     expect(
-      await service.validateAndOrderModels('openai/a,openai/b', {
+      await service.validateAndOrderModels('openai/a,openai/b', 'chat', {
         strategy: 'weighted',
         weights,
       }),
@@ -96,6 +95,7 @@ test('cost ordering uses both prices, preserves ties, and places unknown prices 
   expect(
     await service.validateAndOrderModels(
       'openai/cost-unknown,openai/cost-expensive,openai/cost-missing,openai/cost-cheap,openai/cost-free,openai/cost-tie',
+      'chat',
       { strategy: 'cost' },
     ),
   ).toEqual([
@@ -116,7 +116,7 @@ test.each([undefined, 'random', 'weighted', 'cost'] as const)(
     };
     const slug = `openai/single-${strategy ?? 'default'}`;
     database.respondTo('select', 'models', rows(modelRow()), rows());
-    expect(await service.validateAndOrderModels(slug, options)).toEqual([slug]);
-    expect(await service.validateAndOrderModels(`${slug}-missing`, options)).toBeUndefined();
+    expect(await service.validateAndOrderModels(slug, 'chat', options)).toEqual([slug]);
+    expect(await service.validateAndOrderModels(`${slug}-missing`, 'chat', options)).toBeUndefined();
   },
 );

@@ -206,7 +206,7 @@ const body = z.object({
  * OpenAI's finish_reason set.
  *
  * Deliberately narrower than the SDK's, which also has `error` and `other`.
- * mapFinishReason() is where that collapse happens.
+ * toOpenAIFinishReason() is where that collapse happens.
  */
 const finishReason = z.enum(['stop', 'length', 'tool_calls', 'content_filter']);
 

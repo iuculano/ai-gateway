@@ -18,11 +18,12 @@ const PAGE_SIZE = 20;
 
 // Shared with LogRow so the header and the rows sit in one grid.
 const COLS =
-  '24px 150px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 76px 100px 96px 104px 100px 92px 84px 180px';
+  '24px 150px 84px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 76px 100px 96px 104px 100px 92px 84px 180px';
 
 const COLUMNS = [
   { label: '' },
   { label: 'Timestamp' },
+  { label: 'Operation' },
   { label: 'Provider' },
   { label: 'Model' },
   { label: 'Trace' },

@@ -1,5 +1,15 @@
 export type TokenKind = 'key' | 'string' | 'number' | 'keyword' | 'punctuation';
 
+/** One colour per token kind, shared by every JSON view and editor. */
+export const TOKEN_COLORS: Record<TokenKind, string> = {
+  key: '#60a5fa',
+  string: '#34d399',
+  number: '#f59e0b',
+  keyword: '#c084fc',
+  // Braces, commas and indentation recede so the values carry the eye.
+  punctuation: '#52525b',
+};
+
 export interface JsonToken {
   text: string;
   kind: TokenKind;

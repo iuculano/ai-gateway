@@ -258,7 +258,13 @@ test('startLog rejects rather than returning a failure', async () => {
   database.respondTo('insert', 'logs', rows());
 
   await expect(
-    Services.startLog('org', { model: 'gpt-4-turbo', provider: 'openai', actor_type: 'api_key', actor_id: 'key-1' }),
+    Services.startLog('org', {
+      operation: 'chat',
+      model: 'gpt-4-turbo',
+      provider: 'openai',
+      actor_type: 'api_key',
+      actor_id: 'key-1',
+    }),
   ).rejects.toThrow('Failed to open log');
 });
 

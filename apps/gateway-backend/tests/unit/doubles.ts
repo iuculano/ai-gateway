@@ -517,6 +517,8 @@ export function modelRow(overrides: RowOverrides<typeof models.$inferSelect> = {
     id: MODEL_ID,
     name: 'gpt-4-turbo',
     provider: 'openai',
+    type: 'chat',
+    redirect_to: null,
     display_name: 'GPT-4 Turbo',
     status: 'available',
     cost_input: 0.00001,
@@ -547,6 +549,7 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
   return {
     id: LOG_ID,
     organization_id: ORGANIZATION_ID,
+    operation: 'chat',
     model: 'gpt-4-turbo',
     provider: 'openai',
     trace_id: null,

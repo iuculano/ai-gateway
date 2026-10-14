@@ -2,7 +2,6 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { logger } from '@repo/core';
 import { errorHandler } from '@repo/hono';
 import { requestId } from 'hono/request-id';
-// Middleware
 import { secureHeaders } from 'hono/secure-headers';
 import healthHandlers from './api/health/health.handlers';
 import { environment } from './environment';
@@ -25,19 +24,16 @@ app.doc31('/open-api.json', {
 
 app.route('/', healthHandlers);
 
-let shuttingDown = false;
-
 /**
  * Whether a tick is still running.
  *
- * setInterval does not wait for the previous callback, so a sync that outlives
- * the poll interval - a slow upstream, a 4 MB body over a bad link - would have
- * the next tick start on top of it, with two passes upserting the same rows.
+ * setInterval doesn't wait for the previous run, so a slow sync could overlap
+ * the next one.
  */
 let ticking = false;
 
 async function tick(): Promise<void> {
-  if (ticking || shuttingDown) {
+  if (ticking) {
     return;
   }
 
@@ -46,54 +42,36 @@ async function tick(): Promise<void> {
   try {
     await tickModelCatalog();
   } catch (error) {
-    // Nothing above this catches, and an unhandled rejection here would take
-    // the process down over one unreachable upstream. A catalog a few hours
-    // stale is not an outage; the next tick tries again.
+    // Log and carry on. A stale catalog isn't an outage, and the next tick
+    // tries again.
     logger.error({ err: error }, 'Model catalog sync tick failed');
   } finally {
     ticking = false;
   }
 }
 
-// Honoured here, and said out loud - a worker that is deliberately idle should
-// not look like one that is broken.
-const interval = environment.WORKER_ENABLED
-  ? setInterval(() => void tick(), environment.WORKER_POLL_INTERVAL_MS)
-  : null;
-
+// Log either way so a disabled worker doesn't look broken.
 if (environment.WORKER_ENABLED) {
+  setInterval(() => void tick(), environment.WORKER_POLL_INTERVAL_MS);
+
   logger.info(
     { poll_interval_ms: environment.WORKER_POLL_INTERVAL_MS, source_url: environment.CATALOG_SOURCE_URL },
     'Model catalog sync started',
   );
 
-  // setInterval does not fire until the interval has elapsed, and at hourly
-  // pacing that would leave a freshly deployed worker with nothing in the
-  // catalog for an hour. The conditional GET makes a redundant startup pass
-  // cheap, so it is always worth taking one.
+  // setInterval waits a full interval before its first run, so sync once now.
   void tick();
 } else {
   logger.warn('Model catalog sync is disabled by WORKER_ENABLED - the catalog will not be refreshed');
 }
 
-const shutdown = () => {
-  if (shuttingDown) {
-    return;
-  }
-
-  shuttingDown = true;
-
-  if (interval) {
-    clearInterval(interval);
-  }
-
-  process.exit(0);
-};
+// Safe to exit mid-sync since the upsert runs in one transaction.
+const shutdown = () => process.exit(0);
 
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);
 
 export default {
   fetch: app.fetch,
-  port: Number(environment.PORT),
+  port: environment.PORT,
 };
