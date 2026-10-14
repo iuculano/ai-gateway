@@ -60,28 +60,37 @@ const CAPTION_CLASS = 'text-[10.5px] font-medium tracking-[.05em] text-zinc-600 
 				<p class="text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap text-zinc-300">{record.input}</p>
 			</div>
 
-			<div class="flex flex-col gap-2">
+			<div class="flex flex-col gap-3">
 				<span class={CAPTION_CLASS}>Questions</span>
 				{#each questions as question}
-					<div class="flex flex-col gap-1 border-l-2 pl-2.5" style:border-left-color={QUESTION_TYPE_COLORS[question.type]}>
+					<div class="flex flex-col gap-1 border-l-2 pl-3" style:border-left-color={QUESTION_TYPE_COLORS[question.type]}>
 						<div class="flex items-baseline gap-2">
 							<code class="font-mono text-[12.5px] text-zinc-200">{question.name}</code>
 							<span class="text-[11px] text-zinc-600">{question.type}</span>
 						</div>
-						<span class="text-[12.5px] text-zinc-300">{question.instructions}</span>
-						{#if question.type === 'choice'}
-							{#each question.choices as choice}
-								<span class="text-[12px] text-zinc-500">
-									<code class="font-mono text-zinc-400">{choice.value}</code> · {choice.description}
-								</span>
-							{/each}
-						{:else if question.type === 'score'}
-							{#each question.levels as level, index}
-								<span class="text-[12px] text-zinc-500">
-									<span class="tabular-nums">{index}</span>
-									<code class="font-mono text-zinc-400">{level.label}</code> · {level.description}
-								</span>
-							{/each}
+						<p class="text-[12.5px] leading-[1.5] text-zinc-300">{question.instructions}</p>
+
+						<!-- Options nest one level in, on a grid so the values line up and
+						     long descriptions wrap under their own column. -->
+						{#if question.type === 'choice' && question.choices.length > 0}
+							<div
+								class="mt-1 ml-0.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-l border-line-strong pl-3 text-[12px] leading-[1.5]"
+							>
+								{#each question.choices as choice}
+									<code class="font-mono text-zinc-400">{choice.value}</code>
+									<span class="text-zinc-500">{choice.description}</span>
+								{/each}
+							</div>
+						{:else if question.type === 'score' && question.levels.length > 0}
+							<div
+								class="mt-1 ml-0.5 grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-l border-line-strong pl-3 text-[12px] leading-[1.5]"
+							>
+								{#each question.levels as level, index}
+									<span class="text-right text-zinc-600 tabular-nums">{index}</span>
+									<code class="font-mono text-zinc-400">{level.label}</code>
+									<span class="text-zinc-500">{level.description}</span>
+								{/each}
+							</div>
 						{/if}
 					</div>
 				{/each}
