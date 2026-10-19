@@ -316,6 +316,7 @@ test('a non-streaming completion maps provider output and closes its inference l
     {
       organizationId: callerFixture.organization.id,
       entry: {
+        operation: 'chat',
         model: 'test-model',
         provider: 'openai',
         tags: undefined,
@@ -352,6 +353,7 @@ test('the omit headers keep the row and its accounting, and store neither payloa
     {
       organizationId: callerFixture.organization.id,
       entry: {
+        operation: 'chat',
         model: 'test-model',
         provider: 'openai',
         tags: undefined,
@@ -562,7 +564,7 @@ test.each([
 test('a bare model id is rejected because it is not a catalog slug', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'gpt-bare' })));
 
-  expect(failure).toEqual({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
+  expect(failure).toEqual({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
   expect(providerFactory.openai).toHaveLength(0);
   expect(logWrites.started).toHaveLength(0);
 });
@@ -572,7 +574,7 @@ test('an unregistered model is rejected before provider or logging work starts',
 
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/gpt-unknown' })));
 
-  expect(failure).toEqual({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
+  expect(failure).toEqual({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
   expect(providerFactory.openai).toHaveLength(0);
   expect(logWrites.started).toHaveLength(0);
 });
@@ -583,7 +585,7 @@ test('a registered but unsupported provider is rejected before provider or loggi
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'unsupported/unknown' })));
 
   expect(failure).toEqual({
-    code: 'UNSUPPORTED_MODEL_PROVIDER',
+    code: 'MODEL_UNSUPPORTED_PROVIDER',
     model: 'unsupported/unknown',
     provider: 'unsupported',
   });
@@ -595,7 +597,7 @@ test('a registered but unsupported provider is rejected before provider or loggi
 test('a model identifier with a provider and no model is a typed refusal', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/' })));
 
-  expect(failure).toMatchObject({ code: 'INVALID_MODEL_ROUTING', message: 'No valid models available' });
+  expect(failure).toMatchObject({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
 
   expect(logWrites.started).toHaveLength(0);
 });
@@ -1521,7 +1523,7 @@ test('a failure before the first chunk is still a normal error response, not a b
   expect(response.headers.get('content-type')).not.toContain('text/event-stream');
   expect(response.headers.get('ai-trace-id')).toMatch(/^[0-9a-f]{32}$/);
   expect(await response.json()).toMatchObject({
-    error: { message: 'Invalid provider API key. Check your credentials and try again.' },
+    error: { message: 'Provider error: Unauthorized' },
   });
 });
 
@@ -1565,7 +1567,7 @@ test('non-streamed provider authentication failures identify the upstream source
   expect(response.status).toBe(401);
   expect(response.headers.get('ai-error-source')).toBe('upstream');
   expect(await response.json()).toMatchObject({
-    error: { message: 'Invalid provider API key. Check your credentials and try again.' },
+    error: { message: 'Provider error: Unauthorized' },
   });
 });
 

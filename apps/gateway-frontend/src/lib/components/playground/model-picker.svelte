@@ -10,11 +10,14 @@ let {
   disabled = false,
   id = 'playground-model',
   class: fieldClass = '',
+  type = 'chat',
 }: {
   value: string;
   disabled?: boolean;
   id?: string;
   class?: string;
+  /** Which endpoint's models to suggest. The same slug can be sold through several. */
+  type?: 'chat' | 'embedding' | 'decision';
 } = $props();
 
 interface Option {
@@ -70,7 +73,8 @@ onMount(async () => {
 
     options = result.data.flatMap((provider) =>
       provider.models
-        .filter((model) => model.delisted_at === null)
+        // Redirects are aliases for callers already using an old name, not something to pick.
+        .filter((model) => model.delisted_at === null && model.type === type && model.redirect_to === null)
         .map((model) => ({
           slug: `${provider.id}/${model.name}`,
           provider: provider.id,
@@ -195,7 +199,12 @@ function onKeydown(event: KeyboardEvent) {
 						}}
 						onmouseenter={() => (highlighted = index)}
 					>
-						<span class="size-[6px] flex-none rounded-full" style:background={tone.color}></span>
+						<!-- Named, not just coloured: several providers resell the same model,
+						     and a dot alone does not say which one this row would bill. -->
+						<span class="flex w-[88px] flex-none items-center gap-[7px] text-[11.5px] text-zinc-500">
+							<span class="size-[6px] flex-none rounded-full" style:background={tone.color}></span>
+							<span class="truncate">{tone.label}</span>
+						</span>
 						<span class="min-w-0 flex-1 truncate font-mono text-[12.5px] text-zinc-200">{option.name}</span>
 						<span class="flex-none text-[11px] text-zinc-600 tabular-nums">
 							{fmtContext(option.context_limit)}

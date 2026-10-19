@@ -1,6 +1,6 @@
 import { probe, toPage } from '@repo/core';
 import { and, asc, db, desc, eq, gt, lt, max, sql } from '@repo/drizzle';
-import { models } from '@repo/drizzle/schemas';
+import { type ModelType, models } from '@repo/drizzle/schemas';
 import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
 import Schemas, {
@@ -54,39 +54,56 @@ async function getModel(id: string): Promise<Result<GetModelResponse, GetModelFa
   return ok(parsed);
 }
 
+async function findModel(provider: string, name: string, type: ModelType) {
+  // biome-ignore format: looks nicer
+  const [row] = await db
+    .select()
+    .from(models)
+    .where(and(
+      eq(models.provider, provider),
+      eq(models.name, name),
+      eq(models.type, type)
+    ));
+
+  return row;
+}
+
 /**
  * Retrieves a single model by its `provider/name` slug.
  *
  * @param slug
  * The slug to look up.
+ *
+ * @param type
+ * The endpoint asking. The same slug can be sold through several at
+ * different prices, and a slug with no row of this type is not found.
+ *
+ * @returns
+ * The model, or the one it redirects to. Redirects are followed one hop.
  */
-async function getModelBySlug(slug: string): Promise<Result<GetModelResponse, GetModelBySlugFailure>> {
+async function getModelBySlug(slug: string, type: ModelType): Promise<Result<GetModelResponse, GetModelBySlugFailure>> {
   // Can't have a slug with a / at the start or end.
   const separator = slug.indexOf('/');
   if (separator <= 0 || separator === slug.length - 1) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
-  const cached = modelCache.get(slug);
+  const cacheKey = `${type}:${slug}`;
+  const cached = modelCache.get(cacheKey);
   if (cached) {
     return ok(cached);
   }
 
-  // biome-ignore format: looks nicer
-  const [row] = await db
-    .select()
-    .from(models)
-    .where(and(
-      eq(models.provider, slug.slice(0, separator)),
-      eq(models.name, slug.slice(separator + 1))
-    ));
+  const provider = slug.slice(0, separator);
+  const row = await findModel(provider, slug.slice(separator + 1), type);
+  const target = row?.redirect_to ? await findModel(provider, row.redirect_to, type) : row;
 
-  if (!row) {
+  if (!target) {
     return err({ code: 'MODEL_NOT_FOUND', slug });
   }
 
-  const parsed = Schemas.getModel.response.parse(row);
-  modelCache.set(slug, parsed);
+  const parsed = Schemas.getModel.response.parse(target);
+  modelCache.set(cacheKey, parsed);
   return ok(parsed);
 }
 
@@ -105,6 +122,7 @@ async function listModels(query: ListModelsRequest): Promise<ListModelsResponse>
   const conditions = [
     query.name ? eq(models.name, query.name) : undefined,
     query.provider ? eq(models.provider, query.provider) : undefined,
+    query.type ? eq(models.type, query.type) : undefined,
     query.after_id ? lt(models.id, query.after_id) : undefined,
   ];
 
@@ -160,10 +178,17 @@ async function listProviders(query: ListProvidersQuery): Promise<ListProvidersRe
  * @param models
  * Comma separated list of models.
  *
+ * @param type
+ * The endpoint asking, which decides which row - and price - each slug means.
+ *
  * @param options
  * The routing options to use for ordering the models.
  */
-async function validateAndOrderModels(models: string, options: ModelRoutingOptions): Promise<string[] | undefined> {
+async function validateAndOrderModels(
+  models: string,
+  type: ModelType,
+  options: ModelRoutingOptions,
+): Promise<string[] | undefined> {
   // So you can't do something like "openai/a,,google/b" and get an empty
   // string as a candidate.
   const candidates = models.split(',').map((model) => model.trim());
@@ -174,7 +199,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
   if (!strategy) {
     const output: string[] = [];
     for (const slug of candidates) {
-      const model = await getModelBySlug(slug);
+      const model = await getModelBySlug(slug, type);
       if (model.isErr()) {
         continue;
       }
@@ -228,7 +253,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
         if (roll < 0 || weirdness) {
           remaining.splice(index, 1); // Remove candidate from future rolls
 
-          const model = await getModelBySlug(candidate.slug);
+          const model = await getModelBySlug(candidate.slug, type);
           if (model.isOk()) {
             output.push(candidate.slug);
           }
@@ -251,7 +276,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
 
     const output: string[] = [];
     for (const slug of candidates) {
-      const model = await getModelBySlug(slug);
+      const model = await getModelBySlug(slug, type);
       if (model.isErr()) {
         continue;
       }
@@ -266,7 +291,7 @@ async function validateAndOrderModels(models: string, options: ModelRoutingOptio
     // Grab the slug and cost so we can sort.
     const models = await Promise.all(
       candidates.map(async (slug) => {
-        const model = await getModelBySlug(slug);
+        const model = await getModelBySlug(slug, type);
         if (model.isErr()) {
           return undefined;
         }

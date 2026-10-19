@@ -1,29 +1,28 @@
 import { logger } from '@repo/core';
-import { and, db, eq, inArray, isNull, notInArray, sql } from '@repo/drizzle';
+import { and, db, eq, isNull, notInArray, or, sql } from '@repo/drizzle';
 import { models } from '@repo/drizzle/schemas';
 import type { CatalogOffering, SelectedOffering } from './catalog-sync';
 
 export interface UpsertSummary {
-  /** Rows the statement actually wrote - inserted, or updated because something moved. */
+  /** Rows inserted, or updated because something changed. */
   written: number;
 
-  /** Models that stopped appearing upstream on this pass. */
+  /** Models that disappeared upstream this pass. */
   delisted: number;
 
-  /** Rows confirmed present, whether or not they changed. */
+  /** Rows still listed upstream, changed or not. */
   confirmed: number;
 }
 
-/** models.dev publishes only these two; anything else is treated as unremarkable. */
+/** models.dev only uses these two statuses. Anything else counts as available. */
 function toStatus(status: string | undefined): 'available' | 'beta' | 'deprecated' {
   return status === 'deprecated' || status === 'beta' ? status : 'available';
 }
 
 /**
- * The upstream fields no column holds yet.
+ * Upstream fields that don't have a column yet.
  *
- * Preserving them avoids a full re-sync when a field later needs a dedicated
- * feature or column.
+ * Kept so a future column can be filled without a full re-sync.
  */
 function toConfig(offering: CatalogOffering): Record<string, unknown> {
   return {
@@ -40,9 +39,9 @@ function toConfig(offering: CatalogOffering): Record<string, unknown> {
 }
 
 /**
- * One catalog row, as the table wants it.
+ * One catalog row in table form.
  *
- * Missing prices remain null because unpublished and free are different states.
+ * Missing prices stay null, since unknown and free aren't the same thing.
  */
 function toRow(item: SelectedOffering) {
   const { provider, offering } = item;
@@ -50,6 +49,8 @@ function toRow(item: SelectedOffering) {
   return {
     provider: provider,
     name: offering.id,
+    type: item.type,
+    redirect_to: item.redirect_to ?? null,
     display_name: offering.name ?? null,
     status: toStatus(offering.status),
     cost_input: offering.cost?.input ?? null,
@@ -65,13 +66,15 @@ function toRow(item: SelectedOffering) {
 }
 
 /**
- * The columns a sync owns, compared as a row so one statement can decide
- * whether anything actually moved.
+ * The columns the sync owns. They're compared as a row to decide whether
+ * anything changed, and copied from the incoming row when it did.
  *
- * `synced_at` is excluded because confirmation alone should not make the model
- * appear changed; it is updated separately.
+ * `synced_at` is left out so a plain confirmation doesn't count as a change.
+ * `delisted_at` is included because incoming rows never set it, which clears it
+ * when a delisted model comes back.
  */
 const TRACKED = [
+  'redirect_to',
   'display_name',
   'status',
   'cost_input',
@@ -87,9 +90,10 @@ const TRACKED = [
 ] as const;
 
 /**
- * Applies a catalog snapshot atomically: update changed models, delist
- * missing ones, and confirm the rest. `updated_at` tracks data changes while
- * `synced_at` tracks the latest confirmation.
+ * Applies one catalog snapshot in a single transaction. Changed models are
+ * updated, missing ones are delisted, and the rest are confirmed.
+ *
+ * `updated_at` moves when data changes. `synced_at` moves on every confirmation.
  *
  * @param selected
  * The offerings from one catalog snapshot.
@@ -100,9 +104,19 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
   }
 
   const rows = selected.map(toRow);
-  const providers = [...new Set(rows.map((row) => row.provider))];
 
-  // Generate both positional tuples from one list so comparisons cannot drift.
+  // Delisting only applies within a provider and type that appear in this
+  // snapshot. Type matters because the overlay's rows would otherwise make a
+  // provider look present even when models.dev left it out.
+  //
+  // Known gap. Removing the last overlay row for a provider and type leaves it
+  // listed, so delist it by hand.
+  const scopes = [...new Map(rows.map((row) => [`${row.provider}/${row.type}`, row])).values()].map((row) => ({
+    provider: row.provider,
+    type: row.type,
+  }));
+
+  // Built from the same list so the two sides always line up.
   const current = sql.join(
     TRACKED.map((column) => sql.raw(`"models"."${column}"`)),
     sql`, `,
@@ -115,34 +129,21 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
   return db.transaction(async (tx) => {
     let written = 0;
 
-    // Bound each statement to stay below PostgreSQL's parameter limit.
+    // Batched to stay under the Postgres parameter limit.
     for (let offset = 0; offset < rows.length; offset += 500) {
       const batch = await tx
         .insert(models)
         .values(rows.slice(offset, offset + 500))
         .onConflictDoUpdate({
-          target: [models.provider, models.name],
+          target: [models.provider, models.name, models.type],
 
           set: {
-            display_name: sql`excluded.display_name`,
-            status: sql`excluded.status`,
-            cost_input: sql`excluded.cost_input`,
-            cost_output: sql`excluded.cost_output`,
-            cost_cache_read: sql`excluded.cost_cache_read`,
-            context_limit: sql`excluded.context_limit`,
-            attachment: sql`excluded.attachment`,
-            reasoning: sql`excluded.reasoning`,
-            tool_call: sql`excluded.tool_call`,
-            structured_output: sql`excluded.structured_output`,
-            config: sql`excluded.config`,
-
-            // A model that came back is no longer delisted.
-            delisted_at: sql`null`,
+            ...Object.fromEntries(TRACKED.map((column) => [column, sql.raw(`excluded."${column}"`)])),
             updated_at: sql`now()`,
           },
 
-          // Avoid changing `updated_at` for confirmations alone. Operator-owned
-          // tags are intentionally excluded from catalog comparisons.
+          // Only write when something changed, so `updated_at` stays put. Tags
+          // belong to operators and aren't compared.
           setWhere: sql`(${current}) IS DISTINCT FROM (${incoming})`,
         })
         .returning({ id: models.id });
@@ -150,17 +151,19 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
       written += batch.length;
     }
 
-    // Absence is meaningful only for providers represented in this snapshot.
     let delisted = 0;
-    for (const provider of providers) {
-      const names = rows.filter((row) => row.provider === provider).map((row) => row.name);
+    for (const scope of scopes) {
+      const names = rows
+        .filter((row) => row.provider === scope.provider && row.type === scope.type)
+        .map((row) => row.name);
 
       // biome-ignore format: looks nicer
       const marked = await tx
         .update(models)
         .set({ delisted_at: sql`now()`, updated_at: sql`now()` })
         .where(and(
-          eq(models.provider, provider),
+          eq(models.provider, scope.provider),
+          eq(models.type, scope.type),
           notInArray(models.name, names),
           isNull(models.delisted_at)
         ))
@@ -169,13 +172,17 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
       delisted += marked.length;
     }
 
-    // Confirm active rows after delisting so missing models are excluded.
+    // Mark everything still listed as seen. Uses the same scopes as delisting,
+    // so a provider missing from this snapshot keeps its old synced_at. Runs
+    // after delisting so just-delisted rows aren't confirmed.
+    const inSnapshot = scopes.map((scope) => and(eq(models.provider, scope.provider), eq(models.type, scope.type)));
+
     // biome-ignore format: looks nicer
     const confirmed = await tx
       .update(models)
       .set({ synced_at: sql`now()` })
       .where(and(
-        inArray(models.provider, providers),
+        or(...inSnapshot),
         isNull(models.delisted_at)
       ))
       .returning({ id: models.id });
@@ -186,11 +193,12 @@ export async function upsertCatalog(selected: SelectedOffering[]): Promise<Upser
   });
 }
 
-/** Remove catalog models outside the configured provider whitelist. */
+/** Removes models from providers that aren't kept. */
 export async function deleteExcludedModels(providerWhitelist: string[]): Promise<number> {
+  // An empty list deletes everything, since drizzle turns notInArray(x, []) into 1 = 1.
   const deleted = await db
     .delete(models)
-    .where(providerWhitelist.length > 0 ? notInArray(models.provider, providerWhitelist) : undefined)
+    .where(notInArray(models.provider, providerWhitelist))
     .returning({ id: models.id });
   return deleted.length;
 }

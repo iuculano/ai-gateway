@@ -12,6 +12,7 @@ import Panel from '$lib/components/app/panel.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import JsonView from '$lib/components/logs/json-view.svelte';
 import MessageList from '$lib/components/logs/message-list.svelte';
+import OperationPayload from '$lib/components/logs/operation-payload.svelte';
 import type { Turn } from '$lib/data/conversation';
 import { requestTurns, responseTurns, turnsToText } from '$lib/data/conversation';
 import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone, traceTone } from '$lib/data/format';
@@ -52,6 +53,16 @@ const STATUS = {
 } as const;
 
 const status = $derived(STATUS[log.status] ?? { label: log.status, color: '#71717a' });
+
+const ENDPOINTS = {
+  chat: '/v1/chat/completions',
+  embedding: '/v1/embeddings',
+  decision: '/v1/decisions',
+} as const;
+
+// Embeddings have no playground to replay into.
+const REPLAY_PATHS = { chat: '/playground', decision: '/playground/decisions', embedding: null } as const;
+const replayPath = $derived(REPLAY_PATHS[log.operation]);
 
 // Payloads live in object storage behind their own endpoints, so they are
 // fetched on first expand rather than with the page. A list of 50 rows would
@@ -135,7 +146,7 @@ const detailItems: DetailItem[] = $derived([
   { label: 'Log ID', value: log.id, title: log.id, copyable: true },
   { label: 'Created at', value: fmtTs(new Date(log.created_at).toISOString()).full, mono: false },
   { label: 'Created by', value: creatorName ?? log.actor_id, title: log.actor_id, mono: false },
-  { label: 'Endpoint', value: '/v1/chat/completions' },
+  { label: 'Endpoint', value: ENDPOINTS[log.operation] },
   { label: 'Throughput', value: throughput },
   { label: 'Finish reason', value: finishReason },
 ]);
@@ -167,7 +178,8 @@ const panels = $derived([
  * deliberately switched to.
  */
 function copyText(panel: { json: string; turns: Turn[] }): string {
-  return view === 'json' ? panel.json : turnsToText(panel.turns);
+  // Only chat has a transcript. Other operations copy the JSON in both views.
+  return view === 'json' || log.operation !== 'chat' ? panel.json : turnsToText(panel.turns);
 }
 
 function copy(text: string, label: string) {
@@ -185,6 +197,8 @@ function copy(text: string, label: string) {
 <ExpandableRow {cols} {expanded} {ontoggle}>
 	{#snippet cells()}
 		<span class="font-mono text-xs text-zinc-400"><span class="text-zinc-600">{ts.short} · </span>{ts.time}</span>
+
+		<span class="text-[12.5px] text-zinc-400">{log.operation}</span>
 
 
 		<span class="inline-flex min-w-0 items-center gap-[7px] text-[12.5px] text-zinc-300">
@@ -235,9 +249,9 @@ function copy(text: string, label: string) {
 			{fmtLatency(log.response_time_ms)}
 		</span>
     <div class="flex items-center justify-end">
-			{#if log.has_request}
+			{#if log.has_request && replayPath}
 				<a
-					href="/playground?from={log.id}"
+					href="{replayPath}?from={log.id}"
           onclick={(event) => event.stopPropagation()}
           onkeydown={(event) => event.stopPropagation()}
 					class="ml-auto flex h-7 shrink-0 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
@@ -273,6 +287,12 @@ function copy(text: string, label: string) {
 						<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
 							This payload is no longer available.
 						</div>
+					{:else if view === 'simple' && log.operation !== 'chat'}
+						<OperationPayload
+							operation={log.operation}
+							kind={panel.kind}
+							payload={panel.kind === 'request' ? request : response}
+						/>
 					{:else if view === 'simple'}
 						<!-- A payload with no messages in it is a real case - a failed call
 						     stores the request but never gets a response body - so simple

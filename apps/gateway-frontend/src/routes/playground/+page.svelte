@@ -4,9 +4,12 @@ import { toast } from 'svelte-sonner';
 import { page } from '$app/state';
 import type { ChatCompletionMessage, ChatCompletionRequest, GatewayHeaders } from '$lib/api/chat-completions';
 import { getLogRequest } from '$lib/api/logs';
+import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 import PageHeader from '$lib/components/app/page-header.svelte';
 import Panel from '$lib/components/app/panel.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
+import ExamplePicker from '$lib/components/playground/example-picker.svelte';
+import JsonEditor from '$lib/components/playground/json-editor.svelte';
 import type { DraftMessage } from '$lib/components/playground/message-editor.svelte';
 import MessageEditor, {
   COMPOSER_ROLES,
@@ -14,6 +17,7 @@ import MessageEditor, {
   emptyDraft,
 } from '$lib/components/playground/message-editor.svelte';
 import ModelPicker from '$lib/components/playground/model-picker.svelte';
+import PlaygroundTabs from '$lib/components/playground/playground-tabs.svelte';
 import type { PromptSelection } from '$lib/components/playground/prompt-picker.svelte';
 import PromptPicker from '$lib/components/playground/prompt-picker.svelte';
 import ResponsePanel from '$lib/components/playground/response-panel.svelte';
@@ -23,6 +27,7 @@ import * as Select from '$lib/components/ui/select';
 import { Switch } from '$lib/components/ui/switch';
 import { toResponsePayload } from '$lib/data/completion';
 import { responseTurns } from '$lib/data/conversation';
+import { CHAT_EXAMPLES } from '$lib/data/playground-examples';
 import { PlaygroundRun } from '$lib/state/playground-run.svelte';
 import { webhooks } from '$lib/state/webhooks.svelte';
 
@@ -101,6 +106,24 @@ function toMessage(draft: DraftMessage): ChatCompletionMessage {
 }
 
 /**
+ * The chosen stored prompt as a request field.
+ *
+ * A reference, not the rendered text. The gateway expands it with the same
+ * code path any other caller would get, built-ins included.
+ */
+function promptField() {
+  return promptSelection
+    ? {
+        prompt: {
+          name: promptSelection.name,
+          version: promptSelection.version,
+          variables: promptSelection.variables,
+        },
+      }
+    : {};
+}
+
+/**
  * The request body, or null when the form is not ready to send.
  *
  * Empty messages are dropped rather than sent: a blank system row is the
@@ -135,17 +158,7 @@ function buildBody(): ChatCompletionRequest | null {
     // makes compare mode "the same request, several models" by construction.
     model: '',
     messages: messages,
-    // A reference, not the rendered text: the gateway expands it with the same
-    // code path any other caller would get, built-ins included.
-    ...(promptSelection
-      ? {
-          prompt: {
-            name: promptSelection.name,
-            version: promptSelection.version,
-            variables: promptSelection.variables,
-          },
-        }
-      : {}),
+    ...promptField(),
     temperature: temperature,
     max_completion_tokens: maxTokens,
     top_p: topP,
@@ -178,7 +191,7 @@ async function run() {
     return;
   }
 
-  const body = buildBody();
+  const body = mode === 'json' ? jsonBody() : buildBody();
   if (!body) return;
 
   const headers = buildHeaders();
@@ -224,29 +237,13 @@ async function loadFromLog(id: string) {
       return;
     }
 
-    drafts = payload.messages
-      .filter((message): message is Extract<ChatCompletionMessage, { role: ComposerRole }> =>
-        (COMPOSER_ROLES as readonly string[]).includes(message.role),
-      )
-      .map((message) => ({
-        role: message.role,
-        // Content can arrive as parts rather than a string; the composer edits
-        // text, so the parts are flattened rather than dropped.
-        content:
-          typeof message.content === 'string'
-            ? message.content
-            : (message.content ?? []).map((part) => ('text' in part ? part.text : '')).join(''),
-      }));
+    applyRequest(payload);
 
     if (typeof payload.model === 'string' && payload.model.length > 0) {
-      // Seeded rather than overwritten wholesale: the original model is the
+      // Seeded rather than overwritten wholesale. The original model is the
       // baseline you are comparing a candidate against.
       if (comparisons[0]) comparisons[0].model = payload.model;
     }
-
-    temperature = payload.temperature ?? undefined;
-    maxTokens = payload.max_completion_tokens ?? undefined;
-    topP = payload.top_p ?? undefined;
 
     toast.success('Loaded the request from that log');
   } catch (cause) {
@@ -254,10 +251,110 @@ async function loadFromLog(id: string) {
   }
 }
 
+/** Fills the form from a request body. Fields the form has no place for are ignored. */
+function applyRequest(payload: Partial<ChatCompletionRequest>) {
+  const messages = (payload.messages ?? [])
+    .filter((message): message is Extract<ChatCompletionMessage, { role: ComposerRole }> =>
+      (COMPOSER_ROLES as readonly string[]).includes(message.role),
+    )
+    .map((message) => ({
+      role: message.role,
+      // Content can arrive as parts rather than a string. The composer edits
+      // text, so the parts are flattened rather than dropped.
+      content:
+        typeof message.content === 'string'
+          ? message.content
+          : (message.content ?? []).map((part) => ('text' in part ? part.text : '')).join(''),
+    }));
+
+  drafts = messages.length > 0 ? messages : [emptyDraft('system'), emptyDraft('user')];
+  temperature = payload.temperature ?? undefined;
+  maxTokens = payload.max_completion_tokens ?? undefined;
+  topP = payload.top_p ?? undefined;
+}
+
+// The request body can be edited as a form or as raw JSON. Model, prompt,
+// streaming and caching stay in their own controls either way.
+const MODE_TABS = [
+  { id: 'form' as const, label: 'Form' },
+  { id: 'json' as const, label: 'JSON' },
+];
+let mode: 'form' | 'json' = $state('form');
+let requestJson = $state('');
+
+// The body fields the form can show. Anything else only survives in JSON.
+const FORM_FIELDS = ['messages', 'temperature', 'top_p', 'max_completion_tokens'];
+
+function formToJson(): string {
+  // JSON.stringify drops the parameters left unset.
+  return JSON.stringify(
+    {
+      messages: drafts.filter((draft) => draft.content.trim().length > 0).map(toMessage),
+      temperature: temperature,
+      top_p: topP,
+      max_completion_tokens: maxTokens,
+    },
+    null,
+    2,
+  );
+}
+
+/** The JSON as an object, or null after telling the reader what's wrong. */
+function parseRequestJson(): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(requestJson);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Reported below.
+  }
+
+  toast.error('The request JSON must be a valid object.');
+  return null;
+}
+
+/** The JSON body as sent. The gateway validates it, and its 400 says what's wrong. */
+function jsonBody(): ChatCompletionRequest | null {
+  const parsed = parseRequestJson();
+  return parsed ? ({ ...parsed, model: '', ...promptField() } as ChatCompletionRequest) : null;
+}
+
+function setMode(next: 'form' | 'json') {
+  if (next === mode) return;
+
+  if (next === 'json') {
+    requestJson = formToJson();
+    mode = 'json';
+    return;
+  }
+
+  const parsed = parseRequestJson();
+  if (!parsed) return;
+
+  applyRequest(parsed as Partial<ChatCompletionRequest>);
+
+  const dropped = Object.keys(parsed).filter((key) => !FORM_FIELDS.includes(key) && key !== 'model');
+  if (dropped.length > 0) {
+    toast.warning(`The form has no fields for ${dropped.join(', ')}, so they were dropped.`);
+  }
+
+  mode = 'form';
+}
+
+function applyExample(index: number) {
+  const example = CHAT_EXAMPLES[index];
+  if (!example) return;
+
+  drafts = example.messages.map((message) => ({ ...message }));
+  if (mode === 'json') requestJson = formToJson();
+}
+
 function clear() {
   if (running) return;
 
   drafts = [emptyDraft('system'), emptyDraft('user')];
+  if (mode === 'json') requestJson = formToJson();
   for (const entry of comparisons) {
     entry.reset();
   }
@@ -284,6 +381,7 @@ function onKeydown(event: KeyboardEvent) {
 	description="Send a request through Relay to any model your provider key can reach, streamed or whole."
 >
 	{#snippet actions()}
+		<PlaygroundTabs current="chat" />
 		<ToolbarButton disabled={running} onclick={clear}>Clear</ToolbarButton>
 		{#if running}
 			<ToolbarButton onclick={stop}>
@@ -304,14 +402,23 @@ function onKeydown(event: KeyboardEvent) {
      stretched to match a long conversation beside it. -->
 <div class="grid grid-cols-[minmax(0,1fr)_324px] items-start gap-3.5">
 	<div class="flex min-w-0 flex-col gap-3.5">
-		<Panel title="Messages">
+		<Panel title={mode === 'json' ? 'Request' : 'Messages'}>
 			{#snippet actions()}
-				<span class="text-[11.5px] text-zinc-600">
-					{drafts.length}
-					{drafts.length === 1 ? 'message' : 'messages'}
-				</span>
+				{#if mode === 'form'}
+					<span class="text-[11.5px] text-zinc-600">
+						{drafts.length}
+						{drafts.length === 1 ? 'message' : 'messages'}
+					</span>
+				{/if}
+				<ExamplePicker examples={CHAT_EXAMPLES} onpick={applyExample} disabled={running} />
+				<FilterTabs tabs={MODE_TABS} bind:value={() => mode, setMode} />
 			{/snippet}
 
+			{#if mode === 'json'}
+				<div class="p-3.5">
+					<JsonEditor bind:value={requestJson} label="Request JSON" disabled={running} />
+				</div>
+			{:else}
 			<div class="flex flex-col gap-2 p-3.5">
 				{#each drafts as _draft, index (index)}
 					<MessageEditor
@@ -331,6 +438,7 @@ function onKeydown(event: KeyboardEvent) {
 					Add message
 				</button>
 			</div>
+			{/if}
 		</Panel>
 
 		<div class="grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] items-start gap-3.5">
@@ -477,6 +585,12 @@ function onKeydown(event: KeyboardEvent) {
 					/>
 				</label>
 
+				{#if mode === 'json'}
+					<p class="text-[11.5px] leading-normal text-zinc-600">
+						Temperature, top P and max tokens come from the request JSON while you edit it.
+					</p>
+				{/if}
+
 				<!-- Every field below is optional and blank by default. A playground
 				     that pre-fills temperature with 1 quietly sends one on every
 				     request, which is not the same as letting the provider choose. -->
@@ -493,7 +607,7 @@ function onKeydown(event: KeyboardEvent) {
 							max="2"
 							step="0.1"
 							placeholder="Provider default"
-							disabled={running}
+							disabled={running || mode === 'json'}
 							class={FIELD_CLASS}
 						/>
 					</div>
@@ -509,7 +623,7 @@ function onKeydown(event: KeyboardEvent) {
 							max="1"
 							step="0.05"
 							placeholder="Provider default"
-							disabled={running}
+							disabled={running || mode === 'json'}
 							class={FIELD_CLASS}
 						/>
 					</div>
@@ -526,7 +640,7 @@ function onKeydown(event: KeyboardEvent) {
 						min="1"
 						step="1"
 						placeholder="Provider default"
-						disabled={running}
+						disabled={running || mode === 'json'}
 						class={FIELD_CLASS}
 					/>
 				</div>

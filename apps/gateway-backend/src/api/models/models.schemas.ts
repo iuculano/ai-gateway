@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { models } from '@repo/drizzle/schemas';
+import { MODEL_TYPES, models } from '@repo/drizzle/schemas';
 import { createSchema } from '@repo/hono';
 import { createSelectSchema } from 'drizzle-orm/zod';
 
@@ -20,6 +20,7 @@ const listModels = createSchema({
   query: z.object({
     name: z.string().optional(),
     provider: z.string().optional(),
+    type: z.enum(MODEL_TYPES).optional(),
     limit: z.coerce.number().int().min(1).max(200).optional().default(50),
     after_id: z.uuidv7().optional(), // UUIDv7 cursor
   }),

@@ -1,16 +1,20 @@
 import { logger } from '@repo/core';
+import type { ModelType } from '@repo/drizzle/schemas';
 import { environment } from '../environment';
+import { CATALOG_OVERLAY } from './catalog-overlay';
 import { deleteExcludedModels, upsertCatalog } from './catalog-upsert';
 
+// Overlay providers are always kept, even when they aren't whitelisted.
+const keptProviders = [
+  ...new Set([...environment.CATALOG_PROVIDER_WHITELIST, ...CATALOG_OVERLAY.map((item) => item.provider)]),
+];
 const providerWhitelist = new Set(environment.CATALOG_PROVIDER_WHITELIST);
 
 /**
  * One model as a specific provider sells it.
  *
- * Everything past `id` is optional because models.dev genuinely omits fields:
- * 425 of its 6839 offerings carry no `cost` block at all, which is the
- * difference between a model that is free and one whose price is unknown. That
- * distinction has to survive into the database rather than collapsing to zero.
+ * models.dev often leaves fields out, so everything past `id` is optional. A
+ * missing price means unknown, not free.
  *
  * Prices are US dollars per million tokens.
  */
@@ -19,6 +23,7 @@ export interface CatalogOffering {
   name?: string;
   description?: string;
   family?: string;
+  type?: string;
 
   attachment?: boolean;
   reasoning?: boolean;
@@ -54,43 +59,29 @@ interface CatalogProvider {
 
 interface Catalog {
   providers: Record<string, CatalogProvider>;
-
-  /**
-   * The canonical half - 353 vendor-keyed model definitions, carrying
-   * benchmarks, weights and licences but never a price.
-   *
-   * Fetched because it arrives in the same body, not ingested. models.dev
-   * publishes no link from an offering to its canonical definition, so joining
-   * them means matching on the id suffix: that resolves 41 of OpenAI's 47 and
-   * 55 of Azure's 84, and is an inference rather than a contract. Not worth
-   * depending on until something needs benchmark data.
-   */
-  models: Record<string, unknown>;
 }
 
-/** One provider's offerings, flattened with the provider it came from. */
+/** One offering, with the provider and type it's sold under. */
 export interface SelectedOffering {
   provider: string;
+  type: ModelType;
   offering: CatalogOffering;
+  redirect_to?: string;
 }
 
 /**
- * The ETag models.dev served last, so the next tick can ask for a body only if
- * something actually changed.
+ * The last ETag from models.dev, so an unchanged catalog comes back as a 304.
  *
- * In memory, which is not where it belongs - it should be a row, so that a
- * restart does not re-download and re-upsert an unchanged catalog. It moves
- * there when the catalog tables land. The cost until then is one wasted 4 MB
- * fetch per process start.
+ * Kept in memory, so a restart always does a full sync. That's also how
+ * whitelist and overlay changes get picked up after a deploy.
  */
 let lastEtag: string | undefined;
 
 /**
- * Fetches the catalog, unless models.dev says it has not changed.
+ * Fetches the catalog.
  *
  * @returns
- * The parsed catalog, or null when the upstream answered 304 and there is
- * nothing to do.
+ * The parsed catalog, or null if it hasn't changed since the last fetch.
  */
 async function fetchCatalog(): Promise<Catalog | null> {
   const response = await fetch(environment.CATALOG_SOURCE_URL, {
@@ -112,31 +103,53 @@ async function fetchCatalog(): Promise<Catalog | null> {
     throw new Error('models.dev returned a body with no `providers` key');
   }
 
-  // Only after a successful parse. Recording it earlier would mean a body that
-  // arrived truncated or malformed still suppressed the next fetch, and the
-  // catalog would stay stale until the upstream happened to change again.
+  // Only store the ETag once the body parsed, or a bad response would block the
+  // next full fetch.
   lastEtag = response.headers.get('etag') ?? undefined;
 
   return catalog;
 }
 
-/** Flattens a models.dev snapshot into rows for the catalog upsert. */
-function selectOfferings(catalog: Catalog): SelectedOffering[] {
-  return Object.entries(catalog.providers)
+/**
+ * Which endpoint serves an offering, or null if none does.
+ *
+ * models.dev rarely sets `type`, so embedding models are mostly spotted by name.
+ */
+export function toModelType(offering: CatalogOffering): ModelType | null {
+  if (offering.type === 'embedding' || offering.id.toLowerCase().includes('embed')) {
+    return 'embedding';
+  }
+
+  return offering.type ? null : 'chat';
+}
+
+/** Flattens a snapshot into rows for the upsert, with the overlay applied. */
+export function selectOfferings(catalog: Catalog): SelectedOffering[] {
+  const key = (item: SelectedOffering) => `${item.provider}/${item.type}/${item.offering.id}`;
+  const overlaid = new Set(CATALOG_OVERLAY.map(key));
+
+  const upstream = Object.entries(catalog.providers)
     .filter(([provider]) => providerWhitelist.has(provider))
-    .flatMap(([provider, entry]) => Object.values(entry.models).map((offering) => ({ provider, offering })));
+    .flatMap(([provider, entry]) =>
+      Object.values(entry.models).flatMap((offering) => {
+        const type = toModelType(offering);
+        return type ? [{ provider, type, offering }] : [];
+      }),
+    );
+
+  return [...upstream.filter((item) => !overlaid.has(key(item))), ...CATALOG_OVERLAY];
 }
 
 /**
- * One pass: fetch if changed, flatten the provider offerings, and upsert.
+ * One sync pass. Fetches the catalog if it changed and upserts it.
  *
- * Throws on a failed fetch or an unparseable body. The caller decides what that
- * means - a catalog that is a few hours stale is not an outage, so a failed
- * tick is logged and the next one simply tries again.
+ * Throws if the fetch or parse fails. The caller logs it and the next tick
+ * tries again.
  */
 export async function tickModelCatalog(): Promise<void> {
-  // Apply local configuration even when the upstream catalog returns 304.
-  const deleted = await deleteExcludedModels(environment.CATALOG_PROVIDER_WHITELIST);
+  // Before the fetch, so excluded providers are removed even when the catalog
+  // hasn't changed.
+  const deleted = await deleteExcludedModels(keptProviders);
   if (deleted > 0) {
     logger.info({ deleted }, 'Deleted models from excluded providers');
   }

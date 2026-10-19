@@ -82,6 +82,7 @@ export const PROMPT_VERSION: PromptVersion = {
 
 export const SUCCESS_LOG: Log = {
   id: IDS.successLog,
+  operation: 'chat',
   model: 'gpt-5',
   provider: 'openai',
 
@@ -237,6 +238,8 @@ export const CATALOG: CatalogProvider[] = [
         id: IDS.model,
         name: 'gpt-5',
         provider: 'openai',
+        type: 'chat',
+        redirect_to: null,
         display_name: 'GPT-5',
         status: 'available',
         cost_input: 1.25,

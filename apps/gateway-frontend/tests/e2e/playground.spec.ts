@@ -258,3 +258,55 @@ test('the playground has one comparison layout with one to four model columns', 
   }
   await expect(add).toBeHidden();
 });
+
+test('the decisions tab sends typed questions and renders the answers', async ({ page, api }) => {
+  registerEmptyApp(api);
+  api.post('/api/decisions', {
+    json: {
+      model: 'gpt-6-luna',
+      answers: [{ type: 'predicate', name: 'spam', probability: 0.03 }],
+      usage: { input_tokens: 60, output_tokens: 12, total_tokens: 72 },
+    },
+  });
+
+  await page.goto('/playground');
+  await page.getByRole('button', { name: 'Decisions', exact: true }).click();
+  await expect(page).toHaveURL(/\/playground\/decisions$/);
+
+  await page.getByLabel('Input', { exact: true }).fill('Win a free cruise!');
+  await page.getByLabel('Question name').fill('spam');
+  await page.getByLabel('Question instructions').fill('Is this message spam?');
+  await page.getByLabel('Model', { exact: true }).fill('openai/gpt-6-luna');
+  await page.getByPlaceholder('Provider API key').fill('provider-secret-for-test');
+  await page.getByRole('button', { name: /^Run/ }).click();
+
+  await expect(page.getByText('· 3% true', { exact: true })).toBeVisible();
+  await expect(page.getByText('72 tok', { exact: true })).toBeVisible();
+
+  const calls = api.matching('POST', '/api/decisions');
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.headers['ai-api-key']).toBe('provider-secret-for-test');
+  expect(calls[0]?.body).toEqual({
+    model: 'openai/gpt-6-luna',
+    input: 'Win a free cruise!',
+    questions: [{ type: 'predicate', name: 'spam', instructions: 'Is this message spam?' }],
+  });
+});
+
+test('the decisions tab refuses duplicate question names without sending', async ({ page, api }) => {
+  registerEmptyApp(api);
+
+  await page.goto('/playground/decisions');
+  await page.getByLabel('Input', { exact: true }).fill('Win a free cruise!');
+  await page.getByRole('button', { name: 'Add question' }).click();
+  for (const index of [0, 1]) {
+    await page.getByLabel('Question name').nth(index).fill('spam');
+    await page.getByLabel('Question instructions').nth(index).fill('Is this message spam?');
+  }
+  await page.getByLabel('Model', { exact: true }).fill('openai/gpt-6-luna');
+  await page.getByPlaceholder('Provider API key').fill('provider-secret-for-test');
+  await page.getByRole('button', { name: /^Run/ }).click();
+
+  await expect(page.getByText('Two questions are named spam.', { exact: true })).toBeVisible();
+  expect(api.matching('POST', '/api/decisions')).toHaveLength(0);
+});

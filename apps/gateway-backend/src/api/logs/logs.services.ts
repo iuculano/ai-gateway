@@ -1,9 +1,10 @@
 import { parseTags, probe, toPage } from '@repo/core';
 import { and, asc, countRows, db, desc, eq, gt, inArray, lt, sql } from '@repo/drizzle';
-import { logs } from '@repo/drizzle/schemas';
-import { getCaller, getTraceContext } from '@repo/hono';
+import { type LogRow, logs } from '@repo/drizzle/schemas';
+import { getActorId, getCaller, getLogger, getTraceContext } from '@repo/hono';
 import { objectStorage } from '@repo/object-storage';
 import { err, ok, type Result } from 'neverthrow';
+import type { GetModelResponse } from '../models/models.schemas';
 import Schemas, {
   type BatchResponse,
   type CountLogsResponse,
@@ -318,8 +319,8 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
  * The tenant the log belongs to.
  *
  * @param entry
- * What is known before the call: the model, the provider serving it, and the
- * actor spending on it.
+ * What is known before the call: the kind of call, the model, the provider
+ * serving it, and the actor spending on it.
  *
  * @returns
  * The id of the new log.
@@ -327,6 +328,7 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
 async function startLog(
   organizationId: string,
   entry: {
+    operation: LogRow['operation'];
     model: string;
     provider: string;
     tags?: Record<string, string>;
@@ -339,6 +341,7 @@ async function startLog(
     .insert(logs)
     .values({
       organization_id: organizationId,
+      operation: entry.operation,
       model: entry.model,
       provider: entry.provider,
       ...(trace
@@ -457,6 +460,76 @@ async function failLog(
     ));
 }
 
+/*
+ * The best-effort lifecycle for the request/response inference routes
+ * (embeddings, decisions).
+ *
+ * A log store outage should not fail the request, so these swallow and report
+ * their own errors. A null log id means the log never opened, and the later
+ * calls do nothing.
+ */
+
+/**
+ * Opens a log for an inference call that is about to be made.
+ *
+ * @param operation
+ * The kind of call.
+ *
+ * @param info
+ * The catalog model serving it.
+ *
+ * @param tags
+ * The raw ai-log-tags header.
+ *
+ * @returns
+ * The log id, or null when the log could not be opened.
+ */
+async function openLog(
+  operation: LogRow['operation'],
+  info: GetModelResponse,
+  tags: string | undefined,
+): Promise<string | null> {
+  const caller = getCaller();
+
+  try {
+    return await startLog(caller.organization.id, {
+      operation: operation,
+      model: info.name,
+      provider: info.provider,
+      tags: parseTags(tags),
+      actor_type: caller.actor.type,
+      actor_id: getActorId(caller),
+    });
+  } catch (error) {
+    getLogger().error({ err: error }, 'Failed to open inference log');
+    return null;
+  }
+}
+
+async function closeLog(logId: string | null, entry: Parameters<typeof completeLog>[2]): Promise<void> {
+  if (!logId) {
+    return;
+  }
+
+  try {
+    await completeLog(getCaller().organization.id, logId, entry);
+  } catch (error) {
+    getLogger().error({ err: error, log_id: logId }, 'Failed to store inference log payloads');
+  }
+}
+
+async function abandonLog(logId: string | null, entry: Parameters<typeof failLog>[2]): Promise<void> {
+  if (!logId) {
+    return;
+  }
+
+  try {
+    await failLog(getCaller().organization.id, logId, entry);
+  } catch (error) {
+    getLogger().error({ err: error, log_id: logId }, 'Failed to mark inference log failed');
+  }
+}
+
 export default {
   getLog,
   getLogPayload,
@@ -468,4 +541,8 @@ export default {
   startLog,
   completeLog,
   failLog,
+
+  openLog,
+  closeLog,
+  abandonLog,
 };
