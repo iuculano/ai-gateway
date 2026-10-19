@@ -29,6 +29,22 @@ const createTrace = createRoute({
         },
       },
     },
+    413: {
+      description: 'The trace export is too large for the trace store',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
+    503: {
+      description: 'The trace store is unavailable; the export can be retried',
+      content: {
+        'application/json': {
+          schema: httpError,
+        },
+      },
+    },
   },
 });
 
