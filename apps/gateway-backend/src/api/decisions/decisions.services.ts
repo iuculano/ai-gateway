@@ -15,7 +15,6 @@ import {
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
 import LogsService from '../logs/logs.services';
-import type { GetModelResponse } from '../models/models.schemas';
 import type { CreateDecisionBody, CreateDecisionHeaders, CreateDecisionResponse } from './decisions.schemas';
 
 type Question = CreateDecisionBody['questions'][number];
@@ -25,22 +24,41 @@ type Answer = CreateDecisionResponse['answers'][number];
 // The public service failure union.
 export type CreateDecisionFailure = ModelResolutionFailure | ProviderFailure;
 
-/**
- * Instantiate a decision model.
- */
-function createModel(info: GetModelResponse, headers: CreateDecisionHeaders): DecisionModel | undefined {
-  const config = { apiKey: headers['ai-api-key'], baseURL: headers['ai-base-url'] };
+interface ProviderSettings {
+  apiKey: string;
+  baseURL?: string;
+}
 
-  switch (info.provider) {
+/**
+ * Instantiates an AI SDK decision model based on the provider and model name.
+ *
+ * @param provider
+ * The name of the provider (e.g., 'openai', 'azure').
+ *
+ * @param model
+ * The name of the decision model.
+ *
+ * @param settings
+ * Provider specific configuration such as the API key and optional base URL.
+ *
+ * @returns
+ * The instantiated decision model or undefined if the provider is unsupported.
+ */
+function createSdkDecisionModel(
+  provider: string,
+  model: string,
+  settings: ProviderSettings,
+): DecisionModel | undefined {
+  switch (provider) {
     case 'openai':
-      return createOpenAI(config).decisionModel(info.name);
+      return createOpenAI(settings).decisionModel(model);
 
     case 'typesafe-ai':
-      return createTypeSafeAi(config).decisionModel(info.name);
+      return createTypeSafeAi(settings).decisionModel(model);
 
     // seemingly unsupported
     // case 'openrouter':
-    //   return createOpenRouter(config).decisionModel(info.name);
+    //   return createOpenRouter(settings).decisionModel(model);
 
     default:
       return undefined;
@@ -172,8 +190,12 @@ async function createDecision(
   }
 
   const info = resolved.value;
-  const instance = createModel(info, headers);
-  if (!instance) {
+  const sdkModel = createSdkDecisionModel(info.provider, info.name, {
+    apiKey: headers['ai-api-key'],
+    baseURL: headers['ai-base-url'],
+  });
+
+  if (!sdkModel) {
     return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
 
@@ -187,7 +209,7 @@ async function createDecision(
   // doDecide() instead of the experimental decide() allows this behavior.
   let result: SdkResult;
   try {
-    result = await instance.doDecide({
+    result = await sdkModel.doDecide({
       state: body.input,
       questions: Object.fromEntries(body.questions.map((question) => [question.name, toSdkQuestion(question)])),
       abortSignal: headers['ai-timeout-ms'] ? AbortSignal.timeout(headers['ai-timeout-ms']) : undefined,
