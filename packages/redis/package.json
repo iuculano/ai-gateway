@@ -12,10 +12,10 @@
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {
-    "redis": "^6.2.1"
+    "redis": "^6.3.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.2"
+    "@types/bun": "^1.4.3"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
