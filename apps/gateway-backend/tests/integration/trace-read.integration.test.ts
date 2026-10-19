@@ -65,8 +65,9 @@ function traceExport(traceId: string, startedAt: Date, spans: SpanFixture[]): Cr
   };
 }
 
-function ingest(tenant: Tenant, request: CreateTraceRequest) {
-  return runWithCaller(callerFor(tenant, ['traces:write']), () => TraceServices.createTrace(request));
+async function ingest(tenant: Tenant, request: CreateTraceRequest) {
+  const result = await runWithCaller(callerFor(tenant, ['traces:write']), () => TraceServices.createTrace(request));
+  return result._unsafeUnwrap();
 }
 
 function list(tenant: Tenant, query: Parameters<typeof TraceServices.listTraces>[0]) {
