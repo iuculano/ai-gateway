@@ -21,39 +21,37 @@ const responseHeaders = z.object({
   'ai-trace-id': z.string().regex(/^[0-9a-f]{32}$/),
 });
 
-const body = z.object({
-  model: z.string().min(1), // This is a little special here and can be 'provider/model' instead...
-  input: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(2048)]),
-  dimensions: z.number().int().positive().nullish(),
-  encoding_format: z.enum(['float', 'base64']).nullish(),
-  user: z.string().nullish(),
-});
+const createEmbedding = createSchema({
+  headers: headers,
 
-const embeddingList = z.object({
-  object: z.literal('list'),
-  data: z.array(
-    z.object({
-      object: z.literal('embedding'),
-      index: z.number().int().nonnegative(),
-      embedding: z.union([z.array(z.number()), z.string()]),
+  body: z.object({
+    model: z.string().min(1), // A 'provider/model' slug, or several to route between.
+    input: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(2048)]),
+    dimensions: z.number().int().positive().nullish(),
+    encoding_format: z.enum(['float', 'base64']).nullish(),
+    user: z.string().nullish(),
+  }),
+
+  response: z.object({
+    object: z.literal('list'),
+    data: z.array(
+      z.object({
+        object: z.literal('embedding'),
+        index: z.number().int().nonnegative(),
+        embedding: z.union([z.array(z.number()), z.string()]),
+      }),
+    ),
+    model: z.string(),
+    usage: z.object({
+      prompt_tokens: z.number().int().nonnegative(),
+      total_tokens: z.number().int().nonnegative(),
     }),
-  ),
-  model: z.string(),
-  usage: z.object({
-    prompt_tokens: z.number().int().nonnegative(),
-    total_tokens: z.number().int().nonnegative(),
   }),
 });
 
-const createEmbedding = createSchema({
-  headers: headers,
-  body: body,
-  response: embeddingList,
-});
-
 export type EmbeddingHeaders = z.infer<typeof headers>;
-export type EmbeddingBody = z.infer<typeof body>;
-export type EmbeddingList = z.infer<typeof embeddingList>;
+export type EmbeddingBody = z.infer<typeof createEmbedding.body>;
+export type EmbeddingResponse = z.infer<typeof createEmbedding.response>;
 
 export default {
   createEmbedding,

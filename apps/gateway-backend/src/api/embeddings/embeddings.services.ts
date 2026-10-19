@@ -11,28 +11,46 @@ import {
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
 import LogsService from '../logs/logs.services';
-import type { GetModelResponse } from '../models/models.schemas';
-import type { EmbeddingBody, EmbeddingHeaders, EmbeddingList } from './embeddings.schemas';
+import type { EmbeddingBody, EmbeddingHeaders, EmbeddingResponse } from './embeddings.schemas';
 
 // The public service failure union.
 export type CreateEmbeddingFailure = ModelResolutionFailure | ProviderFailure;
 
-/** Undefined when the provider has no embedding models. */
-function createModel(info: GetModelResponse, headers: EmbeddingHeaders): EmbeddingModel | undefined {
-  const config = { apiKey: headers['ai-api-key'], baseURL: headers['ai-base-url'] };
+interface ProviderSettings {
+  apiKey: string;
+  baseURL?: string;
+}
 
-  switch (info.provider) {
+/**
+ * Instantiates an AI SDK embedding model based on the provider and model name.
+ *
+ * @param provider The name of the provider (e.g., 'openai', 'azure').
+ *
+ * @param model The name of the embedding model.
+ *
+ * @param settings Provider specific configuration such as the API key and
+ * optional base URL.
+ *
+ * @returns
+ * The instantiated embedding model or undefined if the provider is unsupported.
+ */
+function createSdkEmbeddingModel(
+  provider: string,
+  model: string,
+  settings: ProviderSettings,
+): EmbeddingModel | undefined {
+  switch (provider) {
     case 'openai':
-      return createOpenAI(config).embedding(info.name);
+      return createOpenAI(settings).embedding(model);
 
     case 'azure':
-      return createAzure(config).embedding(info.name);
+      return createAzure(settings).embedding(model);
 
     case 'google':
-      return createGoogleGenerativeAI(config).embedding(info.name);
+      return createGoogleGenerativeAI(settings).embedding(model);
 
     case 'openrouter':
-      return createOpenRouter(config).textEmbeddingModel(info.name);
+      return createOpenRouter(settings).textEmbeddingModel(model);
 
     default:
       return undefined;
@@ -41,6 +59,12 @@ function createModel(info: GetModelResponse, headers: EmbeddingHeaders): Embeddi
 
 /**
  * Helper to convert floats to base64 representation.
+ *
+ * @param embedding
+ * The embedding array to convert.
+ *
+ * @returns
+ * The base64 encoded string representation of the embedding.
  */
 function toBase64(embedding: Embedding): string {
   return Buffer.from(new Float32Array(embedding).buffer).toString('base64');
@@ -58,29 +82,37 @@ function toBase64(embedding: Embedding): string {
 async function createEmbedding(
   headers: EmbeddingHeaders,
   body: EmbeddingBody,
-): Promise<Result<EmbeddingList, CreateEmbeddingFailure>> {
+): Promise<Result<EmbeddingResponse, CreateEmbeddingFailure>> {
+  // Resolve the model based on the routing strategy and weights.
   const resolved = await resolveModel(body.model, 'embedding', {
     strategy: headers['ai-routing-strategy'],
     weights: headers['ai-routing-weights'],
   });
+
   if (resolved.isErr()) {
     return err(resolved.error);
   }
 
+  // Should have a valid model...
   const info = resolved.value;
-  const instance = createModel(info, headers);
-  if (!instance) {
+  const sdkModel = createSdkEmbeddingModel(info.provider, info.name, {
+    apiKey: headers['ai-api-key'],
+    baseURL: headers['ai-base-url'],
+  });
+
+  // The model is in the catalog, but we can't instantiate the AI SDK model...
+  if (!sdkModel) {
     return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
 
   const logId = await LogsService.openLog('embedding', info, headers['ai-log-tags']);
-
   const startedAt = performance.now();
 
+  //
   let result: Awaited<ReturnType<typeof embedMany>>;
   try {
     result = await embedMany({
-      model: instance,
+      model: sdkModel,
       values: typeof body.input === 'string' ? [body.input] : body.input,
       maxRetries: headers['ai-max-retries'],
       abortSignal: headers['ai-timeout-ms'] ? AbortSignal.timeout(headers['ai-timeout-ms']) : undefined,
@@ -101,7 +133,7 @@ async function createEmbedding(
   const responseTimeMs = performance.now() - startedAt;
   const tokens = result.usage.tokens;
 
-  const response: EmbeddingList = {
+  const response: EmbeddingResponse = {
     object: 'list',
     data: result.embeddings.map((embedding, index) => ({
       object: 'embedding',
