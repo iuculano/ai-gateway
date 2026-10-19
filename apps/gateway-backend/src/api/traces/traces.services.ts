@@ -709,7 +709,13 @@ async function createTrace(request: CreateTraceRequest): Promise<Result<CreateTr
 
   // Partial success may return a body. A "full" sucess will return a 204 with
   // no body.
-  const body = await response.text();
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    return err({ code: 'TRACE_STORE_UNAVAILABLE', cause });
+  }
+
   if (body) {
     const json = JSON.parse(body);
     return ok(Schemas.createTrace.response.parse(json));

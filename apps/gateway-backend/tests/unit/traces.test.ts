@@ -289,6 +289,21 @@ test.each([
     },
     503,
   ],
+  [
+    'a connection dropped mid-body with 503',
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError('ECONNRESET: The socket connection was closed unexpectedly'));
+          },
+        }),
+        { status: 200 },
+      ),
+    503,
+  ],
+  // Not a transient fault, so it must not invite every exporter to retry it.
+  ['an unparseable success body with 500', () => new Response('not json', { status: 200 }), 500],
 ] as const)('POST /traces answers %s', async (_, respond, status) => {
   stubFetch(respond);
 
