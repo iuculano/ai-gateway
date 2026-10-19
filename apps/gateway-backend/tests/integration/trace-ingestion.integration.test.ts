@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
 import { runWithCaller } from '@repo/hono';
-import type { CreateTraceRequest } from '../../src/api/traces/traces.schemas';
+import Schemas, { type CreateTraceRequest } from '../../src/api/traces/traces.schemas';
 import TraceServices from '../../src/api/traces/traces.services';
 import { callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
 
@@ -65,8 +65,9 @@ function traceExport(rootStatus = 1, childStatus = 1): CreateTraceRequest {
   };
 }
 
-function ingest(tenant: Tenant, request: CreateTraceRequest) {
-  return runWithCaller(callerFor(tenant, ['traces:write']), () => TraceServices.createTrace(request));
+async function ingest(tenant: Tenant, request: CreateTraceRequest) {
+  const result = await runWithCaller(callerFor(tenant, ['traces:write']), () => TraceServices.createTrace(request));
+  return result._unsafeUnwrap();
 }
 
 function read(tenant: Tenant) {
@@ -125,4 +126,17 @@ test('a failed child is counted without marking a successful root failed', async
   const detail = await readableTrace(acme);
 
   expect(detail.trace).toMatchObject({ status: 'complete', error_count: 1 });
+});
+
+test('an attribute without a value is stored rather than crashing VictoriaTraces', async () => {
+  // VictoriaTraces v0.11.1 panics and restarts on this shape. Parsing is what
+  // the route does, and is where the missing value gets filled in.
+  const raw = traceExport();
+  raw.resourceSpans[0]?.resource?.attributes.push({ key: 'bare.attribute' });
+  const request = Schemas.createTrace.body.parse(raw);
+
+  expect(await ingest(acme, request)).toEqual({});
+
+  const detail = await readableTrace(acme);
+  expect(detail.trace.span_count).toBe(2);
 });

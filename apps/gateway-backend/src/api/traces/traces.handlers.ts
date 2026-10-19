@@ -3,7 +3,7 @@ import { assertNever } from '@repo/core';
 import { zodExceptionHook } from '@repo/hono';
 import { HTTPException } from 'hono/http-exception';
 import Routes from './traces.routes';
-import Services, { type GetTraceFailure } from './traces.services';
+import Services, { type CreateTraceFailure, type GetTraceFailure } from './traces.services';
 
 // The HTTP translations, one per service failure union.
 function toGetTraceHttpException(failure: GetTraceFailure): HTTPException {
@@ -18,6 +18,25 @@ function toGetTraceHttpException(failure: GetTraceFailure): HTTPException {
   }
 }
 
+// OTLP exporters retry 429, 502, 503 and 504 and give up on anything else, so
+// only an unavailable store may be answered with a retryable status.
+function toCreateTraceHttpException(failure: CreateTraceFailure): HTTPException {
+  const { code } = failure;
+
+  switch (code) {
+    case 'TRACE_EXPORT_REJECTED':
+      return failure.status === 413
+        ? new HTTPException(413, { message: 'The trace export is too large' })
+        : new HTTPException(400, { message: 'The trace store rejected the export' });
+
+    case 'TRACE_STORE_UNAVAILABLE':
+      return new HTTPException(503, { message: 'The trace store is unavailable', cause: failure.cause });
+
+    default:
+      return assertNever(code);
+  }
+}
+
 /**
  * POST /traces
  * Accept an OTLP/HTTP JSON trace export.
@@ -26,9 +45,14 @@ const createTrace = defineOpenAPIRoute({
   route: Routes.createTrace,
   handler: async (c) => {
     const body = c.req.valid('json');
-    const response = await Services.createTrace(body);
+    const result = await Services.createTrace(body);
 
-    return c.json(response, 200);
+    return result.match(
+      (response) => c.json(response, 200),
+      (failure) => {
+        throw toCreateTraceHttpException(failure);
+      },
+    );
   },
 });
 

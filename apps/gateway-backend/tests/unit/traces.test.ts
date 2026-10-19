@@ -211,7 +211,7 @@ test('createTrace posts OTLP JSON with server-derived tenant headers', async () 
   const result = await runWithCaller(caller, () => TraceServices.createTrace(traceExport()));
   const tenant = expectedTenant();
 
-  expect(result).toEqual({});
+  expect(result._unsafeUnwrap()).toEqual({});
   expect(outboundParts(outbound)).toEqual({
     origin: VICTORIA_ORIGIN,
     pathname: '/insert/opentelemetry/v1/traces',
@@ -267,12 +267,87 @@ test('POST /traces skips an empty export and pushes a populated export', async (
   expect(database.queries).toHaveLength(0);
 });
 
-test('createTrace rejects a VictoriaTraces ingestion error', async () => {
+test('createTrace classifies a VictoriaTraces ingestion error', async () => {
   stubFetch(() => new Response('request exceeds the limit', { status: 413 }));
 
-  await expect(runWithCaller(caller, () => TraceServices.createTrace(traceExport()))).rejects.toThrow(
-    'VictoriaTraces push failed with HTTP 413',
-  );
+  const result = await runWithCaller(caller, () => TraceServices.createTrace(traceExport()));
+
+  expect(result._unsafeUnwrapErr()).toEqual({ code: 'TRACE_EXPORT_REJECTED', status: 413 });
+});
+
+// OTLP exporters retry 429, 502, 503 and 504 only, so a rejected export must
+// not look retryable and an unavailable store must.
+test.each([
+  ['a rejected export with 400', () => new Response('bad request', { status: 400 }), 400],
+  ['an oversized export with 413', () => new Response('too large', { status: 413 }), 413],
+  ['an overloaded store with 503', () => new Response('busy', { status: 429 }), 503],
+  ['a failing store with 503', () => new Response('boom', { status: 500 }), 503],
+  [
+    'a dropped connection with 503',
+    () => {
+      throw new TypeError('ECONNRESET: The socket connection was closed unexpectedly');
+    },
+    503,
+  ],
+  [
+    'a connection dropped mid-body with 503',
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError('ECONNRESET: The socket connection was closed unexpectedly'));
+          },
+        }),
+        { status: 200 },
+      ),
+    503,
+  ],
+  // Not a transient fault, so it must not invite every exporter to retry it.
+  ['an unparseable success body with 500', () => new Response('not json', { status: 200 }), 500],
+] as const)('POST /traces answers %s', async (_, respond, status) => {
+  stubFetch(respond);
+
+  const response = await app.request('/v1/traces', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(traceExport()),
+  });
+
+  expect(response.status).toBe(status);
+});
+
+test('POST /traces gives every attribute a value before VictoriaTraces sees it', async () => {
+  let outbound: unknown;
+  stubFetch(async (request) => {
+    outbound = await request.json();
+    return new Response(null, { status: 204 });
+  });
+
+  // VictoriaTraces v0.11.1 panics on an attribute without a value, at any of
+  // these four levels.
+  const request = traceExport();
+  const resource = request.resourceSpans[0];
+  const scope = resource?.scopeSpans[0];
+  const span = scope?.spans[0];
+  if (!resource || !scope?.scope || !span) {
+    throw new Error('traceExport() changed shape');
+  }
+  resource.resource = { attributes: [{ key: 'resource.bare' }] };
+  scope.scope.attributes = [{ key: 'scope.bare' }];
+  span.attributes = [{ key: 'span.bare' }];
+  span.events = [{ name: 'event', timeUnixNano: '1788270422000000000', attributes: [{ key: 'event.bare' }] }];
+
+  const response = await app.request('/v1/traces', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  expect(response.status).toBe(200);
+  const pushed = JSON.stringify(outbound);
+  for (const key of ['resource.bare', 'scope.bare', 'span.bare', 'event.bare']) {
+    expect(pushed).toContain(`{"key":"${key}","value":{}}`);
+  }
 });
 
 test('GET /traces maps one LogsQL summary and adds trusted log totals', async () => {

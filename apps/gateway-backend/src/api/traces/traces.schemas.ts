@@ -67,7 +67,10 @@ const AnyValueSchema: z.ZodType<AnyValue> = z
 KeyValueSchema = z
   .object({
     key: z.string().min(1),
-    value: AnyValueSchema.optional(),
+
+    // OTLP allows the value to be absent, but VictoriaTraces (v0.11.1)
+    // seemingly crashes on an attribute without one...
+    value: AnyValueSchema.default({}),
   })
   .openapi('KeyValue');
 

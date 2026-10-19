@@ -20,6 +20,18 @@ type TraceNotFoundFailure = {
 
 export type GetTraceFailure = TraceNotFoundFailure;
 
+type TraceExportRejectedFailure = {
+  code: 'TRACE_EXPORT_REJECTED';
+  status: number;
+};
+
+type TraceStoreUnavailableFailure = {
+  code: 'TRACE_STORE_UNAVAILABLE';
+  cause: unknown;
+};
+
+export type CreateTraceFailure = TraceExportRejectedFailure | TraceStoreUnavailableFailure;
+
 /**
  * Try to derive a VictoriaMetrics tenant from the caller's organization id.
  *
@@ -654,7 +666,7 @@ function summaryFromSpans(traceId: string, spans: VictoriaSpan[], totals: Gatewa
  * @param request
  * OTLP trace body.
  */
-async function createTrace(request: CreateTraceRequest): Promise<CreateTraceResponse> {
+async function createTrace(request: CreateTraceRequest): Promise<Result<CreateTraceResponse, CreateTraceFailure>> {
   // Try to figure out if there's anything to even do.
   //
   // Can't just check resourceSpans.length because it's possible to get back
@@ -664,32 +676,52 @@ async function createTrace(request: CreateTraceRequest): Promise<CreateTraceResp
   );
 
   if (!hasSpans) {
-    return {};
+    return ok({});
   }
 
   // Try to push the trace to VictoriaMetrics.
-  const response = await fetch(new URL('/insert/opentelemetry/v1/traces', environment.VICTORIA_TRACES_URL), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...victoriaTenantHeaders(),
-    },
-    body: JSON.stringify(request),
-  });
+  let response: Response;
+  try {
+    response = await fetch(new URL('/insert/opentelemetry/v1/traces', environment.VICTORIA_TRACES_URL), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...victoriaTenantHeaders(),
+      },
+      body: JSON.stringify(request),
+    });
+  } catch (cause) {
+    return err({ code: 'TRACE_STORE_UNAVAILABLE', cause });
+  }
+
+  // A 429 is VictoriaTraces shedding load, not the caller's quota, so it is
+  // grouped with the 5xx responses an OTLP exporter should retry.
+  if (response.status >= 500 || response.status === 429) {
+    return err({
+      code: 'TRACE_STORE_UNAVAILABLE',
+      cause: new Error(`VictoriaTraces returned HTTP ${response.status}`),
+    });
+  }
 
   if (!response.ok) {
-    throw new Error(`VictoriaTraces push failed with HTTP ${response.status}`);
+    return err({ code: 'TRACE_EXPORT_REJECTED', status: response.status });
   }
 
   // Partial success may return a body. A "full" sucess will return a 204 with
   // no body.
-  const body = await response.text();
-  if (body) {
-    const json = JSON.parse(body);
-    return Schemas.createTrace.response.parse(json);
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    return err({ code: 'TRACE_STORE_UNAVAILABLE', cause });
   }
 
-  return {};
+  if (body) {
+    const json = JSON.parse(body);
+    return ok(Schemas.createTrace.response.parse(json));
+  }
+
+  return ok({});
 }
 
 async function listTraces(query: ListTracesQuery): Promise<ListTracesResponse> {
