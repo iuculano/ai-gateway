@@ -53,7 +53,6 @@ export function settleLog(
     }
   })();
 
-
   // Track this write until it finishes, so flushLogs() can wait for it.
   writes.add(write);
   write.finally(() => writes.delete(write));

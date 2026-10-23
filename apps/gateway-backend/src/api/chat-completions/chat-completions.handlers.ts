@@ -146,11 +146,6 @@ function toChatCompletionHttpException(
         message: 'top_logprobs requires logprobs to be true',
       });
 
-    case 'WEBHOOK_LOG_UNAVAILABLE':
-      return new HTTPException(503, {
-        message: 'Cannot queue a webhook delivery: the log it would point at could not be opened',
-      });
-
     case 'WEBHOOK_NOT_FOUND':
       return new HTTPException(404, {
         message: `No webhook with id '${failure.id}'`,
