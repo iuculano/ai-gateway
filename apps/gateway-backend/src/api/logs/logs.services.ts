@@ -1,10 +1,9 @@
 import { parseTags, probe, toPage } from '@repo/core';
 import { and, asc, countRows, db, desc, eq, gt, inArray, lt, sql } from '@repo/drizzle';
 import { type LogRow, logs } from '@repo/drizzle/schemas';
-import { getActorId, getCaller, getLogger, getTraceContext } from '@repo/hono';
+import { getActorId, getCaller, getTraceContext } from '@repo/hono';
 import { objectStorage } from '@repo/object-storage';
 import { err, ok, type Result } from 'neverthrow';
-import type { GetModelResponse } from '../models/models.schemas';
 import Schemas, {
   type BatchResponse,
   type CountLogsResponse,
@@ -15,6 +14,9 @@ import Schemas, {
   type ListLogsResponse,
   type LogShape,
 } from './logs.schemas';
+import { flushLogs, type PendingLog, settleLog } from './logs.writer';
+
+export type { PendingLog };
 
 // What type of payload we're attempting to retrieve.
 export type PayloadSide = 'request' | 'response';
@@ -41,10 +43,6 @@ type PayloadUnavailableFailure = {
 export type GetLogFailure = LogNotFoundFailure;
 export type GetLogPayloadFailure = LogNotFoundFailure | PayloadNotStoredFailure | PayloadUnavailableFailure;
 export type DeleteLogFailure = LogNotFoundFailure;
-
-function objectKey(organizationId: string, logId: string, side: PayloadSide): string {
-  return `logs/${organizationId}/${logId}/${side}.json.zst`;
-}
 
 function toLogShape(row: typeof logs.$inferSelect): LogShape {
   return Schemas.getLog.response.parse({
@@ -310,78 +308,66 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
 }
 
 /**
- * Opens a log for an inference request that is about to be made.
+ * Starts a new log for an inference request that is about to be made.
  *
- * The row is created as incomplete before the provider call so failures in
- * flight remain observable.
+ * @param operation
+ * The operation being performed.
  *
- * @param organizationId
- * The tenant the log belongs to.
+ * @param model
+ * The model being used for the inference request.
  *
- * @param entry
- * What is known before the call: the kind of call, the model, the provider
- * serving it, and the actor spending on it.
+ * @param provider
+ * The provider serving the inference request.
+ *
+ * @param tags
+ * The raw ai-log-tags header, if any.
  *
  * @returns
- * The id of the new log.
+ * The log, to pass to completeLog or failLog.
  */
-async function startLog(
-  organizationId: string,
-  entry: {
-    operation: LogRow['operation'];
-    model: string;
-    provider: string;
-    tags?: Record<string, string>;
-    actor_type: 'user' | 'api_key';
-    actor_id: string;
-  },
-): Promise<string> {
+function startLog(entry: {
+  operation: LogRow['operation'];
+  model: string;
+  provider: string;
+  tags?: string;
+}): PendingLog {
+  const caller = getCaller();
+
+  // Need to generate the id upfront instead of letting the database do it.
+  // Object storage and webhook expect it to exist.
+  const createdAt = new Date();
+  const id = Bun.randomUUIDv7('hex', createdAt);
+
+  // Should be available on every request in practice.
   const trace = getTraceContext();
-  const [row] = await db
-    .insert(logs)
-    .values({
-      organization_id: organizationId,
-      operation: entry.operation,
-      model: entry.model,
-      provider: entry.provider,
-      ...(trace
-        ? {
-            trace_id: trace.traceId,
-            span_id: trace.spanId,
-            ...(trace.parentSpanId ? { parent_span_id: trace.parentSpanId } : {}),
-          }
-        : {}),
-      // Required attribution ensures usage budgets cannot be bypassed.
-      actor_type: entry.actor_type,
-      actor_id: entry.actor_id,
-      // Capture tags before provider work because webhook fan-out reads them later.
-      tags: entry.tags,
-      status: 'incomplete',
-    })
-    .returning({ id: logs.id });
 
-  if (!row) {
-    throw new Error('Failed to open log');
-  }
-
-  return row.id;
+  return {
+    id: id,
+    organization_id: caller.organization.id,
+    operation: entry.operation,
+    model: entry.model,
+    provider: entry.provider,
+    trace_id: trace?.traceId,
+    span_id: trace?.spanId,
+    parent_span_id: trace?.parentSpanId,
+    actor_type: caller.actor.type,
+    actor_id: getActorId(caller),
+    tags: parseTags(entry.tags),
+    created_at: createdAt,
+  };
 }
 
 /**
- * Stores the payloads for a finished inference and marks the log complete.
+ * Writes a finished inference's log in the background: payloads, then the row.
  *
- * @param organizationId
- * The tenant the log belongs to.
- *
- * @param id
- * The log to complete, from startLog.
+ * @param log
+ * From startLog.
  *
  * @param entry
- * The payloads and the usage figures to record.
+ * The payloads, which to omit, and the usage to record.
  */
-async function completeLog(
-  organizationId: string,
-  id: string,
+function completeLog(
+  log: PendingLog,
   entry: {
     request: unknown;
     response: unknown;
@@ -395,139 +381,44 @@ async function completeLog(
     output_cost?: number;
     response_time_ms?: number;
   },
-): Promise<void> {
-  const requestKey = entry.omitRequest ? null : objectKey(organizationId, id, 'request');
-  const responseKey = entry.omitResponse ? null : objectKey(organizationId, id, 'response');
-
-  await Promise.all([
-    requestKey ? objectStorage.putJson(requestKey, entry.request) : Promise.resolve(),
-    responseKey ? objectStorage.putJson(responseKey, entry.response) : Promise.resolve(),
-  ]);
-
-  // biome-ignore format: looks nicer
-  await db
-    .update(logs)
-    .set({
+): void {
+  settleLog(
+    {
+      ...log,
       status: 'complete',
       gateway_cache_hit: entry.gateway_cache_hit ?? false,
       cached_input_tokens: entry.cached_input_tokens ?? null,
-      request_object_reference: requestKey,
-      response_object_reference: responseKey,
       ...(entry.input_tokens != null ? { input_tokens: entry.input_tokens } : {}),
       ...(entry.output_tokens != null ? { output_tokens: entry.output_tokens } : {}),
       ...(entry.input_cost != null ? { input_cost: entry.input_cost } : {}),
       ...(entry.output_cost != null ? { output_cost: entry.output_cost } : {}),
       ...(entry.response_time_ms != null ? { response_time_ms: entry.response_time_ms } : {}),
-    })
-    .where(and(
-      eq(logs.organization_id, organizationId),
-      eq(logs.id, id)
-    ));
+    },
+    {
+      ...(entry.omitRequest ? {} : { request: entry.request }),
+      ...(entry.omitResponse ? {} : { response: entry.response }),
+    },
+  );
 }
 
 /**
- * Marks a log failed.
+ * Writes the log of an inference that did not finish, with its request.
  *
- * @param organizationId
- * The tenant the log belongs to.
- *
- * @param id
- * The log to fail, from startLog.
+ * @param log
+ * From startLog.
  *
  * @param entry
- * The request payload and its storage-omission control.
+ * The request payload, and whether to omit it.
+ *
+ * @param status
+ * 'failed', or 'incomplete' when the caller left mid-stream.
  */
-async function failLog(
-  organizationId: string,
-  id: string,
+function failLog(
+  log: PendingLog,
   entry: { request: unknown; omitRequest?: boolean },
-): Promise<void> {
-  const key = entry.omitRequest ? null : objectKey(organizationId, id, 'request');
-  if (key) {
-    await objectStorage.putJson(key, entry.request);
-  }
-
-  // biome-ignore format: looks nicer
-  await db
-    .update(logs)
-    .set({
-      status: 'failed',
-      ...(key ? { request_object_reference: key } : {}),
-    })
-    .where(and(
-      eq(logs.organization_id, organizationId),
-      eq(logs.id, id)
-    ));
-}
-
-/*
- * The best-effort lifecycle for the request/response inference routes
- * (embeddings, decisions).
- *
- * A log store outage should not fail the request, so these swallow and report
- * their own errors. A null log id means the log never opened, and the later
- * calls do nothing.
- */
-
-/**
- * Opens a log for an inference call that is about to be made.
- *
- * @param operation
- * The kind of call.
- *
- * @param info
- * The catalog model serving it.
- *
- * @param tags
- * The raw ai-log-tags header.
- *
- * @returns
- * The log id, or null when the log could not be opened.
- */
-async function openLog(
-  operation: LogRow['operation'],
-  info: GetModelResponse,
-  tags: string | undefined,
-): Promise<string | null> {
-  const caller = getCaller();
-
-  try {
-    return await startLog(caller.organization.id, {
-      operation: operation,
-      model: info.name,
-      provider: info.provider,
-      tags: parseTags(tags),
-      actor_type: caller.actor.type,
-      actor_id: getActorId(caller),
-    });
-  } catch (error) {
-    getLogger().error({ err: error }, 'Failed to open inference log');
-    return null;
-  }
-}
-
-async function closeLog(logId: string | null, entry: Parameters<typeof completeLog>[2]): Promise<void> {
-  if (!logId) {
-    return;
-  }
-
-  try {
-    await completeLog(getCaller().organization.id, logId, entry);
-  } catch (error) {
-    getLogger().error({ err: error, log_id: logId }, 'Failed to store inference log payloads');
-  }
-}
-
-async function abandonLog(logId: string | null, entry: Parameters<typeof failLog>[2]): Promise<void> {
-  if (!logId) {
-    return;
-  }
-
-  try {
-    await failLog(getCaller().organization.id, logId, entry);
-  } catch (error) {
-    getLogger().error({ err: error, log_id: logId }, 'Failed to mark inference log failed');
-  }
+  status: 'failed' | 'incomplete' = 'failed',
+): void {
+  settleLog({ ...log, status }, entry.omitRequest ? {} : { request: entry.request });
 }
 
 export default {
@@ -541,8 +432,5 @@ export default {
   startLog,
   completeLog,
   failLog,
-
-  openLog,
-  closeLog,
-  abandonLog,
+  flushLogs,
 };
