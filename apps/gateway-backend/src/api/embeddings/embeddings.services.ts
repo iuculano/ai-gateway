@@ -105,7 +105,12 @@ async function createEmbedding(
     return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
 
-  const logId = await LogsService.openLog('embedding', info, headers['ai-log-tags']);
+  const log = LogsService.startLog({
+    operation: 'embedding',
+    model: info.name,
+    provider: info.provider,
+    tags: headers['ai-log-tags'],
+  });
   const startedAt = performance.now();
 
   //
@@ -124,7 +129,7 @@ async function createEmbedding(
       },
     });
   } catch (error) {
-    await LogsService.abandonLog(logId, { request: body, omitRequest: headers['ai-log-omit-request'] });
+    LogsService.failLog(log, { request: body, omitRequest: headers['ai-log-omit-request'] });
 
     const failure = toProviderFailure(error);
     return err(failure);
@@ -147,7 +152,7 @@ async function createEmbedding(
     },
   };
 
-  await LogsService.closeLog(logId, {
+  LogsService.completeLog(log, {
     request: body,
     response: response,
     omitRequest: headers['ai-log-omit-request'],
