@@ -7,6 +7,10 @@ export type PendingLog = Omit<typeof logs.$inferInsert, 'status'> & { id: string
 
 const writes = new Set<Promise<void>>();
 
+export function payloadKey(organizationId: string, id: string): string {
+  return `logs/${organizationId}/${id}.json.zst`;
+}
+
 /**
  * Writes a log in the background.
  *
@@ -24,11 +28,8 @@ export function settleLog(
   const logger = getLogger();
 
   const id = row.id;
-  const objects = Object.entries(payloads).map(([side, value]) => ({
-    column: `${side}_object_reference`,
-    key: `logs/${row.organization_id}/${id}/${side}.json.zst`,
-    value,
-  }));
+  const key = payloadKey(row.organization_id, id);
+  const sides = Object.keys(payloads);
 
   // Start the background write, grab the promise to track.
   const write = (async () => {
@@ -36,7 +37,9 @@ export function settleLog(
 
     // Try to write the object storage payload first.
     try {
-      await Promise.all(objects.map(({ key, value }) => objectStorage.putJson(key, value)));
+      if (sides.length > 0) {
+        await objectStorage.putJson(key, payloads);
+      }
     } catch (error) {
       stored = false;
       logger.error({ err: error, log_id: id }, 'Failed to store inference log payloads');
@@ -46,7 +49,8 @@ export function settleLog(
     try {
       await db.insert(logs).values({
         ...row,
-        ...(stored ? Object.fromEntries(objects.map(({ column, key }) => [column, key])) : {}),
+        // Flag the sides that made it to storage; both stay false if the upload failed.
+        ...(stored ? Object.fromEntries(sides.map((side) => [`has_${side}`, true])) : {}),
       });
     } catch (error) {
       logger.error({ err: error, log_id: id }, 'Failed to write inference log');

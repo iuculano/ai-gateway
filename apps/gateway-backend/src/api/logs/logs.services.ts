@@ -12,9 +12,8 @@ import Schemas, {
   type GetLogResponse,
   type ListLogsQuery,
   type ListLogsResponse,
-  type LogShape,
 } from './logs.schemas';
-import { flushLogs, type PendingLog, settleLog } from './logs.writer';
+import { flushLogs, type PendingLog, payloadKey, settleLog } from './logs.writer';
 
 export type { PendingLog };
 
@@ -44,13 +43,7 @@ export type GetLogFailure = LogNotFoundFailure;
 export type GetLogPayloadFailure = LogNotFoundFailure | PayloadNotStoredFailure | PayloadUnavailableFailure;
 export type DeleteLogFailure = LogNotFoundFailure;
 
-function toLogShape(row: typeof logs.$inferSelect): LogShape {
-  return Schemas.getLog.response.parse({
-    ...row,
-    has_request: row.request_object_reference !== null,
-    has_response: row.response_object_reference !== null,
-  });
-}
+type StoredPayloads = Partial<Record<PayloadSide, unknown>>;
 
 /**
  * Retrieves a single log by its id.
@@ -74,7 +67,7 @@ async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>
     return err({ code: 'LOG_NOT_FOUND', id });
   }
 
-  const parsed = toLogShape(row);
+  const parsed = Schemas.getLog.response.parse(row);
   return ok(parsed);
 }
 
@@ -106,14 +99,13 @@ async function getLogPayload(
     return err({ code: 'LOG_NOT_FOUND', id });
   }
 
-  const key = side === 'request' ? row.request_object_reference : row.response_object_reference;
-  if (!key) {
+  if (!(side === 'request' ? row.has_request : row.has_response)) {
     return err({ code: 'PAYLOAD_NOT_STORED', id, side });
   }
 
-  // Have a reference saved but the object is missing, somehow.
-  const payload = await objectStorage.getJson(key);
-  if (payload === null) {
+  // Flagged as stored but the object is missing, somehow.
+  const payload = (await objectStorage.getJson<StoredPayloads>(payloadKey(row.organization_id, row.id)))?.[side];
+  if (payload == null) {
     return err({ code: 'PAYLOAD_UNAVAILABLE', id, side });
   }
 
@@ -136,8 +128,8 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
   const rows = await db
     .select({
       id: logs.id,
-      request_object_reference: logs.request_object_reference,
-      response_object_reference: logs.response_object_reference,
+      has_request: logs.has_request,
+      has_response: logs.has_response,
     })
     .from(logs)
     .where(and(eq(logs.organization_id, caller.organization.id), inArray(logs.id, requested)));
@@ -146,9 +138,8 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
   // on the requested side.
   const keysByLogId = new Map<string, string>();
   for (const row of rows) {
-    const key = side === 'request' ? row.request_object_reference : row.response_object_reference;
-    if (key) {
-      keysByLogId.set(row.id, key);
+    if (side === 'request' ? row.has_request : row.has_response) {
+      keysByLogId.set(row.id, payloadKey(caller.organization.id, row.id));
     }
   }
 
@@ -164,12 +155,12 @@ async function getLogPayloadBatch(ids: string[], side: PayloadSide): Promise<Bat
     });
   }
 
-  const payloadsByKey = await objectStorage.getManyJson([...keysByLogId.values()]);
+  const payloadsByKey = await objectStorage.getManyJson<StoredPayloads>([...keysByLogId.values()]);
 
   const data: Record<string, unknown> = {};
   for (const [logId, key] of keysByLogId) {
-    const payload = payloadsByKey.get(key);
-    if (payload !== undefined) {
+    const payload = payloadsByKey.get(key)?.[side];
+    if (payload != null) {
       data[logId] = payload;
     }
   }
@@ -242,7 +233,7 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
 
   // Recompute both cursors after the possible reversal.
   return Schemas.listLogs.response.parse({
-    data: data.map(toLogShape),
+    data: data.map((row) => Schemas.getLog.response.parse(row)),
     meta: {
       newest_id: data.at(0)?.id ?? null,
       oldest_id: data.at(-1)?.id ?? null,
@@ -301,8 +292,9 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
     return err({ code: 'LOG_NOT_FOUND', id });
   }
 
-  const keys = [row.request_object_reference, row.response_object_reference].filter((key) => key !== null);
-  await objectStorage.deleteMany(keys);
+  if (row.has_request || row.has_response) {
+    await objectStorage.delete(payloadKey(row.organization_id, row.id));
+  }
 
   return ok(undefined); // 204 no content
 }
