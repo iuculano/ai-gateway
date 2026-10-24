@@ -7,6 +7,7 @@ import type {
   CreateDecisionResponse,
 } from '../../src/api/decisions/decisions.schemas';
 import {
+  afterLogWrites,
   callerFixture,
   database,
   installModuleMocks,
@@ -92,7 +93,7 @@ app.route('/v1', handlers);
 const quiet = { error() {}, warn() {}, info() {}, debug() {}, child: () => quiet } as any;
 
 function withCaller<T>(work: () => T): T {
-  return runWithCaller(callerFixture, work, { logger: quiet });
+  return afterLogWrites(runWithCaller(callerFixture, work, { logger: quiet }));
 }
 
 function headers(overrides: Partial<CreateDecisionHeaders> = {}): CreateDecisionHeaders {

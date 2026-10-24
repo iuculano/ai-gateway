@@ -2,6 +2,7 @@ import { beforeEach, expect, mock, test } from 'bun:test';
 import { APICallError } from 'ai';
 import type { EmbeddingBody, EmbeddingHeaders } from '../../src/api/embeddings/embeddings.schemas';
 import {
+  afterLogWrites,
   callerFixture,
   database,
   installModuleMocks,
@@ -79,7 +80,7 @@ app.route('/v1', handlers);
 const quiet = { error() {}, warn() {}, info() {}, debug() {}, child: () => quiet } as any;
 
 function withCaller<T>(work: () => T): T {
-  return runWithCaller(callerFixture, work, { logger: quiet });
+  return afterLogWrites(runWithCaller(callerFixture, work, { logger: quiet }));
 }
 
 function headers(overrides: Partial<EmbeddingHeaders> = {}): EmbeddingHeaders {

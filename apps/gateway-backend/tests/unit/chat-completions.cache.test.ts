@@ -1,7 +1,17 @@
 import { beforeEach, expect, mock, test } from 'bun:test';
 import { streamText, wrapLanguageModel } from 'ai';
 import Schemas from '../../src/api/chat-completions/chat-completions.schemas';
-import { cache, callerFixture, database, installModuleMocks, logWrites, modelRow, resetDoubles, rows } from './doubles';
+import {
+  afterLogWrites,
+  cache,
+  callerFixture,
+  database,
+  installModuleMocks,
+  logWrites,
+  modelRow,
+  resetDoubles,
+  rows,
+} from './doubles';
 
 await installModuleMocks();
 
@@ -145,17 +155,19 @@ for (const streaming of [false, true]) {
     logWrites.installDefaults();
     const headers = { 'ai-api-key': 'cache-test-secret', 'ai-cache-enabled': true };
     const body = { model: 'openai/test-model', messages: [{ role: 'user' as const, content: 'Hello' }] };
-    await runWithCaller(callerFixture, async () => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (streaming) {
-          for await (const result of ChatCompletions.streamChatCompletion(headers, body)) {
-            expect(result.isOk()).toBe(true);
+    await afterLogWrites(
+      runWithCaller(callerFixture, async () => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (streaming) {
+            for await (const result of ChatCompletions.streamChatCompletion(headers, body)) {
+              expect(result.isOk()).toBe(true);
+            }
+          } else {
+            expect((await ChatCompletions.createChatCompletion(headers, body)).isOk()).toBe(true);
           }
-        } else {
-          expect((await ChatCompletions.createChatCompletion(headers, body)).isOk()).toBe(true);
         }
-      }
-    });
+      }),
+    );
     expect(logWrites.completed[0]?.entry.gateway_cache_hit).toBe(false);
     expect(logWrites.completed[0]?.entry.cached_input_tokens).toBe(2);
     expect(logWrites.completed[0]?.entry.input_cost).toBeCloseTo(0.000006, 15);

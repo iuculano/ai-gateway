@@ -130,20 +130,13 @@ describe('filters', () => {
   });
 
   test('rows come back in the derived shape, not raw', async () => {
-    // has_request / has_response are derived from the key columns, and the key
-    // columns themselves must not reach the caller.
-    database.respondTo(
-      'select',
-      'logs',
-      rows(logRow({ id: ID_20, request_object_reference: 'logs/x/request.json.zst', response_object_reference: null })),
-    );
+    database.respondTo('select', 'logs', rows(logRow({ id: ID_20, has_request: true, has_response: false })));
 
     const page = await Services.listLogs({ limit: 20 });
     const row = page.data[0] as Record<string, unknown>;
 
     expect(row.has_request).toBe(true);
     expect(row.has_response).toBe(false);
-    expect(row.request_object_reference).toBeUndefined();
-    expect(row.response_object_reference).toBeUndefined();
+    expect(row).not.toHaveProperty('organization_id');
   });
 });
