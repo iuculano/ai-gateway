@@ -32,7 +32,7 @@ createObjectStorage({
 
 await connectRedis();
 
-// Finish inference logs and API key usage before exiting.
+// Finish inference logs and API key usage writes before exiting.
 process.on('SIGTERM', async () => {
   await Promise.all([LogsService.flushLogs(), flushApiKeyUsage()]);
   process.exit(0);
