@@ -2,7 +2,8 @@ import { afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { runWithCaller } from '@repo/hono';
 import { objectStorage } from '@repo/object-storage';
 import LogServices from '../../src/api/logs/logs.services';
-import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
+import { payloadKey } from '../../src/api/logs/logs.writer';
+import { callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
 
 let acme: Tenant;
 
@@ -36,19 +37,17 @@ test('request and response payloads round-trip through MinIO and are deleted wit
     usage: { prompt_tokens: 12, completion_tokens: 4 },
   };
 
-  const id = await LogServices.startLog(acme.organizationId, {
-    operation: 'chat',
-    model: 'integration-model',
-    provider: 'test-provider',
-    actor_type: 'user',
-    actor_id: acme.userId,
-  });
-  await LogServices.completeLog(acme.organizationId, id, {
+  const pending = await asTenant(async () =>
+    LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' }),
+  );
+  const id = pending.id;
+  await LogServices.completeLog(pending, {
     request,
     response,
     input_tokens: 12,
     output_tokens: 4,
   });
+  await LogServices.flushLogs();
 
   const log = await asTenant(() => LogServices.getLog(id));
   expect(log._unsafeUnwrap()).toMatchObject({ has_request: true, has_response: true, status: 'complete' });
@@ -63,36 +62,25 @@ test('request and response payloads round-trip through MinIO and are deleted wit
   expect(requestBatch).toEqual({ data: { [id]: request }, meta: { requested: 1, returned: 1, missing: [] } });
   expect(responseBatch).toEqual({ data: { [id]: response }, meta: { requested: 1, returned: 1, missing: [] } });
 
-  const [references] = await admin`
-    select request_object_reference, response_object_reference
-    from logs
-    where id = ${id}
-  `;
-  const requestKey = references?.request_object_reference;
-  const responseKey = references?.response_object_reference;
-  if (typeof requestKey !== 'string' || typeof responseKey !== 'string') {
-    throw new Error('Completed log did not persist both object references');
-  }
+  const key = payloadKey(acme.organizationId, id);
+  expect(await objectStorage.getJson<object>(key)).toEqual({ request, response });
 
   const deleted = await asTenant(() => LogServices.deleteLog(id));
   expect(deleted.isOk()).toBe(true);
-  expect(await objectStorage.getJson(requestKey)).toBeNull();
-  expect(await objectStorage.getJson(responseKey)).toBeNull();
+  expect(await objectStorage.getJson(key)).toBeNull();
 });
 
 test('payload omission leaves the skipped side undiscoverable and unstored', async () => {
-  const id = await LogServices.startLog(acme.organizationId, {
-    operation: 'chat',
-    model: 'integration-model',
-    provider: 'test-provider',
-    actor_type: 'user',
-    actor_id: acme.userId,
-  });
-  await LogServices.completeLog(acme.organizationId, id, {
+  const pending = await asTenant(async () =>
+    LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' }),
+  );
+  const id = pending.id;
+  await LogServices.completeLog(pending, {
     request: { secret: 'do not retain' },
     response: { retained: true },
     omitRequest: true,
   });
+  await LogServices.flushLogs();
 
   const log = (await asTenant(() => LogServices.getLog(id)))._unsafeUnwrap();
   expect(log).toMatchObject({ status: 'complete', has_request: false, has_response: true });
@@ -106,15 +94,14 @@ test('payload omission leaves the skipped side undiscoverable and unstored', asy
 
 test('a failed inference retains its request but never advertises a response', async () => {
   const request = { model: 'integration-model', messages: [{ role: 'user', content: 'fail' }] };
-  const id = await LogServices.startLog(acme.organizationId, {
-    operation: 'chat',
-    model: 'integration-model',
-    provider: 'test-provider',
-    actor_type: 'user',
-    actor_id: acme.userId,
-  });
+  const pending = await asTenant(async () =>
+    LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' }),
+  );
+  const id = pending.id;
 
-  await LogServices.failLog(acme.organizationId, id, { request });
+  await LogServices.failLog(pending, { request });
+
+  await LogServices.flushLogs();
 
   const log = (await asTenant(() => LogServices.getLog(id)))._unsafeUnwrap();
   expect(log).toMatchObject({ status: 'failed', has_request: true, has_response: false });
@@ -127,39 +114,27 @@ test('a failed inference retains its request but never advertises a response', a
 });
 
 test('a batch returns healthy payloads when another referenced object is missing', async () => {
-  const actor = { actor_type: 'user', actor_id: acme.userId } as const;
-  const first = await LogServices.startLog(acme.organizationId, {
-    operation: 'chat',
-    model: 'one',
-    provider: 'test-provider',
-    ...actor,
-  });
-  const second = await LogServices.startLog(acme.organizationId, {
-    operation: 'chat',
-    model: 'two',
-    provider: 'test-provider',
-    ...actor,
-  });
-  await LogServices.completeLog(acme.organizationId, first, {
+  const firstLog = await asTenant(async () =>
+    LogServices.startLog({ operation: 'chat', model: 'one', provider: 'test-provider' }),
+  );
+  const first = firstLog.id;
+  const secondLog = await asTenant(async () =>
+    LogServices.startLog({ operation: 'chat', model: 'two', provider: 'test-provider' }),
+  );
+  const second = secondLog.id;
+  await LogServices.completeLog(firstLog, {
     request: { value: 'one' },
     response: {},
     omitResponse: true,
   });
-  await LogServices.completeLog(acme.organizationId, second, {
+  await LogServices.completeLog(secondLog, {
     request: { value: 'two' },
     response: {},
     omitResponse: true,
   });
+  await LogServices.flushLogs();
 
-  const [reference] = await admin`
-    select request_object_reference
-    from logs
-    where id = ${second}
-  `;
-  if (typeof reference?.request_object_reference !== 'string') {
-    throw new Error('Completed log did not persist its request object reference');
-  }
-  await objectStorage.delete(reference.request_object_reference);
+  await objectStorage.delete(payloadKey(acme.organizationId, second));
 
   const batch = await asTenant(() => LogServices.getLogPayloadBatch([first, second], 'request'));
 

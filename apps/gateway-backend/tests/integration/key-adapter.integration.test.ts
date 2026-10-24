@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
-import { createGenericKeyAdapter } from '@repo/auth';
+import { createGenericKeyAdapter, flushApiKeyUsage } from '@repo/auth';
 import { runWithCaller } from '@repo/hono';
 import { redis } from '@repo/redis';
 import Services from '../../src/api/api-keys/api-keys.services';
@@ -20,6 +20,8 @@ let acme: Tenant;
 beforeAll(prepareSuite);
 
 beforeEach(async () => {
+  // Don't let usage buffered by a previous test land after the reset.
+  await flushApiKeyUsage();
   await resetDatabase();
   acme = await seedTenant('acme');
 });
@@ -137,6 +139,7 @@ test('successful authentication records usage that the API-key stats endpoint re
 
   await authenticateKey(key.key);
   await authenticateKey(key.key);
+  await flushApiKeyUsage();
 
   const stats = await runWithCaller(callerFor(acme, ['api-keys:read']), () => Services.getApiKeyStats(key.id));
   const value = stats._unsafeUnwrap();
@@ -162,6 +165,7 @@ test('a limited key rejects excess authentication without recording it as succes
   const response = (failure as { res?: Response }).res;
   expect(response?.headers.get('Retry-After')).toMatch(/^\d+$/);
   expect(response?.headers.get('RateLimit-Policy')).toBe('1;w=60');
+  await flushApiKeyUsage();
   expect(await redis.hGet(`api-keys:usage:${key.id}`, 'total_requests')).toBe('1');
 });
 
@@ -177,5 +181,6 @@ test('updating a limited key resets its live window and the new policy takes eff
   expect(updated.isOk()).toBe(true);
 
   await expect(authenticateKey(key.key)).resolves.toMatchObject({ organization: { id: acme.organizationId } });
+  await flushApiKeyUsage();
   expect(await redis.hGet(`api-keys:usage:${key.id}`, 'total_requests')).toBe('2');
 });

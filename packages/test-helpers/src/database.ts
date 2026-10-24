@@ -237,6 +237,11 @@ export function createDatabaseDouble(): DatabaseDoubleHandle {
             return undefined;
           }
 
+          // A prepared query answers each execute() as its own query.
+          if (property === 'execute') {
+            return (...args: unknown[]) => answer({ ...query, calls: [...query.calls, { method: 'execute', args }] });
+          }
+
           return (...args: unknown[]) => {
             query.calls.push({ method: property, args });
             if (property === 'from') {

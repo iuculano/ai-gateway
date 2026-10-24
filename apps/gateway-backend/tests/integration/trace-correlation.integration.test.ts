@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
 import { runWithCaller } from '@repo/hono';
 import LogServices from '../../src/api/logs/logs.services';
-import { callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
+import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
 
 const TRACE_ID = '4bf92f3577b34da6a3ce929d0e0e4736';
 const PARENT_SPAN_ID = '00f067aa0ba902b7';
@@ -16,17 +16,19 @@ beforeEach(async () => {
   [acme, globex] = await Promise.all([seedTenant('trace-acme'), seedTenant('trace-globex')]);
 });
 
-function openCorrelatedLog(tenant: Tenant, spanId: string): Promise<string> {
-  return runWithCaller(
+async function openCorrelatedLog(tenant: Tenant, spanId: string): Promise<string> {
+  const id = await runWithCaller(
     callerFor(tenant),
-    () =>
-      LogServices.startLog(tenant.organizationId, {
-        operation: 'chat',
-        model: 'integration-model',
-        provider: 'test-provider',
-        actor_type: 'user',
-        actor_id: tenant.userId,
-      }),
+    async () => {
+      const log = LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' });
+      LogServices.completeLog(log, {
+        request: {},
+        response: {},
+        omitRequest: true,
+        omitResponse: true,
+      });
+      return log.id;
+    },
     {
       trace: {
         traceId: TRACE_ID,
@@ -35,6 +37,9 @@ function openCorrelatedLog(tenant: Tenant, spanId: string): Promise<string> {
       },
     },
   );
+  await LogServices.flushLogs();
+
+  return id;
 }
 
 test('one W3C trace groups distinct gateway spans without crossing tenants', async () => {
@@ -63,5 +68,10 @@ test('one W3C trace groups distinct gateway spans without crossing tenants', asy
 });
 
 test('database constraints reject invalid W3C identifiers at the persistence boundary', async () => {
-  await expect(openCorrelatedLog(acme, '0'.repeat(16))).rejects.toThrow();
+  // The write happens in the background and logs its failure, so the proof is
+  // that no row was persisted.
+  const id = await openCorrelatedLog(acme, '0'.repeat(16));
+
+  const [row] = await admin`select count(*)::int as count from logs where id = ${id}`;
+  expect(row?.count).toBe(0);
 });
