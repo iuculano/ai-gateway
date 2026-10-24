@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { db, eq } from '@repo/drizzle';
+import { db, eq, sql } from '@repo/drizzle';
 import { apiKeys, organizations, users } from '@repo/drizzle/schemas';
+import { getLogger } from '@repo/hono';
 import type { CallerIdentity, KeyAuthAdapter } from '@repo/hono/auth-adapter';
 import { consumeFixedWindowCounter, redis } from '@repo/redis';
 import { HTTPException } from 'hono/http-exception';
@@ -32,16 +33,8 @@ function hashApiKey(key: string): string {
   return createHash('sha256').update(key).digest('hex');
 }
 
-/**
- * Resolves and validates an API key, its tenant, and its accountable owner in
- * one indexed database query.
- *
- * This is intentionally the one cross-organization API-key query. The row
- * being looked up is what determines the tenant, so there is no organization
- * to filter by until after it returns.
- */
-async function resolveApiKeyAuthorization(keyHash: string): Promise<ResolvedApiKeyAuthorization> {
-  const [row] = await db
+function prepareKeyLookup() {
+  return db
     .select({
       apiKey: {
         id: apiKeys.id,
@@ -70,7 +63,15 @@ async function resolveApiKeyAuthorization(keyHash: string): Promise<ResolvedApiK
     .from(apiKeys)
     .innerJoin(organizations, eq(apiKeys.organization_id, organizations.id))
     .leftJoin(users, eq(apiKeys.creator_id, users.id))
-    .where(eq(apiKeys.key_hash, keyHash));
+    .where(eq(apiKeys.key_hash, sql.placeholder('keyHash')))
+    .prepare('resolve_api_key_authorization');
+}
+
+let keyLookup: ReturnType<typeof prepareKeyLookup> | undefined;
+
+async function resolveApiKeyAuthorization(keyHash: string): Promise<ResolvedApiKeyAuthorization> {
+  keyLookup ??= prepareKeyLookup();
+  const [row] = await keyLookup.execute({ keyHash });
 
   if (!row) {
     throw new HTTPException(401, {
@@ -180,18 +181,42 @@ async function enforceKeyQuota(apiKey: QuotaApiKey): Promise<void> {
   }
 }
 
-/**
- * Updates the key's usage stats in Redis.
- */
-async function recordApiKeyUsage(apiKeyId: string): Promise<void> {
-  const usageKey = `api-keys:usage:${apiKeyId}`;
+const USAGE_FLUSH_MS = 1_000;
 
-  // biome-ignore format: please biome leave this alone, i like it this way
-  await redis
-    .multi()
-    .hIncrBy(usageKey, 'total_requests', 1)
-    .hSet(usageKey, 'last_used_at', Date.now())
-    .exec();
+const pendingUsage = new Map<string, { requests: number; lastUsedAt: number }>();
+let usageTimer: Timer | undefined;
+
+function recordApiKeyUsage(apiKeyId: string): void {
+  const usage = pendingUsage.get(apiKeyId) ?? { requests: 0, lastUsedAt: 0 };
+  usage.requests += 1;
+  usage.lastUsedAt = Date.now();
+  pendingUsage.set(apiKeyId, usage);
+
+  usageTimer ??= setTimeout(flushApiKeyUsage, USAGE_FLUSH_MS);
+}
+
+/**
+ * Writes the buffered usage counts to Redis.
+ */
+export async function flushApiKeyUsage(): Promise<void> {
+  clearTimeout(usageTimer);
+  usageTimer = undefined;
+  if (pendingUsage.size === 0) {
+    return;
+  }
+
+  const multi = redis.multi();
+  for (const [apiKeyId, usage] of pendingUsage) {
+    const usageKey = `api-keys:usage:${apiKeyId}`;
+    multi.hIncrBy(usageKey, 'total_requests', usage.requests).hSet(usageKey, 'last_used_at', usage.lastUsedAt);
+  }
+  pendingUsage.clear();
+
+  try {
+    await multi.exec();
+  } catch (error) {
+    getLogger().error({ err: error }, 'Failed to write API key usage');
+  }
 }
 
 /**
@@ -216,7 +241,7 @@ export function createGenericKeyAdapter(options: GenericKeyAdapterOptions = {}):
     // Rate limiting - make sure we enforce before we write usage so it doesn't
     // continue to be incremeneted despite failing.
     await enforceKeyQuota(apiKey);
-    await recordApiKeyUsage(apiKey.id);
+    recordApiKeyUsage(apiKey.id);
 
     return caller;
   };
