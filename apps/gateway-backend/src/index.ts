@@ -1,5 +1,7 @@
+import './zod-config'; // Must run before any zod schema is created.
+
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { createGenericKeyAdapter, createZitadelAdapter } from '@repo/auth';
+import { createGenericKeyAdapter, createZitadelAdapter, flushApiKeyUsage } from '@repo/auth';
 import {
   authenticate,
   callerContext,
@@ -13,6 +15,7 @@ import { createObjectStorage } from '@repo/object-storage';
 import { connectRedis } from '@repo/redis';
 import { requestId } from 'hono/request-id';
 import { secureHeaders } from 'hono/secure-headers';
+import LogsService from './api/logs/logs.services';
 import { ROLE_SCOPES_MAP } from './authorization';
 import { environment } from './environment';
 import { apiRoutes, healthRoutes, internalRoutes } from './routes';
@@ -28,6 +31,12 @@ createObjectStorage({
 });
 
 await connectRedis();
+
+// Finish inference logs and API key usage writes before exiting.
+process.on('SIGTERM', async () => {
+  await Promise.all([LogsService.flushLogs(), flushApiKeyUsage()]);
+  process.exit(0);
+});
 
 // Be mindful of the order of these middleware - it matters. Don't change it
 // unless you know what you're doing.

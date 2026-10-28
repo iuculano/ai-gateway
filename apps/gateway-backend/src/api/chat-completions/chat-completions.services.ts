@@ -4,8 +4,8 @@ import { createAzure } from '@ai-sdk/azure';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { createCacheKey, type Logger, parseTags } from '@repo/core';
-import { getActorId, getCaller, getLogger } from '@repo/hono';
+import { createCacheKey } from '@repo/core';
+import { getCaller } from '@repo/hono';
 import {
   type CallSettings,
   type FinishReason,
@@ -30,7 +30,7 @@ import {
   resolveModel as resolveCatalogModel,
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
-import LogsService from '../logs/logs.services';
+import LogsService, { type PendingLog } from '../logs/logs.services';
 import type { GetModelResponse } from '../models/models.schemas';
 import WebhookServices from '../webhooks/webhooks.services';
 import { createCacheMiddleware } from './chat-completions.cache';
@@ -83,10 +83,6 @@ type TopLogprobsRequiresLogprobsFailure = {
   code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS';
 };
 
-type WebhookLogUnavailableFailure = {
-  code: 'WEBHOOK_LOG_UNAVAILABLE';
-};
-
 type WebhookNotFoundFailure = {
   code: 'WEBHOOK_NOT_FOUND';
   id: string;
@@ -98,7 +94,6 @@ export type CreateChatCompletionFailure =
   | UnknownToolCallFailure
   | UnsupportedResponseFormatFailure
   | TopLogprobsRequiresLogprobsFailure
-  | WebhookLogUnavailableFailure
   | WebhookNotFoundFailure
   | ProviderFailure;
 
@@ -409,70 +404,28 @@ function toOpenAIUsage(usage: LanguageModelUsage): ChatCompletionUsage {
   };
 }
 
-/** Captures request context for streaming continuations. */
-interface OpenLog {
-  tags?: Record<string, string>;
-
-  id: string;
-  organizationId: string;
-  logger: Logger;
-}
-
-async function openLog(headers: ChatCompletionHeaders, model: ResolvedModel): Promise<OpenLog | null> {
-  // Capture request-scoped state before a streaming continuation can outlive it.
-  const caller = getCaller();
-  const logger = getLogger();
-  const organizationId = caller.organization.id;
-
-  const tags = parseTags(headers['ai-log-tags']);
-
-  try {
-    const id = await LogsService.startLog(organizationId, {
-      operation: 'chat',
-      model: model.modelId,
-      provider: model.provider,
-      tags: tags,
-      actor_type: caller.actor.type,
-      actor_id: getActorId(caller),
-    });
-
-    return { id, organizationId, logger, tags };
-  } catch (error) {
-    logger.error({ err: error }, 'Failed to open inference log');
-    return null;
-  }
-}
-
-async function closeLog(
-  log: OpenLog | null,
+function closeLog(
+  log: PendingLog,
   headers: ChatCompletionHeaders,
   request: ChatCompletionBody,
   response: ChatCompletion,
   model: GetModelResponse,
   responseTimeMs: number,
   cacheHit: boolean,
-): Promise<void> {
-  if (!log) {
-    return;
-  }
-
-  try {
-    await LogsService.completeLog(log.organizationId, log.id, {
-      request: request,
-      response: response,
-      // Omit headers exclude payloads, not usage or costs.
-      omitRequest: headers['ai-log-omit-request'],
-      omitResponse: headers['ai-log-omit-response'],
-      gateway_cache_hit: cacheHit,
-      input_tokens: response.usage.prompt_tokens,
-      cached_input_tokens: response.usage.prompt_tokens_details?.cached_tokens ?? null,
-      output_tokens: response.usage.completion_tokens,
-      ...(cacheHit ? { input_cost: 0, output_cost: 0 } : calculateCosts(response.usage, model)),
-      response_time_ms: Math.round(responseTimeMs),
-    });
-  } catch (error) {
-    log.logger.error({ err: error, log_id: log.id }, 'Failed to store inference log payloads');
-  }
+): void {
+  LogsService.completeLog(log, {
+    request: request,
+    response: response,
+    // Omit headers exclude payloads, not usage or costs.
+    omitRequest: headers['ai-log-omit-request'],
+    omitResponse: headers['ai-log-omit-response'],
+    gateway_cache_hit: cacheHit,
+    input_tokens: response.usage.prompt_tokens,
+    cached_input_tokens: response.usage.prompt_tokens_details?.cached_tokens ?? null,
+    output_tokens: response.usage.completion_tokens,
+    ...(cacheHit ? { input_cost: 0, output_cost: 0 } : calculateCosts(response.usage, model)),
+    response_time_ms: Math.round(responseTimeMs),
+  });
 }
 
 function calculateCosts(
@@ -495,38 +448,23 @@ function calculateCosts(
   return costs;
 }
 
-async function abandonLog(
-  log: OpenLog | null,
+function abandonLog(
+  log: PendingLog,
   headers: ChatCompletionHeaders,
   request: ChatCompletionBody,
-): Promise<void> {
-  if (!log) {
-    return;
-  }
-
-  try {
-    await LogsService.failLog(log.organizationId, log.id, {
-      request: request,
-      omitRequest: headers['ai-log-omit-request'],
-    });
-  } catch (error) {
-    log.logger.error({ err: error, log_id: log.id }, 'Failed to mark inference log failed');
-  }
+  status: 'failed' | 'incomplete' = 'failed',
+): void {
+  LogsService.failLog(log, { request: request, omitRequest: headers['ai-log-omit-request'] }, status);
 }
 
 /** Validate the webhook before incurring provider usage. */
 async function queueWebhook(
   headers: ChatCompletionHeaders,
-  log: OpenLog | null,
-): Promise<Result<void, WebhookLogUnavailableFailure | WebhookNotFoundFailure>> {
+  log: PendingLog,
+): Promise<Result<void, WebhookNotFoundFailure>> {
   const webhookId = headers['ai-webhook-id'];
   if (!webhookId) {
     return ok(undefined);
-  }
-
-  // Deliveries reference a log, so a logging outage makes the requested webhook unavailable.
-  if (!log) {
-    return err({ code: 'WEBHOOK_LOG_UNAVAILABLE' });
   }
 
   const queued = await WebhookServices.enqueueDelivery(webhookId, log.id);
@@ -594,14 +532,17 @@ async function createChatCompletion(
   const tools = toSdkTools(body);
   const providerOptions = toSdkProviderOptions(body);
 
-  const log = await openLog(headers, model);
-  if (log) {
-    onLog?.(log.id);
-  }
+  const log = LogsService.startLog({
+    operation: 'chat',
+    model: model.modelId,
+    provider: model.provider,
+    tags: headers['ai-log-tags'],
+  });
+  onLog?.(log.id);
 
   const queued = await queueWebhook(headers, log);
   if (queued.isErr()) {
-    await abandonLog(log, headers, body);
+    abandonLog(log, headers, body);
     return err(queued.error);
   }
 
@@ -622,7 +563,7 @@ async function createChatCompletion(
       ...(providerOptions ? { providerOptions } : {}),
     });
   } catch (error) {
-    await abandonLog(log, headers, body);
+    abandonLog(log, headers, body);
 
     return err(toProviderFailure(error));
   }
@@ -659,7 +600,7 @@ async function createChatCompletion(
     usage: toOpenAIUsage(result.totalUsage),
   };
 
-  await closeLog(log, headers, body, completion, model.info, responseTimeMs, cache.hit);
+  closeLog(log, headers, body, completion, model.info, responseTimeMs, cache.hit);
 
   return ok(completion);
 }
@@ -703,192 +644,209 @@ async function* streamChatCompletion(
   const tools = toSdkTools(body);
   const providerOptions = toSdkProviderOptions(body);
 
-  const log = await openLog(headers, model);
-  if (log) {
-    onLog?.(log.id);
-  }
+  const log = LogsService.startLog({
+    operation: 'chat',
+    model: model.modelId,
+    provider: model.provider,
+    tags: headers['ai-log-tags'],
+  });
+  onLog?.(log.id);
 
   const queued = await queueWebhook(headers, log);
   if (queued.isErr()) {
-    await abandonLog(log, headers, body);
+    abandonLog(log, headers, body);
     yield err(queued.error);
     return;
   }
 
-  const cache = { hit: false };
-  const startedAt = performance.now();
+  // A consumer that stops iterating early (the client disconnected) skips the
+  // settles below; the finally records that call as 'incomplete'.
+  let settled = false;
 
-  let streamError: ProviderFailure | undefined;
-
-  let result: ReturnType<typeof streamText>;
   try {
-    result = streamText({
-      model: cacheModel(model, headers, cache),
-      messages: messages.value,
+    const cache = { hit: false };
+    const startedAt = performance.now();
 
-      // Preserve caller message order instead of hoisting system messages into instructions.
-      allowSystemInMessages: true,
+    let streamError: ProviderFailure | undefined;
 
-      ...toSdkCallSettings(body, headers),
-      ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
-      ...(providerOptions ? { providerOptions } : {}),
+    let result: ReturnType<typeof streamText>;
+    try {
+      result = streamText({
+        model: cacheModel(model, headers, cache),
+        messages: messages.value,
 
-      // Surface SDK stream failures instead of ending the response silently.
-      onError: ({ error }) => {
-        streamError = toProviderFailure(error);
-      },
-    });
-  } catch (error) {
-    await abandonLog(log, headers, body);
-    yield err(toProviderFailure(error));
-    return;
-  }
+        // Preserve caller message order instead of hoisting system messages into instructions.
+        allowSystemInMessages: true,
 
-  // Generate metadata locally to avoid waiting for the provider to finish.
-  const id = `chatcmpl-${randomUUID().replaceAll('-', '')}`;
-  const created = Math.floor(Date.now() / 1000);
-  const modelId = model.modelId;
+        ...toSdkCallSettings(body, headers),
+        ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
 
-  const frame = (
-    delta: ChatCompletionChunk['choices'][number]['delta'],
-    finishReason: ChatCompletionFinishReason | null,
-  ): ChatCompletionChunk => ({
-    id: id,
-    object: 'chat.completion.chunk',
-    created: created,
-    model: modelId,
-    choices: [{ index: 0, delta: delta, finish_reason: finishReason }],
-  });
-
-  // OpenAI chunks identify tool calls by index; the SDK uses IDs.
-  const toolCallIndexes = new Map<string, number>();
-
-  // Delay the first yield until the provider responds so rejections can still
-  // use a non-200 status.
-  let opened = false;
-
-  let finishReason: ChatCompletionFinishReason = 'stop';
-  let usage: ChatCompletionUsage | undefined;
-
-  // Reassemble chunks so streaming and non-streaming logs share one response shape.
-  let assembledText = '';
-  const assembledToolCalls: ChatCompletionToolCall[] = [];
-
-  for await (const part of result.fullStream) {
-    // `start` is local-only; wait for a provider part before committing the 200.
-    if (!opened && part.type !== 'start' && part.type !== 'error') {
-      opened = true;
-
-      // OpenAI's first frame announces the role and carries no content.
-      yield ok(frame({ role: 'assistant', content: '' }, null));
+        // Surface SDK stream failures instead of ending the response silently.
+        onError: ({ error }) => {
+          streamError = toProviderFailure(error);
+        },
+      });
+    } catch (error) {
+      settled = true;
+      abandonLog(log, headers, body);
+      yield err(toProviderFailure(error));
+      return;
     }
 
-    switch (part.type) {
-      case 'text-delta':
-        if (part.text) {
-          assembledText += part.text;
-          yield ok(frame({ content: part.text }, null));
-        }
-        break;
+    // Generate metadata locally to avoid waiting for the provider to finish.
+    const id = `chatcmpl-${randomUUID().replaceAll('-', '')}`;
+    const created = Math.floor(Date.now() / 1000);
+    const modelId = model.modelId;
 
-      case 'tool-input-start': {
-        const index = toolCallIndexes.size;
-        toolCallIndexes.set(part.id, index);
-        assembledToolCalls.push({
-          id: part.id,
-          type: 'function',
-          function: { name: part.toolName, arguments: '' },
-        });
-
-        yield ok(
-          frame(
-            {
-              tool_calls: [{ index: index, id: part.id, type: 'function', function: { name: part.toolName } }],
-            },
-            null,
-          ),
-        );
-        break;
-      }
-
-      case 'tool-input-delta': {
-        const index = toolCallIndexes.get(part.id);
-        if (index != null && part.delta) {
-          const accumulating = assembledToolCalls[index];
-          if (accumulating) {
-            accumulating.function.arguments += part.delta;
-          }
-
-          yield ok(frame({ tool_calls: [{ index: index, function: { arguments: part.delta } }] }, null));
-        }
-        break;
-      }
-
-      case 'finish':
-        finishReason = toOpenAIFinishReason(part.finishReason);
-        usage = toOpenAIUsage(part.totalUsage);
-        break;
-
-      case 'error': {
-        await abandonLog(log, headers, body);
-
-        yield err(streamError ?? toProviderFailure(part.error));
-        return;
-      }
-
-      default:
-        // Reasoning, sources, files, step boundaries and raw provider frames
-        // have no place in the chat.completion.chunk shape.
-        break;
-    }
-  }
-
-  if (streamError) {
-    await abandonLog(log, headers, body);
-    yield err(streamError);
-    return;
-  }
-
-  // Empty streams still need an opening role frame.
-  if (!opened) {
-    yield ok(frame({ role: 'assistant', content: '' }, null));
-  }
-
-  yield ok(frame({}, finishReason));
-
-  if (body.stream_options?.include_usage && usage) {
-    yield ok({
+    const frame = (
+      delta: ChatCompletionChunk['choices'][number]['delta'],
+      finishReason: ChatCompletionFinishReason | null,
+    ): ChatCompletionChunk => ({
       id: id,
       object: 'chat.completion.chunk',
       created: created,
       model: modelId,
-      choices: [],
-      usage: usage,
+      choices: [{ index: 0, delta: delta, finish_reason: finishReason }],
     });
-  }
 
-  const completion: ChatCompletion = {
-    id: id,
-    object: 'chat.completion',
-    created: created,
-    model: modelId,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: 'assistant',
-          content: assembledText.length > 0 ? assembledText : null,
-          refusal: null,
-          ...(assembledToolCalls.length > 0 ? { tool_calls: assembledToolCalls } : {}),
+    // OpenAI chunks identify tool calls by index; the SDK uses IDs.
+    const toolCallIndexes = new Map<string, number>();
+
+    // Delay the first yield until the provider responds so rejections can still
+    // use a non-200 status.
+    let opened = false;
+
+    let finishReason: ChatCompletionFinishReason = 'stop';
+    let usage: ChatCompletionUsage | undefined;
+
+    // Reassemble chunks so streaming and non-streaming logs share one response shape.
+    let assembledText = '';
+    const assembledToolCalls: ChatCompletionToolCall[] = [];
+
+    for await (const part of result.fullStream) {
+      // `start` is local-only; wait for a provider part before committing the 200.
+      if (!opened && part.type !== 'start' && part.type !== 'error') {
+        opened = true;
+
+        // OpenAI's first frame announces the role and carries no content.
+        yield ok(frame({ role: 'assistant', content: '' }, null));
+      }
+
+      switch (part.type) {
+        case 'text-delta':
+          if (part.text) {
+            assembledText += part.text;
+            yield ok(frame({ content: part.text }, null));
+          }
+          break;
+
+        case 'tool-input-start': {
+          const index = toolCallIndexes.size;
+          toolCallIndexes.set(part.id, index);
+          assembledToolCalls.push({
+            id: part.id,
+            type: 'function',
+            function: { name: part.toolName, arguments: '' },
+          });
+
+          yield ok(
+            frame(
+              {
+                tool_calls: [{ index: index, id: part.id, type: 'function', function: { name: part.toolName } }],
+              },
+              null,
+            ),
+          );
+          break;
+        }
+
+        case 'tool-input-delta': {
+          const index = toolCallIndexes.get(part.id);
+          if (index != null && part.delta) {
+            const accumulating = assembledToolCalls[index];
+            if (accumulating) {
+              accumulating.function.arguments += part.delta;
+            }
+
+            yield ok(frame({ tool_calls: [{ index: index, function: { arguments: part.delta } }] }, null));
+          }
+          break;
+        }
+
+        case 'finish':
+          finishReason = toOpenAIFinishReason(part.finishReason);
+          usage = toOpenAIUsage(part.totalUsage);
+          break;
+
+        case 'error': {
+          settled = true;
+          abandonLog(log, headers, body);
+
+          yield err(streamError ?? toProviderFailure(part.error));
+          return;
+        }
+
+        default:
+          // Reasoning, sources, files, step boundaries and raw provider frames
+          // have no place in the chat.completion.chunk shape.
+          break;
+      }
+    }
+
+    if (streamError) {
+      settled = true;
+      abandonLog(log, headers, body);
+      yield err(streamError);
+      return;
+    }
+
+    // Empty streams still need an opening role frame.
+    if (!opened) {
+      yield ok(frame({ role: 'assistant', content: '' }, null));
+    }
+
+    yield ok(frame({}, finishReason));
+
+    if (body.stream_options?.include_usage && usage) {
+      yield ok({
+        id: id,
+        object: 'chat.completion.chunk',
+        created: created,
+        model: modelId,
+        choices: [],
+        usage: usage,
+      });
+    }
+
+    const completion: ChatCompletion = {
+      id: id,
+      object: 'chat.completion',
+      created: created,
+      model: modelId,
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: assembledText.length > 0 ? assembledText : null,
+            refusal: null,
+            ...(assembledToolCalls.length > 0 ? { tool_calls: assembledToolCalls } : {}),
+          },
+          logprobs: null,
+          finish_reason: finishReason,
         },
-        logprobs: null,
-        finish_reason: finishReason,
-      },
-    ],
-    usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  };
+      ],
+      usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    };
 
-  await closeLog(log, headers, body, completion, model.info, performance.now() - startedAt, cache.hit);
+    settled = true;
+    closeLog(log, headers, body, completion, model.info, performance.now() - startedAt, cache.hit);
+  } finally {
+    if (!settled) {
+      abandonLog(log, headers, body, 'incomplete');
+    }
+  }
 }
 
 export default {

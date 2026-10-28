@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 ARG RUNTIME_IMAGE=cgr.dev/chainguard/glibc-dynamic:latest
 
 #-------------------------------------------------------------------------------

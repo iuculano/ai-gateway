@@ -15,11 +15,15 @@ import {
 
 await installAuthMocks();
 
-const { createGenericKeyAdapter } = await import('../../index');
+const { createGenericKeyAdapter, flushApiKeyUsage } = await import('../../index');
 
 const VALID_KEY = `aik_${'A'.repeat(60)}`;
 
-beforeEach(resetDoubles);
+beforeEach(async () => {
+  // Drop usage a previous test left buffered.
+  await flushApiKeyUsage();
+  resetDoubles();
+});
 
 async function rejectedHttpException(promise: Promise<unknown>): Promise<HTTPException> {
   try {
@@ -179,7 +183,10 @@ describe('createGenericKeyAdapter', () => {
       'innerJoin',
       'leftJoin',
       'where',
+      'prepare',
+      'execute',
     ]);
+    await flushApiKeyUsage();
     expect(usage.pipelines).toEqual([
       [
         { method: 'hIncrBy', args: [`api-keys:usage:${KEY_ID}`, 'total_requests', 1] },
@@ -210,6 +217,7 @@ describe('createGenericKeyAdapter', () => {
         policy: { limit: 25, windowSeconds: 60 },
       },
     ]);
+    await flushApiKeyUsage();
     expect(usage.pipelines).toHaveLength(1);
   });
 
@@ -234,6 +242,7 @@ describe('createGenericKeyAdapter', () => {
     expect(response.headers.get('Retry-After')).toBe('17');
     expect(response.headers.get('RateLimit')).toBe('limit=2, remaining=0, reset=17');
     expect(response.headers.get('RateLimit-Policy')).toBe('2;w=30');
+    await flushApiKeyUsage();
     expect(usage.pipelines).toEqual([]);
   });
 
@@ -247,7 +256,7 @@ describe('createGenericKeyAdapter', () => {
     await expect(authenticate()).resolves.toMatchObject({ actor: { type: 'api_key' } });
   });
 
-  test('surfaces Redis failures and never misreports them as invalid credentials', async () => {
+  test('surfaces quota Redis failures and never misreports them as invalid credentials', async () => {
     const quotaFailure = new Error('quota Redis unavailable');
     arrangeKeyLookup({
       key: apiKeyRow({ rate_limit_requests: 2, rate_limit_window: 30 }),
@@ -256,13 +265,31 @@ describe('createGenericKeyAdapter', () => {
     });
     quota.failure = quotaFailure;
     await expect(authenticate()).rejects.toBe(quotaFailure);
+    await flushApiKeyUsage();
     expect(usage.pipelines).toEqual([]);
+  });
 
-    resetDoubles();
-    const usageFailure = new Error('usage Redis unavailable');
+  test('usage is buffered, so a usage Redis failure never fails authentication', async () => {
     arrangeKeyLookup({ key: apiKeyRow(), organization: organizationRow(), owner: userRow() });
-    usage.failure = usageFailure;
-    await expect(authenticate()).rejects.toBe(usageFailure);
+    usage.failure = new Error('usage Redis unavailable');
+
+    await expect(authenticate()).resolves.toMatchObject({ actor: { type: 'api_key' } });
+    await expect(flushApiKeyUsage()).resolves.toBeUndefined();
     expect(usage.pipelines).toHaveLength(1);
+  });
+
+  test('buffered usage is written as one increment per key', async () => {
+    for (let i = 0; i < 3; i++) {
+      arrangeKeyLookup({ key: apiKeyRow(), organization: organizationRow(), owner: userRow() });
+      await authenticate();
+    }
+
+    await flushApiKeyUsage();
+    expect(usage.pipelines).toEqual([
+      [
+        { method: 'hIncrBy', args: [`api-keys:usage:${KEY_ID}`, 'total_requests', 3] },
+        { method: 'hSet', args: [`api-keys:usage:${KEY_ID}`, 'last_used_at', expect.any(Number)] },
+      ],
+    ]);
   });
 });

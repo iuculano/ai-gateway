@@ -8,18 +8,20 @@ import {
   installModuleMocks,
   LOG_ID,
   logRow,
+  ORGANIZATION_ID,
   objects,
   resetDoubles,
   rows,
+  USER_ID,
 } from './doubles';
 import { expectErr, expectOk, type FailureCase } from './result';
 
 await installModuleMocks();
 
-const Services = forCaller((await import('../../src/api/logs/logs.services')).default);
+const RawServices = (await import('../../src/api/logs/logs.services')).default;
+const Services = forCaller(RawServices);
 
-const REQUEST_KEY = `logs/org/${LOG_ID}/request.json.zst`;
-const RESPONSE_KEY = `logs/org/${LOG_ID}/response.json.zst`;
+const KEY = `logs/${ORGANIZATION_ID}/${LOG_ID}.json.zst`;
 
 beforeEach(() => {
   resetDoubles();
@@ -60,7 +62,7 @@ const payloadFailureCases = {
     run: () => {
       // The log exists, but nothing was ever written on that side - the caller
       // sent ai-log-omit-request, or the call failed before there was output.
-      database.respondTo('select', 'logs', rows(logRow({ request_object_reference: null })));
+      database.respondTo('select', 'logs', rows(logRow({ has_request: false })));
 
       return Services.getLogPayload(LOG_ID, 'request');
     },
@@ -69,7 +71,7 @@ const payloadFailureCases = {
   PAYLOAD_UNAVAILABLE: {
     run: () => {
       // The row still advertises an object that is no longer in the bucket.
-      database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
+      database.respondTo('select', 'logs', rows(logRow({ has_request: true })));
 
       return Services.getLogPayload(LOG_ID, 'request');
     },
@@ -87,18 +89,13 @@ for (const [code, scenario] of Object.entries(payloadFailureCases)) {
 // getLog
 
 test('getLog returns Ok with the derived payload flags', async () => {
-  database.respondTo(
-    'select',
-    'logs',
-    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: null })),
-  );
+  database.respondTo('select', 'logs', rows(logRow({ has_request: true, has_response: false })));
 
   const log = expectOk(await Services.getLog(LOG_ID));
 
   // Derived from the key columns, which are themselves dropped from the shape.
   expect(log.has_request).toBe(true);
   expect(log.has_response).toBe(false);
-  expect(log).not.toHaveProperty('request_object_reference');
   expect(log).not.toHaveProperty('organization_id');
 
   // numeric arrives as a string and is coerced.
@@ -114,28 +111,25 @@ test('getLog rejects when the query fails', async () => {
 // getLogPayload
 
 test('getLogPayload returns the stored payload', async () => {
-  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
-  objects.stored[REQUEST_KEY] = { messages: [{ role: 'user', content: 'hello' }] };
+  database.respondTo('select', 'logs', rows(logRow({ has_request: true })));
+  objects.stored[KEY] = { request: { messages: [{ role: 'user', content: 'hello' }] } };
 
   const payload = expectOk(await Services.getLogPayload(LOG_ID, 'request'));
 
   expect(payload).toEqual({ messages: [{ role: 'user', content: 'hello' }] });
 });
 
-test('getLogPayload reads the side it was asked for', async () => {
-  database.respondTo(
-    'select',
-    'logs',
-    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: RESPONSE_KEY })),
-  );
-  objects.stored[REQUEST_KEY] = 'the request';
-  objects.stored[RESPONSE_KEY] = 'the response';
+test('getLogPayload reads the side it was asked for out of the one object', async () => {
+  database.respondTo('select', 'logs', rows(logRow({ has_request: true, has_response: true })));
+  database.respondTo('select', 'logs', rows(logRow({ has_request: true, has_response: true })));
+  objects.stored[KEY] = { request: 'the request', response: 'the response' };
 
+  expect(expectOk(await Services.getLogPayload(LOG_ID, 'request'))).toBe('the request');
   expect(expectOk(await Services.getLogPayload(LOG_ID, 'response'))).toBe('the response');
 });
 
 test('the two empty-payload failures carry the side, because the message names it', async () => {
-  database.respondTo('select', 'logs', rows(logRow({ response_object_reference: null })));
+  database.respondTo('select', 'logs', rows(logRow({ has_response: false })));
 
   const failure = expectErr(await Services.getLogPayload(LOG_ID, 'response'));
 
@@ -143,7 +137,7 @@ test('the two empty-payload failures carry the side, because the message names i
 });
 
 test('getLogPayload rejects when object storage fails rather than reporting absence', async () => {
-  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
+  database.respondTo('select', 'logs', rows(logRow({ has_request: true })));
 
   // A bucket that is unreachable is a malfunction. Reporting it as "no payload"
   // would tell the caller something false about their own data.
@@ -153,8 +147,8 @@ test('getLogPayload rejects when object storage fails rather than reporting abse
 });
 
 test('a payload stored as null reads back as unavailable', async () => {
-  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
-  objects.stored[REQUEST_KEY] = null;
+  database.respondTo('select', 'logs', rows(logRow({ has_request: true })));
+  objects.stored[KEY] = null;
 
   const result = await Services.getLogPayload(LOG_ID, 'request');
 
@@ -168,36 +162,25 @@ test('a payload stored as null reads back as unavailable', async () => {
 
 // deleteLog
 
-test('deleteLog removes both payloads', async () => {
-  database.respondTo(
-    'delete',
-    'logs',
-    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: RESPONSE_KEY })),
-  );
-  objects.stored[REQUEST_KEY] = 'a';
-  objects.stored[RESPONSE_KEY] = 'b';
+test('deleteLog removes the payload object once', async () => {
+  database.respondTo('delete', 'logs', rows(logRow({ has_request: true, has_response: true })));
+  objects.stored[KEY] = { request: 'a', response: 'b' };
 
   expect((await Services.deleteLog(LOG_ID)).isOk()).toBe(true);
 
-  expect(objects.deleted).toEqual([[REQUEST_KEY, RESPONSE_KEY]]);
+  expect(objects.deleted).toEqual([[KEY]]);
   expect(objects.stored).toEqual({});
 });
 
-test('deleteLog skips the sides that were never stored', async () => {
-  database.respondTo(
-    'delete',
-    'logs',
-    rows(logRow({ request_object_reference: REQUEST_KEY, response_object_reference: null })),
-  );
+test('deleteLog deletes nothing when no payload was stored', async () => {
+  database.respondTo('delete', 'logs', rows(logRow({ has_request: false, has_response: false })));
 
   expect((await Services.deleteLog(LOG_ID)).isOk()).toBe(true);
-
-  // Nulls are filtered out rather than handed to the store as keys.
-  expect(objects.deleted).toEqual([[REQUEST_KEY]]);
+  expect(objects.deleted).toEqual([]);
 });
 
 test('deleteLog rejects when object deletion fails, after the row is already gone', async () => {
-  database.respondTo('delete', 'logs', rows(logRow({ request_object_reference: REQUEST_KEY })));
+  database.respondTo('delete', 'logs', rows(logRow({ has_request: true })));
   objects.failure = new Error('bucket unavailable');
 
   // Deliberate: the row is deleted first, so a failure here leaves orphaned
@@ -214,11 +197,11 @@ test('getLogPayloadBatch reports absence in the success value, not as a failure'
     'select',
     'logs',
     rows(
-      { id: LOG_ID, request_object_reference: REQUEST_KEY, response_object_reference: null },
-      { id: otherId, request_object_reference: null, response_object_reference: null },
+      { id: LOG_ID, has_request: true, has_response: false },
+      { id: otherId, has_request: false, has_response: false },
     ),
   );
-  objects.stored[REQUEST_KEY] = 'the request';
+  objects.stored[KEY] = { request: 'the request' };
 
   const batch = await Services.getLogPayloadBatch([LOG_ID, otherId], 'request');
 
@@ -253,65 +236,123 @@ test('listLogs stays a plain promise', async () => {
   expect(page.meta).toEqual({ newest_id: LOG_ID, oldest_id: LOG_ID, more_data: false });
 });
 
-test('startLog rejects rather than returning a failure', async () => {
-  // Ingestion, not a handler - there is no HTTP caller to hand a refusal to.
-  database.respondTo('insert', 'logs', rows());
+const opened = { operation: 'chat', model: 'gpt-4-turbo', provider: 'openai' } as const;
 
-  await expect(
-    Services.startLog('org', {
-      operation: 'chat',
-      model: 'gpt-4-turbo',
-      provider: 'openai',
-      actor_type: 'api_key',
-      actor_id: 'key-1',
-    }),
-  ).rejects.toThrow('Failed to open log');
+// From the caller fixture forCaller() binds.
+const fromCaller = { organization_id: ORGANIZATION_ID, actor_type: 'user', actor_id: USER_ID } as const;
+
+function insertedLog(): Record<string, unknown> | undefined {
+  const values = database.queriesFor('insert', 'logs')[0]?.calls.find((call) => call.method === 'values')?.args[0];
+  return [values].flat()[0] as Record<string, unknown> | undefined;
+}
+
+test('startLog writes nothing until the log settles', async () => {
+  expect((await Services.startLog(opened)).id).toBe(LOG_ID);
+  expect(database.queries).toHaveLength(0);
 });
 
-test('completeLog stores both payloads before publishing their references', async () => {
-  database.respondTo('update', 'logs', rows());
+test('completeLog stores both payloads, then inserts one complete row', async () => {
+  database.respondTo('insert', 'logs', rows());
 
-  await Services.completeLog('org', LOG_ID, {
+  const log = await Services.startLog(opened);
+  await Services.completeLog(log, {
     request: { messages: ['hello'] },
     response: { answer: 'hi' },
     input_tokens: 2,
     output_tokens: 1,
   });
+  await Services.flushLogs();
 
   expect(objects.stored).toEqual({
-    [REQUEST_KEY]: { messages: ['hello'] },
-    [RESPONSE_KEY]: { answer: 'hi' },
+    [KEY]: { request: { messages: ['hello'] }, response: { answer: 'hi' } },
   });
-  const update = database.queriesFor('update', 'logs')[0];
-  expect(update?.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
+  expect(database.queriesFor('insert', 'logs')).toHaveLength(1);
+  expect(insertedLog()).toMatchObject({
+    ...opened,
+    ...fromCaller,
+    id: LOG_ID,
     status: 'complete',
-    request_object_reference: REQUEST_KEY,
-    response_object_reference: RESPONSE_KEY,
+    has_request: true,
+    has_response: true,
     input_tokens: 2,
     output_tokens: 1,
   });
 });
 
-test('completeLog does not publish object references when storage fails', async () => {
+test('completeLog still writes the row, without references, when storage fails', async () => {
+  // The row carries the usage and cost; losing the payloads must not lose it.
+  database.respondTo('insert', 'logs', rows());
   objects.failure = new Error('bucket unavailable');
 
-  await expect(
-    Services.completeLog('org', LOG_ID, { request: { messages: ['hello'] }, response: { choices: [] } }),
-  ).rejects.toThrow('bucket unavailable');
+  const log = await Services.startLog(opened);
+  await Services.completeLog(log, {
+    request: { messages: ['hello'] },
+    response: { choices: [] },
+    input_tokens: 2,
+  });
+  await Services.flushLogs();
 
-  expect(database.queries).toHaveLength(0);
+  expect(insertedLog()).toMatchObject({ status: 'complete', input_tokens: 2 });
+  expect(insertedLog()).toHaveProperty('has_request', false);
+  expect(insertedLog()).toHaveProperty('has_response', false);
 });
 
-test('failLog stores the request and marks the row failed', async () => {
-  database.respondTo('update', 'logs', rows());
+test('failLog stores the request and inserts one failed row', async () => {
+  database.respondTo('insert', 'logs', rows());
 
-  await Services.failLog('org', LOG_ID, { request: { messages: ['hello'] } });
+  const log = await Services.startLog(opened);
+  await Services.failLog(log, { request: { messages: ['hello'] } });
+  await Services.flushLogs();
 
-  expect(objects.stored[REQUEST_KEY]).toEqual({ messages: ['hello'] });
-  const update = database.queriesFor('update', 'logs')[0];
-  expect(update?.calls.find((call) => call.method === 'set')?.args[0]).toMatchObject({
-    status: 'failed',
-    request_object_reference: REQUEST_KEY,
+  expect(objects.stored[KEY]).toEqual({ request: { messages: ['hello'] } });
+  expect(insertedLog()).toMatchObject({ ...opened, status: 'failed', has_request: true });
+});
+
+test('logs that settle together are inserted as one batch', async () => {
+  database.defaultResponse('insert', 'logs', rows());
+
+  // Called directly: forCaller would flush after each call, one batch apiece.
+  const log = await Services.startLog(opened);
+  for (let n = 0; n < 3; n++) {
+    RawServices.completeLog(log, { request: {}, response: {}, omitRequest: true, omitResponse: true });
+  }
+  await Services.flushLogs();
+
+  const inserts = database.queriesFor('insert', 'logs');
+  expect(inserts).toHaveLength(1);
+  expect(inserts[0]?.calls.find((call) => call.method === 'values')?.args[0]).toHaveLength(3);
+});
+
+test('a batch that fails is retried row by row, so a bad row only costs itself', async () => {
+  database.respondTo('insert', 'logs', failsWith(new Error('violates check constraint')));
+  database.respondTo('insert', 'logs', failsWith(new Error('violates check constraint')));
+  database.defaultResponse('insert', 'logs', rows());
+
+  const log = await Services.startLog(opened);
+  RawServices.completeLog(log, { request: {}, response: {}, omitRequest: true, omitResponse: true });
+  RawServices.failLog(log, { request: {}, omitRequest: true });
+  await Services.flushLogs();
+
+  // The batch, then each row alone: the first row fails again, the second lands.
+  const inserts = database
+    .queriesFor('insert', 'logs')
+    .map((query) => query.calls.find((call) => call.method === 'values')?.args[0]);
+  expect(inserts).toHaveLength(3);
+  expect(inserts[0]).toHaveLength(2);
+  expect(inserts[2]).toMatchObject({ status: 'failed' });
+});
+
+test('failLog records a call whose caller left as incomplete', async () => {
+  database.respondTo('insert', 'logs', rows());
+
+  const log = await Services.startLog(opened);
+  await Services.failLog(log, { request: { messages: ['hello'] } }, 'incomplete');
+  await Services.flushLogs();
+
+  expect(insertedLog()).toMatchObject({
+    ...opened,
+    status: 'incomplete',
+    has_request: true,
   });
 });
 

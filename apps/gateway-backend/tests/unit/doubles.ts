@@ -1,4 +1,4 @@
-import { afterEach, mock } from 'bun:test';
+import { afterEach, mock, spyOn } from 'bun:test';
 import type { apiKeys, logs, models, webhooks } from '@repo/drizzle/schemas';
 import type { Caller } from '@repo/hono';
 import {
@@ -28,11 +28,35 @@ const { database, db: scopedDb } = createDatabaseDouble();
 
 export { database };
 
-afterEach(() => {
+afterEach(async () => {
+  // Log rows are batched; send any a test left open so none land in the next one.
+  await flushLogWrites();
   database.assertResponsesConsumed();
 });
 
 let runWithRealCaller: typeof import('@repo/hono').runWithCaller | undefined;
+
+/**
+ * Inference log rows are written in the background, after the service returns.
+ * When `value` is a promise, waits for those writes too, so a test can assert
+ * on them.
+ */
+export function afterLogWrites<T>(value: T): T {
+  if (!(value instanceof Promise)) {
+    return value;
+  }
+
+  return value.then(async (result) => {
+    await flushLogWrites();
+    return result;
+  }) as T;
+}
+
+/** Sends the open log batch and waits for every background log write. */
+export async function flushLogWrites(): Promise<void> {
+  const { default: LogsService } = await import('../../src/api/logs/logs.services');
+  await LogsService.flushLogs();
+}
 
 /**
  * Binds a public service object to the real request context implementation.
@@ -54,7 +78,7 @@ export function forCaller<T extends object>(services: T, caller: Caller = caller
         return value;
       }
 
-      return (...args: unknown[]) => run(caller, () => Reflect.apply(value, target, args));
+      return (...args: unknown[]) => afterLogWrites(run(caller, () => Reflect.apply(value, target, args)));
     },
   });
 }
@@ -233,64 +257,75 @@ function persistedAuditRow(query: DatabaseQuery): DatabaseResponse {
  */
 export const logWrites = {
   installDefaults() {
-    database.defaultResponse('insert', 'logs', rows({ id: LOG_ID }));
-    database.defaultResponse('update', 'logs', rows());
+    database.defaultResponse('insert', 'logs', rows());
   },
 
-  failNextStart(error: Error) {
+  /** A store that is down: the batch INSERT fails, and so does the retry of its row. */
+  failNextWrite(error: Error) {
+    database.respondTo('insert', 'logs', failsWith(error));
     database.respondTo('insert', 'logs', failsWith(error));
   },
 
-  failNextFinish(error: Error) {
-    database.respondTo('update', 'logs', failsWith(error));
-  },
-
+  /** Every log row written, whatever its status: what the request was opened with. */
   get started(): { organizationId: string; entry: Record<string, unknown> }[] {
-    return writesTo('logs', 'insert').map((query) => {
-      const values = { ...((queryCall(query, 'values')?.[0] ?? {}) as Record<string, unknown>) };
-      const organizationId = String(values.organization_id);
-      delete values.organization_id;
-      delete values.status;
-      return { organizationId, entry: values };
-    });
+    return logInserts().map((row) => ({
+      organizationId: String(row.organization_id),
+      entry: {
+        operation: row.operation,
+        model: row.model,
+        provider: row.provider,
+        tags: row.tags,
+        actor_type: row.actor_type,
+        actor_id: row.actor_id,
+        ...(row.trace_id ? { trace_id: row.trace_id, span_id: row.span_id, parent_span_id: row.parent_span_id } : {}),
+      },
+    }));
   },
 
   get completed(): { organizationId: string; id: string; entry: Record<string, unknown> }[] {
-    return writesTo('logs', 'update').flatMap((query) => {
-      const values = { ...((queryCall(query, 'set')?.[0] ?? {}) as Record<string, unknown>) };
-      if (values.status !== 'complete') {
-        return [];
-      }
-
-      const requestReference = values.request_object_reference;
-      const responseReference = values.response_object_reference;
-      if (typeof requestReference === 'string') {
-        values.request = objects.stored[requestReference];
-      }
-      if (typeof responseReference === 'string') {
-        values.response = objects.stored[responseReference];
-      }
-
-      return [{ organizationId: ORGANIZATION_ID, id: LOG_ID, entry: values }];
-    });
+    return logInserts('complete');
   },
 
   get failed(): { organizationId: string; id: string; entry: Record<string, unknown> }[] {
-    return writesTo('logs', 'update').flatMap((query) => {
-      const values = { ...((queryCall(query, 'set')?.[0] ?? {}) as Record<string, unknown>) };
-      if (values.status !== 'failed') {
-        return [];
-      }
+    return logInserts('failed');
+  },
 
-      const requestReference = values.request_object_reference;
-      if (typeof requestReference === 'string') {
-        values.request = objects.stored[requestReference];
-      }
-
-      return [{ organizationId: ORGANIZATION_ID, id: LOG_ID, entry: values }];
-    });
+  get incomplete(): { organizationId: string; id: string; entry: Record<string, unknown> }[] {
+    return logInserts('incomplete');
   },
 };
+
+/** Log rows as inserted, with their stored payloads attached as request/response. */
+function logInserts(): Record<string, unknown>[];
+function logInserts(status: string): { organizationId: string; id: string; entry: Record<string, unknown> }[];
+function logInserts(status?: string) {
+  // Rows are inserted in batches, so one INSERT can carry several.
+  const values = writesTo('logs', 'insert').flatMap((query) =>
+    [queryCall(query, 'values')?.[0] ?? {}].flat().map((row) => ({ ...(row as Record<string, unknown>) })),
+  );
+
+  if (status === undefined) {
+    return values;
+  }
+
+  return values
+    .filter((row) => row.status === status)
+    .map((row) => {
+      const entry = { ...row };
+      // Both sides live in one stored object, at a key derived from the row.
+      const stored = objects.stored[`logs/${row.organization_id}/${row.id}.json.zst`] as
+        | { request?: unknown; response?: unknown }
+        | undefined;
+      if (row.has_request) {
+        entry.request = stored?.request;
+      }
+      if (row.has_response) {
+        entry.response = stored?.response;
+      }
+
+      return { organizationId: String(row.organization_id), id: String(row.id), entry };
+    });
+}
 
 // Object storage
 
@@ -346,6 +381,11 @@ const objectStorage = {
   },
 
   async delete(key: string) {
+    if (objects.failure) {
+      throw objects.failure;
+    }
+
+    objects.deleted.push([key]);
     delete objects.stored[key];
   },
 
@@ -392,6 +432,9 @@ export async function installModuleMocks() {
   const actualDrizzle = await import('@repo/drizzle');
   const actualHono = await import('@repo/hono');
   runWithRealCaller = actualHono.runWithCaller;
+
+  // Log ids are generated in process now; pin them so tests can name the row.
+  spyOn(Bun, 'randomUUIDv7').mockReturnValue(LOG_ID as never);
   mock.module('@repo/drizzle', () => ({
     // Everything real by default - the condition builders included, since
     // nothing here inspects what they return. Only the client object that
@@ -567,8 +610,8 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
     input_cost: '0.001000000000',
     output_cost: '0.002000000000',
     response_time_ms: 1200,
-    request_object_reference: null,
-    response_object_reference: null,
+    has_request: false,
+    has_response: false,
     tags: null,
     created_at: new Date('2026-01-01T00:00:00.000Z'),
     updated_at: new Date('2026-01-01T00:00:00.000Z'),

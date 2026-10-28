@@ -200,7 +200,12 @@ async function createDecision(
   }
 
   //
-  const logId = await LogsService.openLog('decision', info, headers['ai-log-tags']);
+  const log = LogsService.startLog({
+    operation: 'decision',
+    model: info.name,
+    provider: info.provider,
+    tags: headers['ai-log-tags'],
+  });
   const startedAt = performance.now();
 
   // decide() throws away every answer when any one question is refused, where
@@ -218,7 +223,7 @@ async function createDecision(
       },
     });
   } catch (error) {
-    await LogsService.abandonLog(logId, { request: body, omitRequest: headers['ai-log-omit-request'] });
+    LogsService.failLog(log, { request: body, omitRequest: headers['ai-log-omit-request'] });
 
     const providerFailure = toProviderFailure(error);
     return err(providerFailure);
@@ -244,7 +249,7 @@ async function createDecision(
     },
   };
 
-  await LogsService.closeLog(logId, {
+  LogsService.completeLog(log, {
     request: body,
     response: response,
     omitRequest: headers['ai-log-omit-request'],

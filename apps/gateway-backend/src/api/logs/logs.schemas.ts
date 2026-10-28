@@ -14,14 +14,10 @@ const traceId = z
 const logShape = createSelectSchema(logs)
   .omit({
     organization_id: true,
-    request_object_reference: true, // server generated
-    response_object_reference: true, // server generated
   })
   .extend({
     input_cost: z.coerce.number().nonnegative(),
     output_cost: z.coerce.number().nonnegative(),
-    has_request: z.boolean(),
-    has_response: z.boolean(),
   });
 
 const getLog = createSchema({

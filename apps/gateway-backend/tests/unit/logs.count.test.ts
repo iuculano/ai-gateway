@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
-import { database, forCaller, installModuleMocks, LOG_ID, logRow, resetDoubles, rows } from './doubles';
+import { beforeEach, expect, test } from 'bun:test';
+import { database, forCaller, installModuleMocks, resetDoubles, rows } from './doubles';
 
 await installModuleMocks();
 const Services = forCaller((await import('../../src/api/logs/logs.services')).default);
@@ -20,24 +20,6 @@ test('empty organizations return exact zeroes', async () => {
     total: 0,
     estimated: false,
     by_status: { complete: 0, failed: 0, incomplete: 0 },
-  });
-});
-
-describe('startLog', () => {
-  test('throws when the insert returns nothing to identify the log by', async () => {
-    // Every later write is keyed on this id, so continuing without one would
-    // silently drop the request's entire record.
-    database.respondTo('insert', 'logs', rows());
-
-    expect(Services.startLog('org', { model: 'gpt-5', provider: 'openai' } as never)).rejects.toThrow(
-      'Failed to open log',
-    );
-  });
-
-  test('returns the new id on success', async () => {
-    database.respondTo('insert', 'logs', rows(logRow({ id: LOG_ID })));
-
-    expect(await Services.startLog('org', { model: 'gpt-5', provider: 'openai' } as never)).toBe(LOG_ID);
   });
 });
 

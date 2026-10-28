@@ -38,8 +38,8 @@ export const logs = pgTable(
     input_cost: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),
     output_cost: numeric({ precision: 20, scale: 12 }).$type<number>().notNull().default(0),
     response_time_ms: integer(),
-    request_object_reference: text(),
-    response_object_reference: text(),
+    has_request: boolean().notNull().default(false),
+    has_response: boolean().notNull().default(false),
     tags: jsonb().$type<Record<string, string>>(),
 
     created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),

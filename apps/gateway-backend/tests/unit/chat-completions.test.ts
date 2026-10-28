@@ -7,9 +7,11 @@ import type {
 } from '../../src/api/chat-completions/chat-completions.schemas';
 import type { ResolvePromptFailure } from '../../src/api/prompts/prompts.services';
 import {
+  afterLogWrites,
   callerFixture,
   database,
   fixedWindow,
+  flushLogWrites,
   installModuleMocks,
   LOG_ID,
   logWrites,
@@ -251,7 +253,7 @@ const quiet = { error() {}, warn() {}, info() {}, debug() {}, child: () => quiet
 
 /** runWithCaller with the sink above bound, which is how every test here calls it. */
 function withCaller<T>(work: () => T): T {
-  return runWithCaller(callerFixture, work, { logger: quiet });
+  return afterLogWrites(runWithCaller(callerFixture, work, { logger: quiet }));
 }
 
 function installChatDatabaseDefaults() {
@@ -365,15 +367,12 @@ test('the omit headers keep the row and its accounting, and store neither payloa
 
   expect(logWrites.completed[0]).toMatchObject({
     id: LOG_ID,
-    entry: {
-      // Still accounted for.
-      input_tokens: 7,
-      output_tokens: 4,
-      // Both sides suppressed at the persistence boundary.
-      request_object_reference: null,
-      response_object_reference: null,
-    },
+    // Still accounted for.
+    entry: { input_tokens: 7, output_tokens: 4 },
   });
+  // Both sides suppressed at the persistence boundary.
+  expect(logWrites.completed[0]?.entry).toHaveProperty('has_request', false);
+  expect(logWrites.completed[0]?.entry).toHaveProperty('has_response', false);
   expect(objects.stored).toEqual({});
 });
 
@@ -401,7 +400,7 @@ test('ai-log-omit-request suppresses the request payload on the failure path too
   // reading an error rate needs - with nothing stored from it.
   expect(logWrites.started).toHaveLength(1);
   expect(logWrites.failed[0]).toMatchObject({ id: LOG_ID, entry: { status: 'failed' } });
-  expect(logWrites.failed[0]?.entry).not.toHaveProperty('request_object_reference');
+  expect(logWrites.failed[0]?.entry).toHaveProperty('has_request', false);
   expect(objects.stored).toEqual({});
 });
 
@@ -472,6 +471,25 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
   expect(logWrites.completed[0]?.entry.input_cost).toBeCloseTo(0.000006, 15);
   expect(logWrites.completed[0]?.entry.output_cost).toBeCloseTo(0.000016, 15);
   expect(logWrites.failed).toHaveLength(0);
+});
+
+test('a stream the client leaves mid-way is logged incomplete, with its request', async () => {
+  aiState.streamParts = [
+    { type: 'text-delta', text: 'Hello ' },
+    { type: 'text-delta', text: 'stream' },
+    { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } },
+  ];
+
+  await withCaller(async () => {
+    for await (const _chunk of Services.streamChatCompletion(headers(), body({ stream: true }))) {
+      break; // The client disconnects after the first frame.
+    }
+  });
+
+  expect(logWrites.completed).toHaveLength(0);
+  expect(logWrites.failed).toHaveLength(0);
+  expect(logWrites.incomplete).toHaveLength(1);
+  expect(logWrites.incomplete[0]?.entry).toMatchObject({ request: { model: 'openai/test-model' } });
 });
 
 test('the HTTP handler exposes successful fixed-window quota headers', async () => {
@@ -1079,42 +1097,27 @@ test('an abort surfaces as a 504 and anything unrecognised as a 502', async () =
 
 // Log lifecycle
 
-test('a log store that cannot be reached degrades the record, not the completion', async () => {
-  logWrites.failNextStart(new Error('logs unreachable'));
-  let echoedLogId: string | undefined;
-
-  const completion = await withCaller(() =>
-    Services.createChatCompletion(headers(), body(), (id) => {
-      echoedLogId = id;
-    }),
-  );
-
-  expect(completion.choices[0]?.message.content).toBe('Hello from the provider');
-  // Nothing to echo and nothing to close - the header is omitted rather than
-  // pointing at a row that was never written.
-  expect(echoedLogId).toBeUndefined();
-  expect(logWrites.completed).toHaveLength(0);
-});
-
 test('a log store that fails on the way out still returns the completion', async () => {
-  logWrites.failNextFinish(new Error('log update unreachable'));
+  logWrites.failNextWrite(new Error('log update unreachable'));
 
   const completion = await withCaller(() => Services.createChatCompletion(headers(), body()));
 
   // Generated and paid for; losing the record of it beats losing the answer.
   expect(completion.choices[0]?.message.content).toBe('Hello from the provider');
-  expect(logWrites.completed).toHaveLength(1);
+  // Attempted twice: as part of its batch, then on its own.
+  expect(logWrites.completed).toHaveLength(2);
 });
 
 test('a failure to mark the log failed does not replace the error the caller needs', async () => {
   aiState.generateError = new Error('socket hang up');
-  logWrites.failNextFinish(new Error('logs unreachable'));
+  logWrites.failNextWrite(new Error('logs unreachable'));
 
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
     code: 'PROVIDER_FAILED',
   });
 
-  expect(logWrites.failed).toHaveLength(1);
+  // Attempted twice: as part of its batch, then on its own.
+  expect(logWrites.failed).toHaveLength(2);
 });
 
 test('log tags are parsed onto the row', async () => {
@@ -1148,16 +1151,6 @@ test('a webhook that is not the caller-s is a typed refusal, and costs nothing u
 
   // Refused before the completion is generated - finding out afterwards would
   // leave the caller with an answer and an error at once.
-  expect(aiState.generateCalls).toHaveLength(0);
-});
-
-test('a webhook cannot be queued against a log that could not be opened', async () => {
-  logWrites.failNextStart(new Error('logs unreachable'));
-
-  const failure = await withCaller(() => completionFailure(headers({ 'ai-webhook-id': WEBHOOK_ID }), body()));
-
-  expect(failure).toMatchObject({ code: 'WEBHOOK_LOG_UNAVAILABLE' });
-
   expect(aiState.generateCalls).toHaveLength(0);
 });
 
@@ -1370,15 +1363,17 @@ test('the streaming path forwards the same settings the whole request does', asy
 // Handler prompt expansion
 
 async function post(requestBody: unknown, extraHeaders: Record<string, string> = {}) {
-  return app.request('/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'ai-api-key': 'upstream-secret',
-      ...extraHeaders,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  return afterLogWrites(
+    app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'ai-api-key': 'upstream-secret',
+        ...extraHeaders,
+      },
+      body: JSON.stringify(requestBody),
+    }),
+  );
 }
 
 test('a named prompt is expanded into a leading system message and the version is echoed', async () => {
@@ -1502,6 +1497,7 @@ test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', as
   expect(frames.at(-1)).toBe('[DONE]');
   expect(frames).toHaveLength(5);
   expect(JSON.parse(frames[1] ?? '')).toMatchObject({ choices: [{ delta: { content: 'Hello ' } }] });
+  await flushLogWrites();
   expect(logWrites.completed[0]?.entry.response).toMatchObject({
     choices: [{ message: { content: 'Hello stream' } }],
   });

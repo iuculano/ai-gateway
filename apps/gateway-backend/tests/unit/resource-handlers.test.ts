@@ -142,12 +142,12 @@ test('log payload handlers preserve the reason for each 404', async () => {
   expect(missingLog.status).toBe(404);
   expect(await message(missingLog)).toBe('An error occurred');
 
-  database.respondTo('select', 'logs', rows(logRow({ request_object_reference: null })));
+  database.respondTo('select', 'logs', rows(logRow({ has_request: false })));
   const notStored = await request(`/logs/${LOG_ID}/request`);
   expect(notStored.status).toBe(404);
   expect(await message(notStored)).toBe('No request payload was stored for this log');
 
-  database.respondTo('select', 'logs', rows(logRow({ response_object_reference: 'missing-response' })));
+  database.respondTo('select', 'logs', rows(logRow({ has_response: true })));
   const unavailable = await request(`/logs/${LOG_ID}/response`);
   expect(unavailable.status).toBe(404);
   expect(await message(unavailable)).toBe('The response payload for this log is no longer available');

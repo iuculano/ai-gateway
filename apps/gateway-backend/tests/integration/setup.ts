@@ -1,6 +1,7 @@
 import type { Caller } from '@repo/hono';
 import type { CompressedJsonStore } from '@repo/object-storage';
 import { SQL } from 'bun';
+import { payloadKey } from '../../src/api/logs/logs.writer';
 
 /**
  * The integration tier's connection to a real postgres.
@@ -143,17 +144,8 @@ export async function prepareSuite(): Promise<void> {
 }
 
 export async function resetDatabase(): Promise<void> {
-  const objectReferences = await admin`
-    select request_object_reference, response_object_reference
-    from logs
-    where request_object_reference is not null or response_object_reference is not null
-  `;
-  const keys = objectReferences.flatMap(
-    (row: { request_object_reference?: unknown; response_object_reference?: unknown }) =>
-      [row.request_object_reference, row.response_object_reference].filter(
-        (key): key is string => typeof key === 'string',
-      ),
-  );
+  const stored = await admin`select organization_id, id from logs where has_request or has_response`;
+  const keys = stored.map((row: { organization_id: string; id: string }) => payloadKey(row.organization_id, row.id));
 
   if (keys.length > 0) {
     if (!integrationObjectStorage) {
