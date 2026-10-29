@@ -1,4 +1,5 @@
 import { db } from '@repo/drizzle';
+import { clickhouse } from '../../worker/clickhouse-sync';
 
 /**
  * Checks the connectivity to the PostgreSQL database by executing a simple
@@ -48,7 +49,22 @@ async function checkPostgresTables(requiredTables: string[]): Promise<boolean> {
   }
 }
 
+/**
+ * Checks that ClickHouse answers a query.
+ *
+ * @returns
+ * A promise that resolves to `true` if ClickHouse is reachable, otherwise `false`.
+ */
+async function checkClickHouse(): Promise<boolean> {
+  try {
+    return (await clickhouse.ping()).success;
+  } catch {
+    return false;
+  }
+}
+
 export default {
   checkPostgres,
   checkPostgresTables,
+  checkClickHouse,
 };

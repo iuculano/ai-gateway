@@ -27,6 +27,11 @@ const environmentSchema = z.object({
 
   VICTORIA_TRACES_URL: z.url().default('http://localhost:10428'),
 
+  CLICKHOUSE_URL: z.url().default('http://localhost:8123'),
+  CLICKHOUSE_USER: z.string().default('default'),
+  CLICKHOUSE_PASSWORD: z.string().default(''),
+  CLICKHOUSE_DATABASE: z.string().default('ai_gateway'),
+
   AUTH_TOKEN_ISSUER: z.url(),
   AUTH_TOKEN_AUDIENCE: z.string().min(1),
 });
