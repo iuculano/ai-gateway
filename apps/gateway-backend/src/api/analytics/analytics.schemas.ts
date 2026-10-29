@@ -10,13 +10,11 @@ const series = createSchema({
     model: z.string().optional(),
     provider: z.string().optional(),
     status: z.enum(['incomplete', 'complete', 'failed']).optional(),
-    limit: z.number().int().positive().max(100).optional(),
   }),
 
   response: z.object({
     interval: z.enum(['hour', 'day', 'none']),
     group_by: z.array(z.enum(['model', 'provider', 'status', 'actor'])),
-    sealed_through: z.date(),
 
     points: z.array(
       z.object({
@@ -29,7 +27,6 @@ const series = createSchema({
         status: z.enum(['incomplete', 'complete', 'failed']).nullable(),
         actor_type: z.enum(['user', 'api_key']).nullable(),
         actor_id: z.uuid().nullable(),
-        actor_label: z.string().nullable(),
 
         requests: z.number(),
         input_tokens: z.number(),

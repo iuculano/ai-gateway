@@ -7,7 +7,7 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook })
 
   /**
    * POST /analytics/series
-   * Time series and breakdowns, served from the hourly rollup.
+   * Time series and breakdowns, served from ClickHouse.
    */
   .openapi(Routes.postAnalyticsSeries, async (c) => {
     const body = c.req.valid('json');
