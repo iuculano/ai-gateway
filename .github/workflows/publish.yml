@@ -38,7 +38,7 @@ jobs:
         app:
           - gateway-backend
           - gateway-frontend
-          - worker-analytics-rollup
+          - worker-analytics
           - worker-model-catalog
           - worker-webhooks
 
