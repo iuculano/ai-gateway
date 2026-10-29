@@ -11,6 +11,11 @@ const environmentSchema = z.object({
   ROLLUP_CHUNK_HOURS: z.coerce.number().int().positive().default(24),
 
   POSTGRES_CONNECTION_STRING: z.url(),
+
+  CLICKHOUSE_URL: z.url().default('http://localhost:8123'),
+  CLICKHOUSE_USER: z.string().default('default'),
+  CLICKHOUSE_PASSWORD: z.string().default(''),
+  CLICKHOUSE_DATABASE: z.string().default('ai_gateway'),
 });
 
 export const environment = environmentSchema.parse(process.env);
