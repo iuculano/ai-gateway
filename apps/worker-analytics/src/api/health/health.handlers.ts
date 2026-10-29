@@ -3,8 +3,6 @@ import { zodExceptionHook } from '@repo/hono';
 import Routes from './health.routes';
 import Services from './health.services';
 
-const requiredTables = ['logs'];
-
 /**
  * GET /livez
  * Check if the service is alive.
@@ -34,7 +32,6 @@ const readyz = defineOpenAPIRoute({
   handler: async (c) => {
     const checks = {
       db: await Services.checkPostgres(),
-      db_tables: await Services.checkPostgresTables(requiredTables),
       clickhouse: await Services.checkClickHouse(),
     };
 

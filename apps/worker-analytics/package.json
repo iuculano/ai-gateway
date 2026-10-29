@@ -1,18 +1,16 @@
 {
-  "name": "worker-analytics-rollup",
+  "name": "worker-analytics",
   "type": "module",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "build": "bun build src/index.ts --compile --minify-whitespace --minify-syntax --outfile dist/worker-analytics-rollup",
+    "build": "bun build src/index.ts --compile --minify-whitespace --minify-syntax --outfile dist/worker-analytics",
     "start": "bun run src/index.ts",
     "check-types": "bunx tsc --noEmit",
-    "test:unit": "bun test --isolate tests/unit",
-    "test:unit:coverage": "bun test --coverage --isolate tests/unit",
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {
-    "@hono/swagger-ui": "^0.5.3",
     "@hono/zod-openapi": "^1.6.3",
+    "@repo/clickhouse": "workspace:*",
     "@repo/core": "workspace:*",
     "@repo/drizzle": "workspace:*",
     "@repo/hono": "workspace:*",

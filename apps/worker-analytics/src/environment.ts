@@ -6,13 +6,12 @@ const environmentSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'trace']).default('info'),
   WORKER_ENABLED: z.stringbool().default(true),
 
-  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
-  ROLLUP_TRAILING_WINDOW_HOURS: z.coerce.number().int().positive().default(3),
-  ROLLUP_CHUNK_HOURS: z.coerce.number().int().positive().default(24),
+  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
+  SYNC_BATCH_ROWS: z.coerce.number().int().positive().default(20_000),
 
   POSTGRES_CONNECTION_STRING: z.url(),
 
-  CLICKHOUSE_URL: z.url().default('http://localhost:8123'),
+  CLICKHOUSE_URL: z.url(),
   CLICKHOUSE_USER: z.string().default('default'),
   CLICKHOUSE_PASSWORD: z.string().default(''),
   CLICKHOUSE_DATABASE: z.string().default('ai_gateway'),
