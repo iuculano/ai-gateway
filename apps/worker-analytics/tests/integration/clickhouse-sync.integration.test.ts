@@ -122,3 +122,18 @@ test('tags are copied, and the well-known ones land in their own columns', async
     { tags: {}, user_id: '', session_id: '' },
   ]);
 });
+
+test('a batch that only partly landed is copied again, not skipped', async () => {
+  const older = await seedLog({ updatedAt: '2026-10-28 01:00:00+00' });
+  await seedLog({ updatedAt: '2026-10-28 01:00:01+00' });
+  await tickAnalyticsSync();
+
+  // As if the batch's newer part landed and its older one didn't, so the cursor
+  // never moved: the newest row in logs is no longer where the sync is up to.
+  await clickhouse.command({ query: `ALTER TABLE logs DELETE WHERE id = '${older}' SETTINGS mutations_sync = 2` });
+  await clickhouse.command({ query: 'TRUNCATE TABLE sync_cursor SYNC' });
+
+  await tickAnalyticsSync();
+
+  expect((await synced()).rows).toBe(2);
+});

@@ -29,6 +29,17 @@ const LOGS = `
   SETTINGS storage_policy = 'object_store', default_compression_codec = 'ZSTD(3)'
 `;
 
+// The last log the sync fully copied. Written only after a whole batch lands, so
+// a failed insert gets retried instead of skipped.
+const SYNC_CURSOR = `
+  CREATE TABLE IF NOT EXISTS sync_cursor (
+    updated_at DateTime64(6, 'UTC'),
+    id         UUID
+  )
+  ENGINE = ReplacingMergeTree(updated_at)
+  ORDER BY tuple()
+`;
+
 /**
  * Creates schemas if they don't exist. Safe to run on every start.
  *
@@ -37,4 +48,5 @@ const LOGS = `
  */
 export async function ensureSchema(clickhouse: ClickHouse): Promise<void> {
   await clickhouse.command({ query: LOGS });
+  await clickhouse.command({ query: SYNC_CURSOR });
 }

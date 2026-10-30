@@ -44,4 +44,5 @@ export async function resetDatabase(): Promise<void> {
   await admin.unsafe('truncate table logs, users, organizations restart identity cascade');
   const { clickhouse } = await import('@repo/clickhouse');
   await clickhouse.command({ query: 'TRUNCATE TABLE logs SYNC' });
+  await clickhouse.command({ query: 'TRUNCATE TABLE sync_cursor SYNC' });
 }

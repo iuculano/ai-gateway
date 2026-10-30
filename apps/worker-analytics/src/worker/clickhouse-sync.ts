@@ -31,18 +31,17 @@ type SyncedLog = Pick<
  * Copies settled log rows from Postgres to ClickHouse.
  */
 export async function tickAnalyticsSync() {
-  // Grab the newest row ClickHouse has, so we have a starting point for sync.
+  // Pick up where the last fully inserted batch left off.
   const query = `
     SELECT
       toString(updated_at) AS at,
       toString(id)         AS id
-    FROM logs
+    FROM sync_cursor
     ORDER BY updated_at DESC, id DESC
     LIMIT 1
   `;
 
-  // An empty table returns no row, so start before every log: the first tick
-  // on a fresh ClickHouse is then the backfill.
+  // No cursor yet means start before every log.
   const [cursor = { at: '1970-01-01 00:00:00.000000', id: '00000000-0000-0000-0000-000000000000' }] = await (
     await clickhouse.query({
       query,
@@ -91,8 +90,14 @@ export async function tickAnalyticsSync() {
       break;
     }
 
-    // Insert batch into ClickHouse and update cursor.
+    // Only move the cursor once the whole batch is in. If either insert fails,
+    // the next tick replays the batch, and ReplacingMergeTree drops the repeats.
     await clickhouse.insert({ table: 'logs', values: batch, format: 'JSONEachRow' });
+    await clickhouse.insert({
+      table: 'sync_cursor',
+      values: [{ updated_at: last.updated_at, id: last.id }],
+      format: 'JSONEachRow',
+    });
     rows += batch.length;
     batches += 1;
     cursor.at = last.updated_at;
