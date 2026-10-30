@@ -324,7 +324,6 @@ test('a non-streaming completion maps provider output and closes its inference l
         tags: undefined,
         // The row names who spent, taken from the authenticated caller rather
         // than from anything the request supplied.
-        actor_type: 'user',
         actor_id: USER_ID,
       },
     },
@@ -359,7 +358,6 @@ test('the omit headers keep the row and its accounting, and store neither payloa
         model: 'test-model',
         provider: 'openai',
         tags: undefined,
-        actor_type: 'user',
         actor_id: USER_ID,
       },
     },

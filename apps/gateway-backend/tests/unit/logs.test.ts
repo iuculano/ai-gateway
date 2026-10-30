@@ -239,7 +239,7 @@ test('listLogs stays a plain promise', async () => {
 const opened = { operation: 'chat', model: 'gpt-4-turbo', provider: 'openai' } as const;
 
 // From the caller fixture forCaller() binds.
-const fromCaller = { organization_id: ORGANIZATION_ID, actor_type: 'user', actor_id: USER_ID } as const;
+const fromCaller = { organization_id: ORGANIZATION_ID, actor_id: USER_ID } as const;
 
 function insertedLog(): Record<string, unknown> | undefined {
   const values = database.queriesFor('insert', 'logs')[0]?.calls.find((call) => call.method === 'values')?.args[0];

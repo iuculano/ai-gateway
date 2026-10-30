@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
+import { generateActorId } from '@repo/core';
 import { runWithCaller } from '@repo/hono';
 import Services from '../../src/api/actors/actors.services';
 import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
@@ -31,8 +32,8 @@ test('users resolve directly without organization activity and include tombstone
 });
 
 test('API key names remain available after revocation but never across tenants', async () => {
-  const [key] = await admin`insert into api_keys (organization_id, name, key_hash, creator_id, revoked_at)
-    values (${acme.organizationId}, 'Deployment', ${'a'.repeat(64)}, ${globex.userId}, now()) returning id`;
+  const [key] = await admin`insert into api_keys (id, organization_id, name, key_hash, creator_id, revoked_at)
+    values (${generateActorId('api_key')}, ${acme.organizationId}, 'Deployment', ${'a'.repeat(64)}, ${globex.userId}, now()) returning id`;
   if (!key) throw new Error('Failed to seed API key');
   const actors = [{ actor_type: 'api_key' as const, actor_id: key.id }];
   const own = await runWithCaller(callerFor(acme), () => Services.resolveActors({ actors }));

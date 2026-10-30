@@ -27,9 +27,9 @@ async function seedLog(entry: { updatedAt: string; inputTokens?: number | null; 
   // A timestamp, or 'now' for a row written this moment.
   const updatedAt = entry.updatedAt === 'now' ? new Date().toISOString() : entry.updatedAt;
   const [row] = await admin`
-    insert into logs (organization_id, operation, model, provider, status, actor_type, actor_id,
+    insert into logs (organization_id, operation, model, provider, status, actor_id,
                       input_tokens, output_tokens, input_cost, output_cost, response_time_ms, created_at, updated_at)
-    values (${organizationId}, 'chat', 'gpt-5-mini', 'openai', 'complete', 'api_key', gen_random_uuid(),
+    values (${organizationId}, 'chat', 'gpt-5-mini', 'openai', 'complete', gen_random_uuid(),
             ${entry.inputTokens === undefined ? 10 : entry.inputTokens}, 5, 0.000025, 0.00001,
             ${entry.latency === undefined ? 100 : entry.latency}, now() - interval '1 minute', ${updatedAt}::timestamptz)
     returning id

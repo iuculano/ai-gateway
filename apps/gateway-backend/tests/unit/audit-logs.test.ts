@@ -31,7 +31,6 @@ function auditRow(overrides: Record<string, unknown> = {}) {
       target_type: 'api_key',
       target_id: KEY_ID,
       status: 'success',
-      actor_type: 'user',
       actor_id: USER_ID,
       request_id: null,
       ip: null,

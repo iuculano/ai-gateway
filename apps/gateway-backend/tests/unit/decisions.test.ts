@@ -192,7 +192,6 @@ test('questions are translated for the SDK and answers come back in the OpenAI s
     operation: 'decision',
     model: 'gpt-6-luna',
     provider: 'openai',
-    actor_type: 'user',
     actor_id: USER_ID,
   });
 });

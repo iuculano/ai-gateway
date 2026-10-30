@@ -262,13 +262,14 @@ export const CATALOG: CatalogProvider[] = [
 ];
 
 export function emptySeries(request: RecordedApiRequest): SeriesResponse {
-  const body = (request.body ?? {}) as { interval?: SeriesResponse['interval']; group_by?: SeriesResponse['group_by'] };
+  const body = (request.body ?? {}) as {
+    interval?: SeriesResponse['interval'];
+    groupings?: SeriesResponse['groupings'][number]['group_by'][];
+  };
 
   return {
-    interval: body.interval ?? 'none',
-    group_by: body.group_by ?? [],
-    sealed_through: '2026-08-23T12:00:00.000Z',
-    points: [],
+    interval: body.interval ?? 'day',
+    groupings: (body.groupings ?? []).map((group_by) => ({ group_by, points: [] })),
   };
 }
 

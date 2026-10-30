@@ -15,7 +15,6 @@ type SyncedLog = Pick<
   | 'model'
   | 'provider'
   | 'status'
-  | 'actor_type'
   | 'actor_id'
   | 'input_tokens'
   | 'output_tokens'
@@ -41,7 +40,9 @@ export async function tickAnalyticsSync() {
     LIMIT 1
   `;
 
-  const [cursor] = await (
+  // An empty table returns no row, so start before every log: the first tick
+  // on a fresh ClickHouse is then the backfill.
+  const [cursor = { at: '1970-01-01 00:00:00.000000', id: '00000000-0000-0000-0000-000000000000' }] = await (
     await clickhouse.query({
       query,
       format: 'JSONEachRow',
@@ -52,7 +53,7 @@ export async function tickAnalyticsSync() {
   let rows = 0;
   let batches = 0;
 
-  while (cursor) {
+  while (true) {
     // Grab batch of rowws from Postgres that have settled and are newer than
     // the last synced row.
     const batch = await db.execute<SyncedLog>(sql`
@@ -65,7 +66,6 @@ export async function tickAnalyticsSync() {
         model,
         provider,
         status,
-        actor_type,
         actor_id,
         input_tokens,
         output_tokens,

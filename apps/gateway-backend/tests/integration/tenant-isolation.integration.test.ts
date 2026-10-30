@@ -3,7 +3,7 @@ import { runWithCaller } from '@repo/hono';
 import AnalyticsServices from '../../src/api/analytics/analytics.services';
 import GuardrailServices from '../../src/api/guardrails/guardrails.services';
 import LogServices from '../../src/api/logs/logs.services';
-import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
+import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, syncLogsToClickHouse, type Tenant } from './setup';
 
 let acme: Tenant;
 let globex: Tenant;
@@ -37,8 +37,8 @@ async function seedGuardrail(tenant: Tenant): Promise<string> {
 
 async function seedLog(tenant: Tenant, model: string): Promise<string> {
   const [row] = await admin`
-    insert into logs (organization_id, model, provider, status, input_tokens, output_tokens, actor_type, actor_id)
-    values (${tenant.organizationId}, ${model}, 'test', 'complete', 10, 5, 'user', ${tenant.userId})
+    insert into logs (organization_id, model, provider, status, input_tokens, output_tokens, actor_id)
+    values (${tenant.organizationId}, ${model}, 'test', 'complete', 10, 5, ${tenant.userId})
     returning id
   `;
 
@@ -101,11 +101,14 @@ test('log statistics and analytics are isolated', async () => {
   expect(acmeStats.total).toBe(2);
   expect(globexStats.total).toBe(1);
 
+  // Analytics reads ClickHouse, which the analytics worker fills from these rows.
+  await syncLogsToClickHouse();
+
   // Same request body, deliberately. If the organization is omitted from the
   // analytics SQL, both callers receive the combined aggregate.
-  const request = { interval: 'none' as const, group_by: [] };
+  const request = { interval: 'day' as const, groupings: [[]] };
   const acmeAnalytics = await asTenant(acme, () => AnalyticsServices.queryAnalyticsSeries(request));
   const globexAnalytics = await asTenant(globex, () => AnalyticsServices.queryAnalyticsSeries(request));
-  expect(acmeAnalytics.points[0]?.requests).toBe(2);
-  expect(globexAnalytics.points[0]?.requests).toBe(1);
+  expect(acmeAnalytics.groupings[0]?.points[0]?.requests).toBe(2);
+  expect(globexAnalytics.groupings[0]?.points[0]?.requests).toBe(1);
 });
