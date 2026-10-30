@@ -46,6 +46,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@clickhouse/client": "1.24.1",
     "@repo/test-helpers": "workspace:*",
     "@types/bun": "^1.4.2",
     "typescript": "^6.0.3"
