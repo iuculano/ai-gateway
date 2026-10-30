@@ -10,6 +10,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { generateActorId } from '@repo/core';
 import { connectRedis, redis } from '@repo/redis';
 import { SQL } from 'bun';
 import { type LoadResult, type RequestSample, reportLoad, runConstantRate } from './load-harness';
@@ -402,8 +403,8 @@ async function provisionCredential(admin: SQL, organizationId: string): Promise<
   const suffix = randomBytes(6).toString('hex');
 
   const [user] = await admin`
-    insert into users (username, email, name)
-    values (${`stress-${suffix}`}, ${`stress-${suffix}@example.test`}, 'Stress Harness')
+    insert into users (id, username, email, name)
+    values (${generateActorId('user')}, ${`stress-${suffix}`}, ${`stress-${suffix}@example.test`}, 'Stress Harness')
     returning id
   `;
   if (!user) {
@@ -411,8 +412,9 @@ async function provisionCredential(admin: SQL, organizationId: string): Promise<
   }
 
   const [key] = await admin`
-    insert into api_keys (organization_id, name, description, key_hash, creator_id, scopes)
+    insert into api_keys (id, organization_id, name, description, key_hash, creator_id, scopes)
     values (
+      ${generateActorId('api_key')},
       ${organizationId},
       ${`stress-${suffix}`},
       'Temporary key created by tests/stress/gateway.stress.ts',

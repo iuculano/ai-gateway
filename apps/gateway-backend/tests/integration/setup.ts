@@ -169,10 +169,13 @@ export async function syncLogsToClickHouse(): Promise<void> {
 
 /** The analytics tables, in a database of their own. */
 async function prepareClickHouse(): Promise<void> {
-  const { clickhouse, createClickHouse, ensureSchema } = await import('@repo/clickhouse');
-  await createClickHouse({ database: 'default' }).command({
+  // The shared client points at ai_gateway_test, which may not exist yet, so the
+  // database is created through a client on the default one.
+  const { createClient } = await import('@clickhouse/client');
+  await createClient({ url: process.env.CLICKHOUSE_URL, password: process.env.CLICKHOUSE_PASSWORD }).command({
     query: 'CREATE DATABASE IF NOT EXISTS ai_gateway_test',
   });
+  const { clickhouse, ensureSchema } = await import('@repo/clickhouse');
   await ensureSchema(clickhouse);
 }
 

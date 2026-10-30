@@ -1,22 +1,21 @@
-import { type ClickHouseClient, createClient } from '@clickhouse/client';
+import { createClient } from '@clickhouse/client';
 
 export { ClickHouseError } from '@clickhouse/client';
-export type ClickHouse = ClickHouseClient;
 
-
-export interface ClickHouseOptions {
-  url: string;
-  user?: string;
-  password?: string;
-  database?: string;
-}
-
-export function createClickHouse(options: ClickHouseOptions): ClickHouse {
+function createClickHouseClient() {
   return createClient({
-    url: options.url,
-    username: options.user ?? 'default',
-    password: options.password ?? '',
-    database: options.database,
+    url: process.env.CLICKHOUSE_URL || 'http://localhost:8123',
+    username: process.env.CLICKHOUSE_USER || 'default',
+    password: process.env.CLICKHOUSE_PASSWORD || '',
+    database: process.env.CLICKHOUSE_DATABASE || 'ai_gateway',
     clickhouse_settings: { output_format_json_quote_64bit_integers: 0 },
   });
 }
+
+export type ClickHouse = ReturnType<typeof createClickHouseClient>;
+
+/**
+ * The shared client. Built at import, so the CLICKHOUSE_* settings must already
+ * be set by then - Bun loads .env first, and integration tests preload theirs.
+ */
+export const clickhouse = createClickHouseClient();
