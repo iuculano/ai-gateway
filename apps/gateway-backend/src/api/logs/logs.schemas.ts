@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi';
+import { ACTOR_TYPES } from '@repo/core';
 import { logs } from '@repo/drizzle/schemas';
 import { createSchema } from '@repo/hono';
 import { createSelectSchema } from 'drizzle-orm/zod';
@@ -18,6 +19,7 @@ const logShape = createSelectSchema(logs)
   .extend({
     input_cost: z.coerce.number().nonnegative(),
     output_cost: z.coerce.number().nonnegative(),
+    actor_type: z.enum(ACTOR_TYPES),
   });
 
 const getLog = createSchema({

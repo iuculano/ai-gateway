@@ -1,4 +1,4 @@
-import { parseTags, probe, toPage } from '@repo/core';
+import { getActorType, parseTags, probe, toPage } from '@repo/core';
 import { and, asc, countRows, db, desc, eq, gt, inArray, lt, sql } from '@repo/drizzle';
 import { type LogRow, logs } from '@repo/drizzle/schemas';
 import { getActorId, getCaller, getTraceContext } from '@repo/hono';
@@ -67,7 +67,7 @@ async function getLog(id: string): Promise<Result<GetLogResponse, GetLogFailure>
     return err({ code: 'LOG_NOT_FOUND', id });
   }
 
-  const parsed = Schemas.getLog.response.parse(row);
+  const parsed = Schemas.getLog.response.parse({ ...row, actor_type: getActorType(row.actor_id) });
   return ok(parsed);
 }
 
@@ -233,7 +233,7 @@ async function listLogs(query: ListLogsQuery): Promise<ListLogsResponse> {
 
   // Recompute both cursors after the possible reversal.
   return Schemas.listLogs.response.parse({
-    data: data.map((row) => Schemas.getLog.response.parse(row)),
+    data: data.map((row) => Schemas.getLog.response.parse({ ...row, actor_type: getActorType(row.actor_id) })),
     meta: {
       newest_id: data.at(0)?.id ?? null,
       oldest_id: data.at(-1)?.id ?? null,
@@ -342,7 +342,6 @@ function startLog(entry: {
     trace_id: trace?.traceId,
     span_id: trace?.spanId,
     parent_span_id: trace?.parentSpanId,
-    actor_type: caller.actor.type,
     actor_id: getActorId(caller),
     tags: parseTags(entry.tags),
     created_at: createdAt,

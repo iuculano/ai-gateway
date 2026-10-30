@@ -7,16 +7,19 @@ export const ACTOR_TYPE_CODES = {
 
 export type ActorType = keyof typeof ACTOR_TYPE_CODES;
 
+// Every actor type, for validation (e.g. z.enum(ACTOR_TYPES)).
+export const ACTOR_TYPES = Object.keys(ACTOR_TYPE_CODES) as [ActorType, ...ActorType[]];
+
 /**
  * Reads an actor's type out of its id.
  *
  * @param id
- * A user or API key id.
+ * An actor id.
  *
  * @returns
- * The actor type, or undefined for an id that wasn't made for an actor.
+ * The actor type, or 'unknown' when the id doesn't carry one.
  */
-export function getActorType(id: string): ActorType | undefined {
+export function getActorType(id: string): ActorType {
   // The last hex character is the last 4 bits - aka the type.
   const data = Number.parseInt(id.slice(-1), 16);
 
@@ -27,7 +30,7 @@ export function getActorType(id: string): ActorType | undefined {
     }
   }
 
-  return undefined;
+  return 'unknown';
 }
 
 /**
