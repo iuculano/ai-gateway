@@ -1,14 +1,20 @@
 import { clickhouse } from '@repo/clickhouse';
+import { getActorType } from '@repo/core';
 import { getCaller } from '@repo/hono';
-import Schemas, { type AnalyticsSeriesBody, type AnalyticsSeriesResponse } from './analytics.schemas';
+import Schemas, {
+  type AnalyticsDimension,
+  type AnalyticsSeriesBody,
+  type AnalyticsSeriesResponse,
+} from './analytics.schemas';
 
+// A result row as ClickHouse hands it back.
 interface AggregateRow {
-  bucket?: string;
-  model?: string;
-  provider?: string;
-  status?: string;
-  actor_type?: string;
-  actor_id?: string;
+  set_mask: number;
+  bucket: string | null;
+  model: string | null;
+  provider: string | null;
+  status: string | null;
+  actor: string | null;
   requests: number;
   input_tokens: number;
   output_tokens: number;
@@ -21,8 +27,7 @@ interface AggregateRow {
   maximum_latency_ms: number | null;
 }
 
-// Just the metrics we want to select and aggregate
-const METRICS = [
+const METRIC_COLUMNS = [
   'count() AS requests',
   'sum(input_tokens) AS input_tokens',
   'sum(output_tokens) AS output_tokens',
@@ -35,53 +40,91 @@ const METRICS = [
   'max(response_time_ms) AS maximum_latency_ms',
 ];
 
-// Default ClickHouse setting seems to come back wihtout a timezone...
-const settings = { date_time_output_format: 'iso' } as const;
+// What a result row can be grouped by, in a fixed order.
+const GROUP_BY_KEYS = ['bucket', 'model', 'provider', 'status', 'actor'];
 
+const settings = {
+  date_time_output_format: 'iso', // Default ClickHouse setting seems to come back wihtout a timezone...
+  group_by_use_nulls: 1, // Keys a row isn't grouped by come back null rather than '' or 0.
+  use_query_cache: 1,
+} as const;
+
+/**
+ * Works out which rows of the combined result belong to a grouping.
+ *
+ * @param groupingKeys
+ * The group-by keys of this grouping.
+ *
+ * @param usedKeys
+ * Every key any grouping in the query uses, in the order they were passed to
+ * grouping(). The order sets which bit is which, so it must match the query.
+ *
+ * @returns
+ * The set_mask the grouping's rows carry.
+ */
+function maskOf(groupingKeys: string[], usedKeys: string[]): number {
+  let mask = 0;
+
+  // One bit per used key, in order
+  for (const key of usedKeys) {
+    mask = (mask << 1) | (groupingKeys.includes(key) ? 0 : 1);
+  }
+
+  return mask;
+}
+
+/**
+ * What it says on the tin.
+ *
+ * @param request
+ * The date range, filters, bucket size, and the groupings to answer.
+ */
 async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<AnalyticsSeriesResponse> {
-  // No bucket if the interval is 'none', just match all filters provided
-  const hasBucket = request.interval !== 'none';
-  const dimensions: string[] = [];
-  if (hasBucket) {
-    dimensions.push('bucket');
+  const requested: { grouping: AnalyticsDimension[]; keys: string[] }[] = [];
+
+  for (const grouping of request.groupings) {
+    const dimensions = new Set<string>(grouping);
+    requested.push({ grouping, keys: GROUP_BY_KEYS.filter((key) => dimensions.has(key)) });
   }
 
-  // Each dimension splits the totals further: ['bucket', 'provider'] gives one
-  // row per hour (or day) per provider. 'actor' takes two columns.
-  for (const name of new Set(request.group_by)) {
-    if (name === 'actor') {
-      dimensions.push('actor_type', 'actor_id');
-    } else {
-      dimensions.push(name);
-    }
-  }
+  // The set means a grouping asked for twice only gets answered once.
+  const sets = new Set(requested.map(({ keys }) => `(${keys.join(', ')})`));
 
-  // Filters. Values go in as typed parameters, never as SQL text.
-  const conditions = ['organization_id = {organization:UUID}'];
-  if (request.start_date) conditions.push('created_at >= {start:DateTime64(3)}');
-  if (request.end_date) conditions.push('created_at < {end:DateTime64(3)}');
-  if (request.model) conditions.push('model = {model:String}');
-  if (request.provider) conditions.push('provider = {provider:String}');
-  if (request.status) conditions.push('status = {status:String}');
+  const usedKeys = GROUP_BY_KEYS.filter((key) => requested.some(({ keys }) => keys.includes(key)));
+  const expressions: Record<string, string> = {
+    bucket: `${request.interval === 'hour' ? 'toStartOfHour' : 'toStartOfDay'}(created_at)`,
+    actor: 'actor_id',
+  };
+  const selectedKeys = GROUP_BY_KEYS.map((key) => {
+    if (!usedKeys.includes(key)) return `NULL AS ${key}`;
+    return expressions[key] ? `${expressions[key]} AS ${key}` : key;
+  });
 
-  // For example, { interval: 'hour', group_by: ['provider'] } comes out as:
-  //
-  //   WITH     toStartOfHour(created_at) AS bucket
-  //   SELECT   bucket, provider, count() AS requests, ...
-  //   FROM     logs FINAL WHERE organization_id = {organization:UUID}
-  //   GROUP BY bucket, provider
-  //   ORDER BY bucket, requests DESC
-  //
-  // Dimensions are both selected (to label each row) and grouped.
+  // Tags every row with the grouping it belongs to (see maskOf).
+  const setMask = usedKeys.length > 0 ? `grouping(${usedKeys.join(', ')})` : '0';
+
+  const conditions = ['logs.organization_id = {organization:UUID}'];
+  if (request.start_date) conditions.push('logs.created_at >= {start:DateTime64(3)}');
+  if (request.end_date) conditions.push('logs.created_at < {end:DateTime64(3)}');
+  if (request.model) conditions.push('logs.model = {model:String}');
+  if (request.provider) conditions.push('logs.provider = {provider:String}');
+  if (request.status) conditions.push('logs.status = {status:String}');
+
+  // One scan answers every grouping. Ties are broken on every key, so rows come
+  // back in the same order every time.
   const query = `
-    WITH ${request.interval === 'hour' ? 'toStartOfHour' : 'toStartOfDay'}(created_at) AS bucket
-    SELECT ${[...dimensions, ...METRICS].join(', ')}
+    SELECT ${[...selectedKeys, `${setMask} AS set_mask`, ...METRIC_COLUMNS].join(', ')}
     FROM logs FINAL
     WHERE ${conditions.join(' AND ')}
-    ${dimensions.length > 0 ? `GROUP BY ${dimensions.join(', ')}` : ''}
-    ORDER BY ${hasBucket ? 'bucket, ' : ''}requests DESC
+    GROUP BY GROUPING SETS (${[...sets].join(', ')})
+    ORDER BY bucket, requests DESC, ${GROUP_BY_KEYS.join(', ')}
   `;
 
+  // Ranges that ended over an hour ago can't change anymore, so cache them for
+  // the 5 minutes the page keeps asking for the same window.
+  const settled = request.end_date !== undefined && request.end_date.getTime() < Date.now() - 3_600_000;
+
+  // The organization always comes from the caller, never from the request.
   const result = await clickhouse.query({
     query,
     query_params: {
@@ -92,26 +135,35 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
       provider: request.provider,
       status: request.status,
     },
-    clickhouse_settings: settings,
+    clickhouse_settings: { ...settings, query_cache_ttl: settled ? 300 : 10 },
     format: 'JSONEachRow',
   });
 
+  // Rows for every grouping arrive mixed together.
   const rows = await result.json<AggregateRow>();
+  const rowsByMask = Map.groupBy(rows, (row) => row.set_mask);
 
-  return Schemas.series.response.parse({
-    interval: request.interval,
-    group_by: request.group_by,
-    points: rows.map((row) => ({
-      // Null unless grouped on.
-      model: null,
-      provider: null,
-      status: null,
-      actor_type: null,
-      actor_id: null,
-      ...row,
-      bucket: row.bucket ? new Date(row.bucket) : null,
-    })),
-  });
+  // Answer each grouping in the order it was asked, from its pile.
+  const groupings: { group_by: AnalyticsDimension[]; points: unknown[] }[] = [];
+
+  for (const { grouping, keys } of requested) {
+    const mask = maskOf(keys, usedKeys);
+    const groupingRows = rowsByMask.get(mask) ?? [];
+
+    // ClickHouse hands bucket back as an ISO string; the response wants a Date.
+    // The actor's type comes out of its id.
+    const points = [];
+    for (const row of groupingRows) {
+      const bucket = row.bucket ? new Date(row.bucket) : null;
+      const actorType = row.actor ? getActorType(row.actor) : null;
+      points.push({ ...row, bucket, actor_id: row.actor, actor_type: actorType });
+    }
+
+    groupings.push({ group_by: grouping, points });
+  }
+
+  // The parse checks every point and drops set_mask and actor.
+  return Schemas.series.response.parse({ interval: request.interval, groupings });
 }
 
 export default {
