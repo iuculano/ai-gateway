@@ -34,7 +34,6 @@ const listAuditLogs = createSchema({
 
     status: z.enum(['success', 'failure']).optional(),
     actor_id: z.uuid().optional(),
-    actor_type: z.enum(ACTOR_TYPES).optional(),
     target_type: z.string().optional(),
     target_id: z.uuid().optional(),
     request_id: z.string().optional(),
