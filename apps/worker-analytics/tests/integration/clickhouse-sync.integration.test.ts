@@ -23,15 +23,21 @@ afterAll(async () => {
   await admin.close();
 });
 
-async function seedLog(entry: { updatedAt: string; inputTokens?: number | null; latency?: number | null }) {
+async function seedLog(entry: {
+  updatedAt: string;
+  inputTokens?: number | null;
+  latency?: number | null;
+  tags?: Record<string, string>;
+}) {
   // A timestamp, or 'now' for a row written this moment.
   const updatedAt = entry.updatedAt === 'now' ? new Date().toISOString() : entry.updatedAt;
   const [row] = await admin`
     insert into logs (organization_id, operation, model, provider, status, actor_id,
-                      input_tokens, output_tokens, input_cost, output_cost, response_time_ms, created_at, updated_at)
+                      input_tokens, output_tokens, input_cost, output_cost, response_time_ms, created_at, updated_at, tags)
     values (${organizationId}, 'chat', 'gpt-5-mini', 'openai', 'complete', gen_random_uuid(),
             ${entry.inputTokens === undefined ? 10 : entry.inputTokens}, 5, 0.000025, 0.00001,
-            ${entry.latency === undefined ? 100 : entry.latency}, now() - interval '1 minute', ${updatedAt}::timestamptz)
+            ${entry.latency === undefined ? 100 : entry.latency}, now() - interval '1 minute', ${updatedAt}::timestamptz,
+            ${entry.tags ?? null}::jsonb)
     returning id
   `;
   return row.id as string;
@@ -100,4 +106,19 @@ test('microseconds survive the cursor: no row is skipped or repeated at a sub-mi
     'SELECT toString(min(updated_at)) AS low, toString(max(updated_at)) AS high FROM logs',
   );
   expect(range).toEqual({ low: '2026-10-28 01:00:00.000100', high: '2026-10-28 01:00:00.000300' });
+});
+
+test('tags are copied, and the well-known ones land in their own columns', async () => {
+  await seedLog({ updatedAt: '2026-10-28 01:00:00+00', tags: { user_id: 'u-1', session_id: 's-1', team: 'search' } });
+  await seedLog({ updatedAt: '2026-10-28 01:00:01+00' });
+
+  await tickAnalyticsSync();
+
+  const rows = await rowsOf<{ tags: Record<string, string>; user_id: string; session_id: string }>(
+    'SELECT tags, user_id, session_id FROM logs FINAL ORDER BY updated_at',
+  );
+  expect(rows).toEqual([
+    { tags: { user_id: 'u-1', session_id: 's-1', team: 'search' }, user_id: 'u-1', session_id: 's-1' },
+    { tags: {}, user_id: '', session_id: '' },
+  ]);
 });

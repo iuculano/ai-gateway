@@ -45,6 +45,7 @@ async function seedLog(entry: {
   responseTimeMs: number | null;
   createdAt?: string;
   actorId?: string;
+  tags?: Record<string, string>;
   tenant?: Tenant;
 }) {
   const tenant = entry.tenant ?? acme;
@@ -63,6 +64,7 @@ async function seedLog(entry: {
         status: entry.status,
         // Every row names who spent. The tenant's own user stands in for the caller.
         actor_id: entry.actorId ?? tenant.userId,
+        tags: entry.tags ?? {},
         input_tokens: entry.inputTokens,
         output_tokens: entry.outputTokens,
         input_cost: entry.inputCost,
@@ -87,6 +89,8 @@ test('an organization with no logs receives a zero-valued analytics series', asy
         status: null,
         actor_type: null,
         actor_id: null,
+        user_id: null,
+        session_id: null,
         requests: 0,
         input_tokens: 0,
         output_tokens: 0,
@@ -247,4 +251,36 @@ test('a grouping written in a different order is the same grouping, not counted 
 
   expect(result.groupings[0]?.points.map((point) => point.requests)).toEqual([1, 1]);
   expect(result.groupings[1]?.points).toEqual(result.groupings[0]?.points);
+});
+
+test('the well-known user and session tags group and filter like any other dimension', async () => {
+  await seedLog({
+    model: 'm',
+    provider: 'openai',
+    status: 'complete',
+    ...usage,
+    tags: { user_id: 'u-1', session_id: 's-1' },
+  });
+  await seedLog({
+    model: 'm',
+    provider: 'openai',
+    status: 'complete',
+    ...usage,
+    tags: { user_id: 'u-1', session_id: 's-2' },
+  });
+  await seedLog({ model: 'm', provider: 'openai', status: 'complete', ...usage, tags: { user_id: 'u-2' } });
+  await seedLog({ model: 'm', provider: 'openai', status: 'complete', ...usage });
+
+  const byUser = await query({ group_by: ['user'] });
+  expect(byUser.points.map((point) => [point.user_id, point.requests])).toEqual([
+    ['u-1', 2],
+    ['', 1], // untagged
+    ['u-2', 1],
+  ]);
+
+  const oneUser = await query({ group_by: ['session'], user_id: 'u-1' });
+  expect(oneUser.points.map((point) => [point.session_id, point.requests])).toEqual([
+    ['s-1', 1],
+    ['s-2', 1],
+  ]);
 });

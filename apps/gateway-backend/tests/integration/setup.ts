@@ -161,7 +161,8 @@ export async function syncLogsToClickHouse(): Promise<void> {
       to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') as updated_at,
       operation, model, provider, status, actor_id,
       input_tokens, output_tokens,
-      input_cost, output_cost, response_time_ms
+      input_cost, output_cost, response_time_ms,
+      coalesce(tags, '{}'::jsonb) as tags
     from logs
   `;
   await clickhouse.insert({ table: 'logs', values: rows, format: 'JSONEachRow' });
@@ -175,7 +176,10 @@ async function prepareClickHouse(): Promise<void> {
   await createClient({ url: process.env.CLICKHOUSE_URL, password: process.env.CLICKHOUSE_PASSWORD }).command({
     query: 'CREATE DATABASE IF NOT EXISTS ai_gateway_test',
   });
+  // Recreated each run, so the table always has the current columns:
+  // ensureSchema leaves an existing table as it is.
   const { clickhouse, ensureSchema } = await import('@repo/clickhouse');
+  await clickhouse.command({ query: 'DROP TABLE IF EXISTS logs SYNC' });
   await ensureSchema(clickhouse);
 }
 

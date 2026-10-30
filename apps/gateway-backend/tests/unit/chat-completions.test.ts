@@ -321,7 +321,7 @@ test('a non-streaming completion maps provider output and closes its inference l
         operation: 'chat',
         model: 'test-model',
         provider: 'openai',
-        tags: undefined,
+        tags: {},
         // The row names who spent, taken from the authenticated caller rather
         // than from anything the request supplied.
         actor_id: USER_ID,
@@ -341,6 +341,20 @@ test('a non-streaming completion maps provider output and closes its inference l
   expect(logWrites.failed).toHaveLength(0);
 });
 
+test('the OpenAI user field becomes the user_id tag, unless ai-log-tags names one', async () => {
+  await withCaller(() =>
+    Services.createChatCompletion(headers({ 'ai-log-tags': 'team:search' }), body({ user: 'end-user-1' })),
+  );
+  await withCaller(() =>
+    Services.createChatCompletion(headers({ 'ai-log-tags': 'user_id:tagged' }), body({ user: 'end-user-1' })),
+  );
+
+  expect(logWrites.started.map((log) => log.entry.tags)).toEqual([
+    { user_id: 'end-user-1', team: 'search' },
+    { user_id: 'tagged' },
+  ]);
+});
+
 test('the omit headers keep the row and its accounting, and store neither payload', async () => {
   // No header removes the row: a caller that could opt out of being attributed
   // could opt out of a spend limit, and a limit a request header switches off
@@ -357,7 +371,7 @@ test('the omit headers keep the row and its accounting, and store neither payloa
         operation: 'chat',
         model: 'test-model',
         provider: 'openai',
-        tags: undefined,
+        tags: {},
         actor_id: USER_ID,
       },
     },

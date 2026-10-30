@@ -33,7 +33,10 @@ export async function prepareSuite(): Promise<void> {
   await createClient({ url: process.env.CLICKHOUSE_URL, password: process.env.CLICKHOUSE_PASSWORD }).command({
     query: 'CREATE DATABASE IF NOT EXISTS ai_gateway_test',
   });
+  // Recreated each run, so the table always has the current columns:
+  // ensureSchema leaves an existing table as it is.
   const { clickhouse, ensureSchema } = await import('@repo/clickhouse');
+  await clickhouse.command({ query: 'DROP TABLE IF EXISTS logs SYNC' });
   await ensureSchema(clickhouse);
 }
 
