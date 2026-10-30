@@ -81,21 +81,29 @@ function setProvider(value: string) {
   modelFilter = '';
 }
 
+/**
+ * Now, rounded down to 30 s, so repeat loads send identical queries that the
+ * server can answer from cache. Loses nothing: logs reach analytics only once
+ * they're 30 s old.
+ */
+function alignedNow() {
+  return Math.floor(Date.now() / 30_000) * 30_000;
+}
+
 /** Keep options independent of the selected filters, including prior-period activity. */
 async function loadFilterOptions() {
   const request = ++filterRequest;
   filtersLoading = true;
   filtersError = false;
-  const end = Date.now();
+  const end = alignedNow();
   const days = range.days;
   try {
-    const result = await fetchSeries({
+    const [models] = await fetchSeries({
       start_date: new Date(end - 2 * days * 86_400_000).toISOString(),
       end_date: new Date(end).toISOString(),
-      interval: 'none',
-      group_by: ['provider', 'model'],
+      groupings: [['provider', 'model']],
     });
-    if (request === filterRequest) filterPoints = result.points;
+    if (request === filterRequest) filterPoints = models;
   } catch {
     if (request === filterRequest) filtersError = true;
   } finally {
@@ -162,56 +170,59 @@ async function load() {
   previousModelPoints = null;
   previousCallerPoints = null;
 
-  const end = Date.now();
+  const end = alignedNow();
   const duration = range.days * 86_400_000;
   const start = new Date(end - duration).toISOString();
   const filters = { provider: providerFilter || undefined, model: modelFilter || undefined };
   const common = { ...filters, start_date: start, end_date: new Date(end).toISOString() };
-  const previous = { ...filters, start_date: new Date(end - 2 * duration).toISOString(), end_date: start };
+  // The previous window ends on a 5-minute mark, so its query only changes every
+  // 5 minutes and the server's cache can answer it until then (its data no
+  // longer changes). It sits at most 5 minutes before the current one.
+  const previousEnd = Math.floor((end - duration) / 300_000) * 300_000;
+  const previous = {
+    ...filters,
+    start_date: new Date(previousEnd - duration).toISOString(),
+    end_date: new Date(previousEnd).toISOString(),
+  };
 
   try {
     const [
-      totalsResponse,
-      statusResponse,
-      series,
-      providers,
-      models,
-      callers,
-      comparison,
-      failuresByModel,
-      statusTimeline,
+      [totalsPoints, statusPoints, series, providers, models, callers, modelStatuses, statusTimeline],
+      [comparison],
     ] = await Promise.all([
-      fetchSeries({ ...common, interval: 'none' }),
-      fetchSeries({ ...common, interval: 'none', group_by: ['status'] }),
-      fetchSeries({ ...common, interval: range.interval }),
-      fetchSeries({ ...common, interval: range.interval, group_by: ['provider'] }),
-      fetchSeries({ ...common, interval: 'none', group_by: ['provider', 'model'] }),
-      fetchSeries({ ...common, interval: 'none', group_by: ['actor'] }),
+      fetchSeries({
+        ...common,
+        interval: range.interval,
+        groupings: [
+          [],
+          ['status'],
+          ['bucket'],
+          ['bucket', 'provider'],
+          ['provider', 'model'],
+          ['actor'],
+          ['provider', 'model', 'status'],
+          ['bucket', 'status'],
+        ],
+      }),
       // A failed comparison must not hide the current charts.
-      Promise.allSettled([
-        fetchSeries({ ...previous, interval: 'none' }),
-        fetchSeries({ ...previous, interval: 'none', group_by: ['status'] }),
-        fetchSeries({ ...previous, interval: 'none', group_by: ['provider', 'model'] }),
-        fetchSeries({ ...previous, interval: 'none', group_by: ['actor'] }),
-      ]),
-      fetchSeries({ ...common, interval: 'none', group_by: ['provider', 'model'], status: 'failed' }),
-      fetchSeries({ ...common, interval: range.interval, group_by: ['status'] }),
+      Promise.allSettled([fetchSeries({ ...previous, groupings: [[], ['status'], ['provider', 'model'], ['actor']] })]),
     ]);
     if (request !== loadRequest) return;
-    totals = totalsResponse.points[0] ?? null;
-    byStatus = statusResponse.points;
-    timeline = series.points;
-    outcomePoints = statusTimeline.points;
-    providerPoints = providers.points;
-    modelPoints = models.points;
-    modelFailures = failuresByModel.points;
-    callerPoints = callers.points;
-    const [previousTotalResult, previousStatusResult, previousModelsResult, previousCallersResult] = comparison;
-    if (previousModelsResult.status === 'fulfilled') previousModelPoints = previousModelsResult.value.points;
-    if (previousCallersResult.status === 'fulfilled') previousCallerPoints = previousCallersResult.value.points;
-    if (previousTotalResult.status === 'fulfilled' && previousStatusResult.status === 'fulfilled') {
-      previousTotals = previousTotalResult.value.points[0] ?? null;
-      previousStatuses = previousStatusResult.value.points;
+    totals = totalsPoints[0] ?? null;
+    byStatus = statusPoints;
+    timeline = series;
+    outcomePoints = statusTimeline;
+    providerPoints = providers;
+    modelPoints = models;
+    // Failures per model, from the model and status grouping.
+    modelFailures = modelStatuses.filter((point) => point.status === 'failed');
+    callerPoints = callers;
+    if (comparison.status === 'fulfilled') {
+      const [previousTotalPoints, previousStatusPoints, previousModels, previousCallers] = comparison.value;
+      previousTotals = previousTotalPoints[0] ?? null;
+      previousStatuses = previousStatusPoints;
+      previousModelPoints = previousModels;
+      previousCallerPoints = previousCallers;
     } else {
       comparisonError = true;
     }

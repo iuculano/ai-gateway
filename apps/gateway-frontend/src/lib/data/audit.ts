@@ -52,10 +52,13 @@ function toAuditChanges(value: unknown): Record<string, AuditChange> | undefined
  * The API client resolves actor names through the batch actor endpoint.
  */
 export function toAuditEvent(log: AuditLog): AuditEvent {
-  const actorName =
-    log.actor_type === 'system'
-      ? 'System'
-      : (log.actor_name ?? (log.actor_type === 'api_key' ? 'Unknown API key' : 'Unknown user'));
+  const fallbackNames = {
+    unknown: 'Unknown actor',
+    user: 'Unknown user',
+    api_key: 'Unknown API key',
+    system: 'System',
+  };
+  const actorName = log.actor_name ?? fallbackNames[log.actor_type];
 
   // The metadata JSON tab shows everything we know about the event; the
   // field-level diff arrives separately as `difference` and the row component
@@ -78,7 +81,7 @@ export function toAuditEvent(log: AuditLog): AuditEvent {
     actorName: actorName,
     actorEmail: log.actor_email,
     initials: actorName ? actorName.slice(0, 2).toUpperCase() : '·',
-    actorTone: toneFor(log.actor_id ?? 'system'),
+    actorTone: toneFor(log.actor_id),
     action: log.event,
     targetType: log.target_type,
     targetId: log.target_id,

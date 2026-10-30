@@ -3,42 +3,44 @@ import { topCallerReferences } from '$lib/data/caller-ranking';
 import { resolveActorNames } from './actors';
 import { client } from './client';
 
-export type AnalyticsInterval = 'hour' | 'day' | 'none';
-export type AnalyticsDimension = 'model' | 'provider' | 'status' | 'actor';
+export type AnalyticsInterval = 'hour' | 'day';
+export type AnalyticsDimension = 'bucket' | 'model' | 'provider' | 'status' | 'actor';
 
 export interface SeriesRequest {
   start_date?: string;
   end_date?: string;
   interval?: AnalyticsInterval;
-  group_by?: AnalyticsDimension[];
+  groupings: AnalyticsDimension[][];
   model?: string;
   provider?: string;
   status?: 'incomplete' | 'complete' | 'failed';
-  limit?: number;
 }
 
 /**
- * A time series and/or breakdown from the hourly rollup.
- *
- * One endpoint rather than one per chart: the dashboard's panels differ only in
- * which dimensions they pivot on and whether they keep the time axis, so a
- * `group_by` is a parameter rather than a new route. `interval: 'none'` collapses
- * time entirely, which is what the two ranked lists want.
- *
- * The response carries `sealed_through`. The refresh worker never aggregates the
- * hour in progress, so that is the point the numbers are current as of - the UI
- * says so rather than drawing a final bucket that only looks like traffic
- * falling off a cliff.
+ * Several groupings of the same logs from ClickHouse, in one request and one
+ * scan: one array of points per grouping, in the order asked. `[]` is the
+ * totals, and 'bucket' keeps the time axis (hour or day, per `interval`).
  */
-export async function fetchSeries(request: SeriesRequest) {
+export async function fetchSeries(request: SeriesRequest): Promise<SeriesPoint[][]> {
   const response = await client.analytics.series.$post({ json: request });
   const result = await response.json();
-  if (!request.group_by?.includes('actor')) return result;
-  // Only the top six in either view need display names. Keep all aggregates
-  // for accurate spend ranking and shares without resolving every caller.
-  const actorName = await resolveActorNames(topCallerReferences(result.points));
-  return { ...result, points: result.points.map((point) => ({ ...point, actor_label: actorName(point) })) };
+  const groupings: SeriesPoint[][] = [];
+
+  for (const grouping of result.groupings) {
+    if (!grouping.group_by.includes('actor')) {
+      groupings.push(grouping.points);
+      continue;
+    }
+
+    // Only the top six in either view need display names. Keep all aggregates
+    // for accurate spend ranking and shares without resolving every caller.
+    const actorName = await resolveActorNames(topCallerReferences(grouping.points));
+    groupings.push(grouping.points.map((point) => ({ ...point, actor_label: actorName(point) })));
+  }
+
+  return groupings;
 }
 
 export type SeriesResponse = InferResponseType<typeof client.analytics.series.$post, 200>;
-export type SeriesPoint = SeriesResponse['points'][number];
+// actor_label is filled in by fetchSeries for actor breakdowns.
+export type SeriesPoint = SeriesResponse['groupings'][number]['points'][number] & { actor_label?: string };

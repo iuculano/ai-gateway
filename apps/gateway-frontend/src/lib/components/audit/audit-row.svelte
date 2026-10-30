@@ -30,7 +30,9 @@ const occ = $derived(fmtTs(e.occurredAt));
 const rec = $derived(fmtTs(e.createdAt));
 const statusColor = $derived(e.status === 'success' ? '#10b981' : '#f87171');
 const statusLabel = $derived(e.status === 'success' ? 'Success' : 'Failure');
-const actorTypeLabel = $derived({ user: 'User', api_key: 'API key', system: 'System' }[e.actorType] ?? e.actorType);
+const actorTypeLabel = $derived(
+  { unknown: 'Unknown', user: 'User', api_key: 'API key', system: 'System' }[e.actorType] ?? e.actorType,
+);
 const changes = $derived(
   e.metadata?.changes
     ? Object.entries(e.metadata.changes).map(([field, v]) => ({
