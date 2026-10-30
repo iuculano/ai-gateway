@@ -17,7 +17,7 @@ included Dev Container manifest.
 bun install
 
 # Start the backing services
-docker compose up --detach --wait postgres valkey victoria-traces minio
+docker compose up --detach --wait postgres valkey victoria-traces minio clickhouse
 
 # Drop the little helper that creates some buckets in MinIO
 docker compose run --rm minio-init
@@ -38,7 +38,7 @@ Each app reads its own `apps/<app>/.env`.
 | gateway-frontend         | 8081 |
 | worker-webhooks          | 8082 |
 | worker-model-catalog     | 8083 |
-| worker-analytics-rollup  | 8084 |
+| worker-analytics         | 8084 |
 
 From inside the devcontainer, replace `localhost` with `host.docker.internal`
 in every service URL - the containers run on the host, not alongside you.
