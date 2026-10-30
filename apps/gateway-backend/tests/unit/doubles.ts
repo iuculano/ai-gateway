@@ -476,6 +476,8 @@ function notStubbed(name: string) {
 export function resetDoubles() {
   database.reset();
   database.defaultResponse('insert', 'audit_logs', persistedAuditRow);
+  // Every log INSERT first sets its statement_timeout (see logs.writer.ts).
+  database.defaultResponse('execute', null, rows());
   cache.reset();
   fixedWindow.reset();
   objects.reset();
