@@ -134,7 +134,6 @@ test('embeddings map to the OpenAI list shape and are logged as an embedding ope
     operation: 'embedding',
     model: 'test-embedding',
     provider: 'openai',
-    actor_type: 'user',
     actor_id: USER_ID,
   });
   expect(logWrites.completed[0]?.entry).toMatchObject({

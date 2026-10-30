@@ -29,7 +29,6 @@ export const logs = pgTable(
     status: text({ enum: ['incomplete', 'complete', 'failed'] })
       .notNull()
       .default('incomplete'),
-    actor_type: text({ enum: ['user', 'api_key'] }).notNull(),
     actor_id: uuid().notNull(),
     gateway_cache_hit: boolean().notNull().default(false),
     cached_input_tokens: integer(),
@@ -64,8 +63,11 @@ export const logs = pgTable(
     // For time-based analytics within an organization.
     index('logs_org_created_idx').on(t.organization_id, t.created_at),
 
-    // For the rollup worker's time-range scans across all organizations.
+    // For time-range scans across all organizations.
     index('idx_logs_on_created_at').on(t.created_at),
+
+    // For the analytics sync's cursor: rows written since it last ran.
+    index('idx_logs_on_updated_at_id').on(t.updated_at, t.id).concurrently(),
 
     // For assembling every gateway request that belongs to one application trace.
     index('logs_org_trace_idx').on(t.organization_id, t.trace_id, t.id),

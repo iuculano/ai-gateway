@@ -28,10 +28,10 @@
     "@ai-sdk/openai": "4.0.86",
     "@ai-sdk/provider": "4.0.24",
     "@ai-sdk/typesafe-ai": "3.0.15",
-    "@hono/swagger-ui": "^0.6.1",
     "@hono/zod-openapi": "^1.6.3",
     "@openrouter/ai-sdk-provider": "^3.1.0",
     "@repo/auth": "workspace:*",
+    "@repo/clickhouse": "workspace:*",
     "@repo/core": "workspace:*",
     "@repo/drizzle": "workspace:*",
     "@repo/hono": "workspace:*",
@@ -45,6 +45,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@clickhouse/client": "1.24.1",
     "@repo/test-helpers": "workspace:*",
     "@types/bun": "^1.4.2",
     "typescript": "^6.0.3"

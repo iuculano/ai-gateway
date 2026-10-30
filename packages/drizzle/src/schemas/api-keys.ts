@@ -6,7 +6,7 @@ import { users } from './users';
 export const apiKeys = pgTable(
   'api_keys',
   {
-    id: uuid().primaryKey().default(sql`uuidv7()`),
+    id: uuid().primaryKey(),
     organization_id: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),

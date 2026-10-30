@@ -28,7 +28,7 @@ export interface Scope {
   desc: string;
 }
 
-export type AuditActorType = 'user' | 'api_key' | 'system';
+export type AuditActorType = 'unknown' | 'user' | 'api_key' | 'system';
 export type AuditCategory = 'auth' | 'keys' | 'members' | 'billing' | 'settings' | 'security';
 
 export interface AuditChange {

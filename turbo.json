@@ -32,6 +32,8 @@
       "dependsOn": ["gateway-backend#test:db:setup"],
       "cache": false,
       "env": [
+        "CLICKHOUSE_TEST_PASSWORD",
+        "CLICKHOUSE_TEST_URL",
         "POSTGRES_TEST_ADMIN_CONNECTION_STRING",
         "REDIS_FRONTEND_TEST_URL",
         "REDIS_PACKAGE_TEST_URL",

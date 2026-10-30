@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { diffFields, probe, toPage } from '@repo/core';
+import { diffFields, generateActorId, probe, toPage } from '@repo/core';
 import { and, countRows, db, desc, eq, gt, isNotNull, isNull, lt, lte, or } from '@repo/drizzle';
 import { apiKeys } from '@repo/drizzle/schemas';
 import { type Caller, getAccountableUserId, getCaller } from '@repo/hono';
@@ -292,6 +292,7 @@ async function createApiKey(body: CreateApiKeyBody): Promise<Result<CreateApiKey
       .insert(apiKeys)
       .values({
         ...body,
+        id: generateActorId('api_key'),
         organization_id: caller.organization.id,
         creator_id: getAccountableUserId(caller),
         key_hash: hashApiKey(key),

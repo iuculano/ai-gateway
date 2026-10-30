@@ -275,7 +275,6 @@ export const logWrites = {
         model: row.model,
         provider: row.provider,
         tags: row.tags,
-        actor_type: row.actor_type,
         actor_id: row.actor_id,
         ...(row.trace_id ? { trace_id: row.trace_id, span_id: row.span_id, parent_span_id: row.parent_span_id } : {}),
       },
@@ -477,6 +476,8 @@ function notStubbed(name: string) {
 export function resetDoubles() {
   database.reset();
   database.defaultResponse('insert', 'audit_logs', persistedAuditRow);
+  // Every log INSERT first sets its statement_timeout (see logs.writer.ts).
+  database.defaultResponse('execute', null, rows());
   cache.reset();
   fixedWindow.reset();
   objects.reset();
@@ -601,7 +602,6 @@ export function logRow(overrides: RowOverrides<typeof logs.$inferSelect> = {}) {
     status: 'complete',
     // Matches callerFixture, so a completion driven by that caller and a row
     // read back through this fixture describe the same actor.
-    actor_type: 'user',
     actor_id: USER_ID,
     gateway_cache_hit: false,
     cached_input_tokens: null,

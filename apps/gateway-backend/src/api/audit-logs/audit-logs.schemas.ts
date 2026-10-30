@@ -1,11 +1,16 @@
 import { z } from '@hono/zod-openapi';
+import { ACTOR_TYPES } from '@repo/core';
 import { auditLogs } from '@repo/drizzle/schemas';
 import { createSchema } from '@repo/hono';
 import { createInsertSchema, createSelectSchema } from 'drizzle-orm/zod';
 
-const auditLogShape = createSelectSchema(auditLogs).omit({
-  organization_id: true,
-});
+const auditLogShape = createSelectSchema(auditLogs)
+  .omit({
+    organization_id: true,
+  })
+  .extend({
+    actor_type: z.enum(ACTOR_TYPES),
+  });
 
 // Read endpoints resolve the actor_id to the user's display identity at
 // query time. Null for system actors and for actors that no longer exist.
@@ -29,7 +34,6 @@ const listAuditLogs = createSchema({
 
     status: z.enum(['success', 'failure']).optional(),
     actor_id: z.uuid().optional(),
-    actor_type: z.enum(['user', 'api_key', 'system']).optional(),
     target_type: z.string().optional(),
     target_id: z.uuid().optional(),
     request_id: z.string().optional(),
@@ -76,7 +80,6 @@ type AuditEvent = (typeof auditEventValues)[number];
 const createAuditLogBase = createInsertSchema(auditLogs).omit({
   id: true, // server-generated
   actor_id: true, // supplied from the caller
-  actor_type: true, // supplied from the caller
   organization_id: true, // supplied from the caller
   user_agent: true, // supplied from the caller
   request_id: true, // supplied from the caller

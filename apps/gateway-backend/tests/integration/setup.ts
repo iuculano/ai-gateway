@@ -1,3 +1,4 @@
+import { generateActorId } from '@repo/core';
 import type { Caller } from '@repo/hono';
 import type { CompressedJsonStore } from '@repo/object-storage';
 import { SQL } from 'bun';
@@ -87,6 +88,10 @@ assertIsTestRedis(redisConnectionString);
 process.env.POSTGRES_CONNECTION_STRING = adminConnectionString;
 process.env.REDIS_URL = redisConnectionString;
 process.env.VICTORIA_TRACES_URL = victoriaTracesUrl;
+const clickhouseUrl = required('CLICKHOUSE_TEST_URL');
+process.env.CLICKHOUSE_URL = clickhouseUrl;
+process.env.CLICKHOUSE_PASSWORD = process.env.CLICKHOUSE_TEST_PASSWORD ?? '';
+process.env.CLICKHOUSE_DATABASE = 'ai_gateway_test';
 process.env.S3_ENDPOINT = objectStorageOptions.endpoint;
 process.env.S3_BUCKET = objectStorageOptions.bucket;
 process.env.S3_ACCESS_KEY_ID = objectStorageOptions.accessKeyId;
@@ -140,7 +145,42 @@ export async function prepareSuite(): Promise<void> {
 
   integrationObjectStorage ??= createObjectStorage(objectStorageOptions);
   flushIntegrationRedis ??= () => redis.flushDb();
-  await Promise.all([db.execute('SELECT 1'), connectRedis()]);
+  await Promise.all([db.execute('SELECT 1'), connectRedis(), prepareClickHouse()]);
+}
+
+/**
+ * Copies every Postgres log into ClickHouse, as the analytics worker's sync
+ * would, for tests that seed Postgres and then read analytics.
+ */
+export async function syncLogsToClickHouse(): Promise<void> {
+  const { clickhouse } = await import('@repo/clickhouse');
+  const rows = await admin`
+    select
+      id, organization_id,
+      to_char(created_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS') as created_at,
+      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') as updated_at,
+      operation, model, provider, status, actor_id,
+      input_tokens, output_tokens,
+      input_cost, output_cost, response_time_ms,
+      coalesce(tags, '{}'::jsonb) as tags
+    from logs
+  `;
+  await clickhouse.insert({ table: 'logs', values: rows, format: 'JSONEachRow' });
+}
+
+/** The analytics tables, in a database of their own. */
+async function prepareClickHouse(): Promise<void> {
+  // The shared client points at ai_gateway_test, which may not exist yet, so the
+  // database is created through a client on the default one.
+  const { createClient } = await import('@clickhouse/client');
+  await createClient({ url: process.env.CLICKHOUSE_URL, password: process.env.CLICKHOUSE_PASSWORD }).command({
+    query: 'CREATE DATABASE IF NOT EXISTS ai_gateway_test',
+  });
+  // Recreated each run, so the table always has the current columns:
+  // ensureSchema leaves an existing table as it is.
+  const { clickhouse, ensureSchema } = await import('@repo/clickhouse');
+  await clickhouse.command({ query: 'DROP TABLE IF EXISTS logs SYNC' });
+  await ensureSchema(clickhouse);
 }
 
 export async function resetDatabase(): Promise<void> {
@@ -162,6 +202,13 @@ export async function resetDatabase(): Promise<void> {
   await Promise.all([
     admin.unsafe(`truncate table ${TABLES.join(', ')} restart identity cascade`),
     flushIntegrationRedis(),
+    import('@repo/clickhouse').then(({ clickhouse }) =>
+      // The query cache isn't cleared by a truncate; drop it too, or a test
+      // can get the previous test's numbers.
+      clickhouse
+        .command({ query: 'TRUNCATE TABLE IF EXISTS logs SYNC' })
+        .then(() => clickhouse.command({ query: 'SYSTEM DROP QUERY CACHE' })),
+    ),
   ]);
 }
 
@@ -202,8 +249,8 @@ export async function seedTenant(label: string): Promise<Tenant> {
   `;
 
   const [user] = await admin`
-    insert into users (username, email)
-    values (${`${label}-user`}, ${`${label}@example.test`})
+    insert into users (id, username, email)
+    values (${generateActorId('user')}, ${`${label}-user`}, ${`${label}@example.test`})
     returning id
   `;
 

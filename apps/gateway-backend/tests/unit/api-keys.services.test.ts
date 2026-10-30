@@ -25,7 +25,7 @@ await installModuleMocks();
 const Services = forCaller((await import('../../src/api/api-keys/api-keys.services')).default);
 const { default: Schemas } = await import('../../src/api/api-keys/api-keys.schemas');
 
-const OTHER_KEY_ID = '01912d3f-9b4a-7c3d-8e2f-000000000004';
+const OTHER_KEY_ID = '01912d3f-9b4a-7c3d-8e2f-000000000042';
 
 beforeEach(() => {
   resetDoubles();

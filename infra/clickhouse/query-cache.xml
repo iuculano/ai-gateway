@@ -1,0 +1,5 @@
+<clickhouse>
+  <query_cache>
+    <max_size_in_bytes>268435456</max_size_in_bytes>
+  </query_cache>
+</clickhouse>

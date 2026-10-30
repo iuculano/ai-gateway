@@ -3,7 +3,7 @@ ARG RUNTIME_IMAGE=cgr.dev/chainguard/glibc-dynamic:latest
 
 #-------------------------------------------------------------------------------
 # Prune the repository to only include the necessary files for the
-# worker-analytics-rollup app.
+# worker-analytics app.
 #
 # https://turborepo.dev/docs/reference/prune
 #-------------------------------------------------------------------------------
@@ -13,7 +13,7 @@ ENV  TURBO_TELEMETRY_DISABLED=1
 WORKDIR /repo
 
 COPY . .
-RUN bunx turbo@${TURBO_VERSION} prune worker-analytics-rollup --docker
+RUN bunx turbo@${TURBO_VERSION} prune worker-analytics --docker
 
 #-------------------------------------------------------------------------------
 # Install runtime dependencies and compile the app into an executable
@@ -30,7 +30,7 @@ COPY --from=pruner /repo/out/json/ .
 RUN bun install --frozen-lockfile --production
 
 COPY --from=pruner /repo/out/full/ .
-RUN bun run --cwd apps/worker-analytics-rollup build
+RUN bun run --cwd apps/worker-analytics build
 
 #-------------------------------------------------------------------------------
 # The final image - runs as non-root.
@@ -42,9 +42,9 @@ ENV PORT=8084
 WORKDIR /app
 
 COPY --from=builder --chown=65532:65532 --chmod=0555 \
-  /repo/apps/worker-analytics-rollup/dist/worker-analytics-rollup /app/worker-analytics-rollup
+  /repo/apps/worker-analytics/dist/worker-analytics /app/worker-analytics
 
 USER       65532:65532
 EXPOSE     8084
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/app/worker-analytics-rollup"]
+ENTRYPOINT ["/app/worker-analytics"]

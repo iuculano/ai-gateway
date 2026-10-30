@@ -31,7 +31,6 @@ function auditRow(overrides: Record<string, unknown> = {}) {
       target_type: 'api_key',
       target_id: KEY_ID,
       status: 'success',
-      actor_type: 'user',
       actor_id: USER_ID,
       request_id: null,
       ip: null,
@@ -102,17 +101,3 @@ test('createAuditLog rejects when the insert returns no row', async () => {
 });
 
 // The query schema
-
-test('actor_type survives validation', () => {
-  // listAuditLogs has always applied this filter; it was simply never declared,
-  // so the field was stripped before the service ever saw it and pairing it
-  // with actor_id - the documented way to disambiguate a key id from a user id
-  // - silently did nothing.
-  const parsed = Schemas.listAuditLogs.query.parse({ actor_type: 'api_key', actor_id: USER_ID });
-
-  expect(parsed.actor_type).toBe('api_key');
-});
-
-test('an actor_type outside the column enum is rejected', () => {
-  expect(Schemas.listAuditLogs.query.safeParse({ actor_type: 'robot' }).success).toBe(false);
-});

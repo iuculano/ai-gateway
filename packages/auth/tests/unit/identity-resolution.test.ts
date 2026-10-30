@@ -166,7 +166,8 @@ describe('users', () => {
       (query) => query.calls.find((call) => call.method === 'values')?.args[0],
     );
     expect(values).toEqual([
-      { username: 'alex', email: 'alex@example.test', name: 'Alex Example' },
+      // The id is made here, with the user type in it.
+      { id: expect.stringMatching(/1$/), username: 'alex', email: 'alex@example.test', name: 'Alex Example' },
       { user_id: USER_ID, external_idp: 'https://issuer.example', external_id: 'subject-1' },
     ]);
   });

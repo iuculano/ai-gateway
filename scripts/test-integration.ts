@@ -35,6 +35,7 @@ const needsLocalRedis =
   !process.env.REDIS_TEST_URL || !process.env.REDIS_PACKAGE_TEST_URL || !process.env.REDIS_FRONTEND_TEST_URL;
 const needsLocalObjectStorage = !process.env.S3_TEST_ENDPOINT;
 const needsLocalVictoriaTraces = !process.env.VICTORIA_TRACES_TEST_URL;
+const needsLocalClickHouse = !process.env.CLICKHOUSE_TEST_URL;
 
 const localDefaults = {
   POSTGRES_TEST_ADMIN_CONNECTION_STRING: `postgresql://postgres:postgres@${serviceHost}:5432/ai_gateway_test`,
@@ -47,6 +48,8 @@ const localDefaults = {
   S3_TEST_BUCKET: 'ai-gateway-logs-test',
   S3_TEST_REGION: 'us-east-1',
   VICTORIA_TRACES_TEST_URL: `http://${serviceHost}:10428`,
+  CLICKHOUSE_TEST_URL: `http://${serviceHost}:8123`,
+  CLICKHOUSE_TEST_PASSWORD: 'clickhouse',
 } as const;
 
 for (const [name, value] of Object.entries(localDefaults)) {
@@ -58,6 +61,7 @@ const services = [
   ...(needsLocalRedis ? ['valkey'] : []),
   ...(needsLocalObjectStorage ? ['minio'] : []),
   ...(needsLocalVictoriaTraces ? ['victoria-traces'] : []),
+  ...(needsLocalClickHouse ? ['clickhouse'] : []),
 ];
 
 if (services.length > 0) {

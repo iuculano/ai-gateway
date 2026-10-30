@@ -1,219 +1,182 @@
-import { db, sql } from '@repo/drizzle';
-import { analyticsHourly, apiKeys, logs, users } from '@repo/drizzle/schemas';
+import { clickhouse } from '@repo/clickhouse';
+import { getActorType } from '@repo/core';
 import { getCaller } from '@repo/hono';
-import type { SQL } from 'drizzle-orm';
-import Schemas, { type AnalyticsSeriesBody, type AnalyticsSeriesResponse } from './analytics.schemas';
+import Schemas, {
+  type AnalyticsDimension,
+  type AnalyticsSeriesBody,
+  type AnalyticsSeriesResponse,
+} from './analytics.schemas';
+
+// A result row as ClickHouse hands it back.
+interface AggregateRow {
+  set_mask: number;
+  bucket: string | null;
+  model: string | null;
+  provider: string | null;
+  status: string | null;
+  actor: string | null;
+  user: string | null;
+  session: string | null;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_input: number;
+  cost_output: number;
+  cost_total: number;
+  average_latency_ms: number | null;
+  minimum_latency_ms: number | null;
+  maximum_latency_ms: number | null;
+}
+
+const METRIC_COLUMNS = [
+  'count() AS requests',
+  'sum(input_tokens) AS input_tokens',
+  'sum(output_tokens) AS output_tokens',
+  'sum(logs.input_tokens + logs.output_tokens) AS total_tokens', // watch the naming...
+  'toFloat64(sum(input_cost)) AS cost_input',
+  'toFloat64(sum(output_cost)) AS cost_output',
+  'toFloat64(sum(input_cost + output_cost)) AS cost_total',
+  'round(avg(response_time_ms)) AS average_latency_ms', // nulls stay out of the average
+  'min(response_time_ms) AS minimum_latency_ms',
+  'max(response_time_ms) AS maximum_latency_ms',
+];
+
+// What a result row can be grouped by, in a fixed order.
+const GROUP_BY_KEYS = ['bucket', 'model', 'provider', 'status', 'actor', 'user', 'session'];
+
+const settings = {
+  date_time_output_format: 'iso', // Default ClickHouse setting seems to come back wihtout a timezone...
+  group_by_use_nulls: 1, // Keys a row isn't grouped by come back null rather than '' or 0.
+  use_query_cache: 1,
+} as const;
 
 /**
- * Returns the start of the hour after the latest rollup.
+ * Works out which rows of the combined result belong to a grouping.
  *
- * For example, if a 14:00 rollup covers 14:00–15:00, this returns 15:00. Logs
+ * @param groupingKeys
+ * The group-by keys of this grouping.
  *
- * from then onward are read directly. With no rollups, returns the start of the
- * current hour.
+ * @param usedKeys
+ * Every key any grouping in the query uses, in the order they were passed to
+ * grouping(). The order sets which bit is which, so it must match the query.
  *
- * @param organizationId
- * The ID of the organization for which to determine the start of live logs.
+ * @returns
+ * The set_mask the grouping's rows carry.
  */
-async function getLiveLogsStart(organizationId: string): Promise<Date> {
-  const [row] = await db.execute<{ sealed_through: Date }>(sql`
-    select coalesce(
-      (select max(${analyticsHourly.bucket}) + interval '1 hour'
-        from ${analyticsHourly}
-        where ${analyticsHourly.organization_id} = ${organizationId}),
-      date_trunc('hour', now())
-    ) as sealed_through
-  `);
+function maskOf(groupingKeys: string[], usedKeys: string[]): number {
+  let mask = 0;
 
-  if (!row) {
-    throw new Error('Failed to read the analytics watermark');
+  // One bit per used key, in order
+  for (const key of usedKeys) {
+    mask = (mask << 1) | (groupingKeys.includes(key) ? 0 : 1);
   }
 
-  return row.sealed_through;
+  return mask;
 }
 
 /**
- * A time series and/or breakdown over the hourly rollup.
- *
- * Deliberately not Redis-cached, a cache would add a second staleness window on
- * top of the rollup refresh interval.
+ * What it says on the tin.
  *
  * @param request
- * The interval, the dimensions to pivot on, and any filters to narrow by.
- *
- * @returns
- * The points, plus the watermark they are current as of.
+ * The date range, filters, bucket size, and the groupings to answer.
  */
 async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<AnalyticsSeriesResponse> {
-  const organizationId = getCaller().organization.id;
-  const watermark = await getLiveLogsStart(organizationId);
+  const requested: { grouping: AnalyticsDimension[]; keys: string[] }[] = [];
 
-  const grouped = new Set(request.group_by);
+  for (const grouping of request.groupings) {
+    const dimensions = new Set<string>(grouping);
+    requested.push({ grouping, keys: GROUP_BY_KEYS.filter((key) => dimensions.has(key)) });
+  }
 
-  const bucket =
-    request.interval === 'none' ? sql`null::timestamptz` : sql`date_trunc(${request.interval}, unified.bucket)`;
+  // The set means a grouping asked for twice only gets answered once.
+  const sets = new Set(requested.map(({ keys }) => `(${keys.join(', ')})`));
 
-  const dimension = (name: 'model' | 'provider' | 'status') =>
-    grouped.has(name) ? sql.raw(`unified.${name}`) : sql`null::text`;
-
-  const selected = [
-    sql`${bucket} as bucket`,
-    sql`${dimension('model')} as model`,
-    sql`${dimension('provider')} as provider`,
-    sql`${dimension('status')} as status`,
-    grouped.has('actor') ? sql`unified.actor_type` : sql`null::text as actor_type`,
-    grouped.has('actor') ? sql`unified.actor_id` : sql`null::uuid as actor_id`,
-  ];
-
-  // Group by column positions so repeated date_trunc parameters cannot
-  // conflict. Only include dimensions selected for grouping.
-  const groupings: SQL[] = [];
-  if (request.interval !== 'none') groupings.push(sql`1`);
-  if (grouped.has('model')) groupings.push(sql`2`);
-  if (grouped.has('provider')) groupings.push(sql`3`);
-  if (grouped.has('status')) groupings.push(sql`4`);
-  if (grouped.has('actor')) groupings.push(sql`5`, sql`6`);
-
-  const startDate = request.start_date;
-  const endDate = request.end_date;
-
-  // The shared watermark prevents double-counting if the rollup advances
-  // mid-query.
-  const sealedConditions = [
-    sql`${analyticsHourly.organization_id} = ${organizationId}`,
-    sql`${analyticsHourly.bucket} < ${watermark}`,
-    startDate ? sql`${analyticsHourly.bucket} >= ${startDate}` : undefined,
-    endDate ? sql`${analyticsHourly.bucket} < ${endDate}` : undefined,
-    request.model ? sql`${analyticsHourly.model} = ${request.model}` : undefined,
-    request.provider ? sql`${analyticsHourly.provider} = ${request.provider}` : undefined,
-    request.status ? sql`${analyticsHourly.status} = ${request.status}` : undefined,
-  ].filter((condition): condition is SQL => condition !== undefined);
-
-  // Include logs the rollup has not covered yet.
-  const liveConditions = [
-    sql`${logs.organization_id} = ${organizationId}`,
-    sql`${logs.created_at} >= ${watermark}`,
-    startDate ? sql`${logs.created_at} >= ${startDate}` : undefined,
-    endDate ? sql`${logs.created_at} < ${endDate}` : undefined,
-    request.model ? sql`${logs.model} = ${request.model}` : undefined,
-    request.provider ? sql`${logs.provider} = ${request.provider}` : undefined,
-    request.status ? sql`${logs.status} = ${request.status}` : undefined,
-  ].filter((condition): condition is SQL => condition !== undefined);
-
-  // Sort breakdowns by volume and time series chronologically.
-  const ordering = request.interval === 'none' ? sql`order by requests desc` : sql`order by bucket asc, requests desc`;
-
-  // Limit breakdowns only; time series need every bucket.
-  const limit = request.interval === 'none' && request.limit ? sql`limit ${request.limit}` : sql``;
-
-  const rows = await db.execute<Record<string, unknown>>(sql`
-    with unified as (
-      select
-        ${analyticsHourly.bucket}        as bucket,
-        ${analyticsHourly.model}         as model,
-        ${analyticsHourly.provider}      as provider,
-        ${analyticsHourly.status}        as status,
-        ${analyticsHourly.actor_type}    as actor_type,
-        ${analyticsHourly.actor_id}      as actor_id,
-        ${analyticsHourly.requests}      as requests,
-        ${analyticsHourly.input_tokens}  as input_tokens,
-        ${analyticsHourly.output_tokens} as output_tokens,
-        ${analyticsHourly.input_cost}    as input_cost,
-        ${analyticsHourly.output_cost}   as output_cost,
-        ${analyticsHourly.latency_sum}   as latency_sum,
-        ${analyticsHourly.latency_count} as latency_count,
-        ${analyticsHourly.latency_min}   as latency_min,
-        ${analyticsHourly.latency_max}   as latency_max
-      from ${analyticsHourly}
-      where ${sql.join(sealedConditions, sql` and `)}
-
-      union all
-
-      -- Aggregate live logs to the same hourly granularity as the rollup.
-      select
-        date_trunc('hour', ${logs.created_at}),
-        ${logs.model},
-        ${logs.provider},
-        ${logs.status},
-        ${logs.actor_type},
-        ${logs.actor_id},
-        count(*),
-        coalesce(sum(${logs.input_tokens}), 0),
-        coalesce(sum(${logs.output_tokens}), 0),
-        coalesce(sum(${logs.input_cost}), 0),
-        coalesce(sum(${logs.output_cost}), 0),
-        coalesce(sum(${logs.response_time_ms}), 0),
-        -- Exclude missing latencies from the average.
-        count(${logs.response_time_ms}),
-        min(${logs.response_time_ms}),
-        max(${logs.response_time_ms})
-      from ${logs}
-      where ${sql.join(liveConditions, sql` and `)}
-      group by 1, 2, 3, 4, 5, 6
-    ),
-    aggregated as (
-      select
-        ${sql.join(selected, sql`, `)},
-        sum(unified.requests)::bigint      as requests,
-        sum(unified.input_tokens)::bigint  as input_tokens,
-        sum(unified.output_tokens)::bigint as output_tokens,
-        sum(unified.input_cost)            as cost_input,
-        sum(unified.output_cost)           as cost_output,
-        -- Calculate the weighted average from totals.
-        round(sum(unified.latency_sum)::numeric / nullif(sum(unified.latency_count), 0)) as average_latency_ms,
-        min(unified.latency_min)                                                         as minimum_latency_ms,
-        max(unified.latency_max)                                                         as maximum_latency_ms
-      from unified
-      ${groupings.length > 0 ? sql`group by ${sql.join(groupings, sql`, `)}` : sql``}
-    )
-    select
-      aggregated.*,
-      -- Resolve actor names once per aggregate.
-      coalesce(${apiKeys.name}, ${users.username}) as actor_label
-    from aggregated
-    left join ${apiKeys} on aggregated.actor_type = 'api_key' and ${apiKeys.id} = aggregated.actor_id
-    left join ${users}   on aggregated.actor_type = 'user'    and ${users.id}   = aggregated.actor_id
-    ${ordering}
-    ${limit}
-  `);
-
-  const points = rows.map((row) => {
-    const inputTokens = Number(row.input_tokens ?? 0);
-    const outputTokens = Number(row.output_tokens ?? 0);
-    const costInput = Number(row.cost_input ?? 0);
-    const costOutput = Number(row.cost_output ?? 0);
-
-    return {
-      bucket: row.bucket ?? null,
-
-      model: (row.model as string | null) ?? null,
-      provider: (row.provider as string | null) ?? null,
-      status: (row.status as string | null) ?? null,
-      actor_type: (row.actor_type as string | null) ?? null,
-      actor_id: (row.actor_id as string | null) ?? null,
-      actor_label: (row.actor_label as string | null) ?? null,
-
-      requests: Number(row.requests ?? 0),
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens,
-
-      cost_input: costInput,
-      cost_output: costOutput,
-      cost_total: costInput + costOutput,
-
-      average_latency_ms: row.average_latency_ms == null ? null : Number(row.average_latency_ms),
-      minimum_latency_ms: row.minimum_latency_ms == null ? null : Number(row.minimum_latency_ms),
-      maximum_latency_ms: row.maximum_latency_ms == null ? null : Number(row.maximum_latency_ms),
-    };
+  const usedKeys = GROUP_BY_KEYS.filter((key) => requested.some(({ keys }) => keys.includes(key)));
+  const expressions: Record<string, string> = {
+    bucket: `${request.interval === 'hour' ? 'toStartOfHour' : 'toStartOfDay'}(created_at)`,
+    actor: 'actor_id',
+    user: 'user_id',
+    session: 'session_id',
+  };
+  const selectedKeys = GROUP_BY_KEYS.map((key) => {
+    if (!usedKeys.includes(key)) return `NULL AS ${key}`;
+    return expressions[key] ? `${expressions[key]} AS ${key}` : key;
   });
 
-  return Schemas.series.response.parse({
-    interval: request.interval,
-    group_by: request.group_by,
-    sealed_through: watermark,
-    points,
+  // Tags every row with the grouping it belongs to (see maskOf).
+  const setMask = usedKeys.length > 0 ? `grouping(${usedKeys.join(', ')})` : '0';
+
+  const conditions = ['logs.organization_id = {organization:UUID}'];
+  if (request.start_date) conditions.push('logs.created_at >= {start:DateTime64(3)}');
+  if (request.end_date) conditions.push('logs.created_at < {end:DateTime64(3)}');
+  if (request.model) conditions.push('logs.model = {model:String}');
+  if (request.provider) conditions.push('logs.provider = {provider:String}');
+  if (request.status) conditions.push('logs.status = {status:String}');
+  if (request.actor_id) conditions.push('logs.actor_id = {actor:UUID}');
+  if (request.user_id !== undefined) conditions.push('logs.user_id = {user:String}');
+  if (request.session_id !== undefined) conditions.push('logs.session_id = {session:String}');
+
+  // Ranges that ended over an hour ago can't change anymore, so cache them for
+  // the 5 minutes the page keeps asking for the same window.
+  const settled = request.end_date !== undefined && request.end_date.getTime() < Date.now() - 3_600_000;
+
+  const query = `
+    SELECT ${[...selectedKeys, `${setMask} AS set_mask`, ...METRIC_COLUMNS].join(', ')}
+    FROM logs FINAL
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY GROUPING SETS (${[...sets].join(', ')})
+    ORDER BY bucket, requests DESC, ${GROUP_BY_KEYS.join(', ')}
+  `;
+
+  const result = await clickhouse.query({
+    query,
+    query_params: {
+      organization: getCaller().organization.id,
+      start: request.start_date,
+      end: request.end_date,
+      model: request.model,
+      provider: request.provider,
+      status: request.status,
+      actor: request.actor_id,
+      user: request.user_id,
+      session: request.session_id,
+    },
+    clickhouse_settings: { ...settings, query_cache_ttl: settled ? 300 : 10 },
+    format: 'JSONEachRow',
   });
+
+  // Rows for every grouping arrive mixed together.
+  const rows = await result.json<AggregateRow>();
+  const rowsByMask = Map.groupBy(rows, (row) => row.set_mask);
+
+  // Answer each grouping in the order it was asked, from its pile.
+  const groupings: { group_by: AnalyticsDimension[]; points: unknown[] }[] = [];
+
+  for (const { grouping, keys } of requested) {
+    const mask = maskOf(keys, usedKeys);
+    const groupingRows = rowsByMask.get(mask) ?? [];
+
+    // ClickHouse hands bucket back as an ISO string; the response wants a Date.
+    // The actor's type comes out of its id.
+    const points = [];
+    for (const row of groupingRows) {
+      const bucket = row.bucket ? new Date(row.bucket) : null;
+      const actorType = row.actor ? getActorType(row.actor) : null;
+      points.push({
+        ...row,
+        bucket,
+        actor_id: row.actor,
+        actor_type: actorType,
+        user_id: row.user,
+        session_id: row.session,
+      });
+    }
+
+    groupings.push({ group_by: grouping, points });
+  }
+
+  return Schemas.series.response.parse({ interval: request.interval, groupings });
 }
 
 export default {

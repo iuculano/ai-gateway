@@ -1,4 +1,4 @@
-import { probe, toPage } from '@repo/core';
+import { getActorType, probe, toPage } from '@repo/core';
 import { and, db, desc, eq, gte, lt, lte, sql } from '@repo/drizzle';
 import { apiKeys, auditLogs, users } from '@repo/drizzle/schemas';
 import { getActorId, getCaller } from '@repo/hono';
@@ -51,7 +51,6 @@ async function createAuditLog(body: CreateAuditLogBody, executor: DbExecutor = d
     .values({
       ...body,
       organization_id: caller.organization.id,
-      actor_type: caller.actor.type,
       actor_id: getActorId(caller),
       request_id: caller.request.id ?? undefined,
       ip: caller.request.ipAddress ?? undefined,
@@ -65,7 +64,7 @@ async function createAuditLog(body: CreateAuditLogBody, executor: DbExecutor = d
     throw new Error('Failed to insert audit log');
   }
 
-  const parsed = Schemas.createAuditLog.response.parse(inserted);
+  const parsed = Schemas.createAuditLog.response.parse({ ...inserted, actor_type: getActorType(inserted.actor_id) });
   return parsed;
 }
 
@@ -97,6 +96,7 @@ async function getAuditLog(id: string): Promise<Result<GetAuditLogResponse, GetA
 
   const parsed = Schemas.getAuditLog.response.parse({
     ...row.log,
+    actor_type: getActorType(row.log.actor_id),
     actor_name: row.actor_name ?? row.actor_username,
     actor_email: row.actor_email,
     actor_api_key_name: row.actor_api_key_name,
@@ -121,7 +121,6 @@ async function listAuditLogs(query: ListAuditLogsQuery): Promise<ListAuditLogsRe
     query.after_id !== undefined ? lt(auditLogs.id, query.after_id) : undefined,
     query.status !== undefined ? eq(auditLogs.status, query.status) : undefined,
     query.actor_id !== undefined ? eq(auditLogs.actor_id, query.actor_id) : undefined,
-    query.actor_type !== undefined ? eq(auditLogs.actor_type, query.actor_type) : undefined,
     query.target_type !== undefined ? eq(auditLogs.target_type, query.target_type) : undefined,
     query.target_id !== undefined ? eq(auditLogs.target_id, query.target_id) : undefined,
     query.request_id !== undefined ? eq(auditLogs.request_id, query.request_id) : undefined,
@@ -149,6 +148,7 @@ async function listAuditLogs(query: ListAuditLogsQuery): Promise<ListAuditLogsRe
 
   const mergedRows = page.data.map((row) => ({
     ...row.log,
+    actor_type: getActorType(row.log.actor_id),
     actor_name: row.actor_name ?? row.actor_username,
     actor_email: row.actor_email,
     actor_api_key_name: row.actor_api_key_name,

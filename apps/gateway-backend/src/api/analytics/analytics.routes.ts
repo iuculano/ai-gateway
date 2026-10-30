@@ -21,7 +21,7 @@ const postAnalyticsSeries = createRoute({
   responses: {
     ...validatedProtectedRouteErrors,
     200: {
-      description: 'Time series and/or breakdown served from the hourly rollup',
+      description: 'Time series and/or breakdown over the logs',
       content: {
         'application/json': {
           schema: Schemas.series.response,

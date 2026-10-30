@@ -346,8 +346,8 @@ type AnalyticsSeriesRequest = Parameters<typeof AnalyticsServices.queryAnalytics
 /** Runs an ungrouped analytics series and reports its aggregated request count. */
 function analytics(group: ScenarioGroup, name: string, body: Partial<AnalyticsSeriesRequest>): GroupedScenario {
   const request: AnalyticsSeriesRequest = {
-    interval: 'none',
-    group_by: [],
+    interval: 'day',
+    groupings: [[]],
     ...body,
   };
 
@@ -357,7 +357,7 @@ function analytics(group: ScenarioGroup, name: string, body: Partial<AnalyticsSe
     run: async () => {
       const result = await asTenant(() => AnalyticsServices.queryAnalyticsSeries(request));
 
-      return result.points.reduce((total, point) => total + point.requests, 0);
+      return result.groupings[0]?.points.reduce((total, point) => total + point.requests, 0) ?? 0;
     },
   };
 }
@@ -516,23 +516,6 @@ if (values.explain) {
           and tags @> ${{ env: RARE_ENV_TAG }}::jsonb
         order by id desc
         limit 26
-      `,
-    },
-    {
-      name: 'analytics live-tail aggregate',
-      statement: sql`
-        explain (analyze, buffers)
-        select
-          count(*),
-          coalesce(sum(input_cost), 0) + coalesce(sum(output_cost), 0)
-        from logs
-        where organization_id = ${organization.id}
-          and created_at >= coalesce(
-            (select max(bucket) + interval '1 hour'
-               from analytics_hourly
-              where organization_id = ${organization.id}),
-            date_trunc('hour', now())
-          )
       `,
     },
   ];

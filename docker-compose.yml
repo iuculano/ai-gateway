@@ -45,6 +45,31 @@ services:
       timeout:  5s
       retries:  5
 
+  clickhouse:
+    build:   ./infra/clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123" # he native port 9000 would collide with MinIO
+    environment:
+      CLICKHOUSE_DB:                   ai_gateway
+      CLICKHOUSE_USER:                 default
+      CLICKHOUSE_PASSWORD:             clickhouse
+      CLICKHOUSE_S3_ENDPOINT:          ${CLICKHOUSE_S3_ENDPOINT:-http://minio:9000/ai-gateway-logs/clickhouse/}
+      CLICKHOUSE_S3_ACCESS_KEY_ID:     ${CLICKHOUSE_S3_ACCESS_KEY_ID:-minioadmin}
+      CLICKHOUSE_S3_SECRET_ACCESS_KEY: ${CLICKHOUSE_S3_SECRET_ACCESS_KEY:-minioadmin}
+      CLICKHOUSE_S3_REGION:            ${CLICKHOUSE_S3_REGION:-us-east-1}
+      CLICKHOUSE_CACHE_SIZE:           ${CLICKHOUSE_CACHE_SIZE:-5Gi}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:     ["CMD", "clickhouse-client", "--password", "clickhouse", "-q", "SELECT 1"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+
   # MinIO no longer publishes its images - gone from Dockerhub and quay.io now
   # requires auth... Chainguard seems to wokr here
   minio:
@@ -81,6 +106,7 @@ services:
       "
 
 volumes:
+  clickhouse_data:
   pg_data:
   valkey_data:
   victoria_traces_data:
