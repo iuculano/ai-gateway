@@ -9,5 +9,6 @@
  * three that more than one workspace needs live here.
  */
 export const ORGANIZATION_ID = '01912d3f-9b4a-7c3d-8e2f-000000000001';
-export const USER_ID = '01912d3f-9b4a-7c3d-8e2f-000000000002';
-export const KEY_ID = '01912d3f-9b4a-7c3d-8e2f-000000000003';
+// User and key ids end in their actor type digit (see @repo/core actor-id).
+export const USER_ID = '01912d3f-9b4a-7c3d-8e2f-000000000021';
+export const KEY_ID = '01912d3f-9b4a-7c3d-8e2f-000000000032';

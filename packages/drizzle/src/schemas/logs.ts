@@ -29,7 +29,6 @@ export const logs = pgTable(
     status: text({ enum: ['incomplete', 'complete', 'failed'] })
       .notNull()
       .default('incomplete'),
-    actor_type: text({ enum: ['user', 'api_key'] }).notNull(),
     actor_id: uuid().notNull(),
     gateway_cache_hit: boolean().notNull().default(false),
     cached_input_tokens: integer(),

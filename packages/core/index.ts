@@ -1,3 +1,4 @@
+export * from './src/actor-id';
 export * from './src/assert-never';
 export * from './src/create-cache-key';
 export * from './src/diff';

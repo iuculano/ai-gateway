@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, inet, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, inet, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 import { organizations } from './organizations';
 
@@ -14,8 +14,7 @@ export const auditLogs = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: 'restrict' }),
 
-    actor_type: text({ enum: ['user', 'api_key', 'system'] }).notNull(),
-    actor_id: uuid(), // can be null for system type
+    actor_id: uuid().notNull(),
     event: text().notNull(), // Enum for what happened, like: 'api-keys.created', 'users.updated', etc.
     target_type: text(), // 'user', 'api_key', ... (null for targetless events, e.g. 'auth.login')
     target_id: uuid(),
@@ -50,9 +49,6 @@ export const auditLogs = pgTable(
     // So we don't have a full table scan because someone wants to correlate
     // and audit log with a request_id.
     index('audit_request_idx').on(t.request_id).where(sql`request_id IS NOT NULL`),
-
-    // Only system events may omit an actor id.
-    check('audit_actor_id_presence', sql`actor_type = 'system' OR actor_id IS NOT NULL`),
   ],
 );
 

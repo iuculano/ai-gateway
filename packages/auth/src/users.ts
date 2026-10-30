@@ -1,3 +1,4 @@
+import { generateActorId } from '@repo/core';
 import { and, db, eq } from '@repo/drizzle';
 import { type UserRow, userIdentities, users } from '@repo/drizzle/schemas';
 import { HTTPException } from 'hono/http-exception';
@@ -63,6 +64,7 @@ export async function resolveUser(issuer: string, externalId: string, profile: U
       const [user] = await tx
         .insert(users)
         .values({
+          id: generateActorId('user'),
           username: profile.username,
           email: profile.email,
           name: profile.name,

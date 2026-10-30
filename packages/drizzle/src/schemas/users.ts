@@ -16,7 +16,7 @@ export const userStatus = pgEnum('user_status', ['active', 'deleted']);
  * cannot.
  */
 export const users = pgTable('users', {
-  id: uuid().primaryKey().default(sql`uuidv7()`),
+  id: uuid().primaryKey(),
 
   username: text().notNull(),
   email: text().notNull(),

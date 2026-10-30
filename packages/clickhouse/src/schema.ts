@@ -1,6 +1,5 @@
 import type { ClickHouse } from './client';
 
-
 const LOGS = `
   CREATE TABLE IF NOT EXISTS logs (
     id               UUID,
@@ -11,7 +10,6 @@ const LOGS = `
     model            LowCardinality(String),
     provider         LowCardinality(String),
     status           LowCardinality(String),
-    actor_type       LowCardinality(String),
     actor_id         UUID,
     input_tokens     UInt32,
     output_tokens    UInt32,
