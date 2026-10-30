@@ -11,7 +11,6 @@
     "test:integration": "bun test --preload ./tests/integration/setup.ts tests/integration"
   },
   "dependencies": {
-    "@hono/swagger-ui": "^0.5.3",
     "@hono/zod-openapi": "^1.6.3",
     "@repo/core": "workspace:*",
     "@repo/drizzle": "workspace:*",
