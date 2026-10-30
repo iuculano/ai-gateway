@@ -24,6 +24,7 @@ type SyncedLog = Pick<
   updated_at: string;
   input_cost: string; // let clickhouse parse the numeric text
   output_cost: string;
+  tags: Record<string, string>; // never null, see the select
 };
 
 /**
@@ -71,7 +72,9 @@ export async function tickAnalyticsSync() {
         output_tokens,
         input_cost,
         output_cost,
-        response_time_ms
+        response_time_ms,
+        -- Untagged logs have null tags; ClickHouse wants an empty map.
+        coalesce(tags, '{}'::jsonb) as tags
       from logs
 
       -- Only select rows that have settled and are newer than the last synced row.

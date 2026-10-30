@@ -2,6 +2,7 @@ import { createAzure } from '@ai-sdk/azure';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { parseTags } from '@repo/core';
 import { type Embedding, type EmbeddingModel, embedMany } from 'ai';
 import { err, ok, type Result } from 'neverthrow';
 import {
@@ -105,11 +106,18 @@ async function createEmbedding(
     return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
 
+  // The OpenAI-style user field fills the well-known user_id tag, unless the
+  // ai-log-tags header names one.
+  const tags = parseTags(headers['ai-log-tags']) ?? {};
+  if (body.user && tags.user_id === undefined) {
+    tags.user_id = body.user;
+  }
+
   const log = LogsService.startLog({
     operation: 'embedding',
     model: info.name,
     provider: info.provider,
-    tags: headers['ai-log-tags'],
+    tags,
   });
   const startedAt = performance.now();
 

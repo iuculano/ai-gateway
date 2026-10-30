@@ -7,6 +7,7 @@ import type {
   SharedV4ProviderMetadata,
 } from '@ai-sdk/provider';
 import { createTypeSafeAi } from '@ai-sdk/typesafe-ai';
+import { parseTags } from '@repo/core';
 import { err, ok, type Result } from 'neverthrow';
 import {
   type ModelResolutionFailure,
@@ -204,7 +205,7 @@ async function createDecision(
     operation: 'decision',
     model: info.name,
     provider: info.provider,
-    tags: headers['ai-log-tags'],
+    tags: parseTags(headers['ai-log-tags']),
   });
   const startedAt = performance.now();
 

@@ -15,6 +15,8 @@ interface AggregateRow {
   provider: string | null;
   status: string | null;
   actor: string | null;
+  user: string | null;
+  session: string | null;
   requests: number;
   input_tokens: number;
   output_tokens: number;
@@ -41,7 +43,7 @@ const METRIC_COLUMNS = [
 ];
 
 // What a result row can be grouped by, in a fixed order.
-const GROUP_BY_KEYS = ['bucket', 'model', 'provider', 'status', 'actor'];
+const GROUP_BY_KEYS = ['bucket', 'model', 'provider', 'status', 'actor', 'user', 'session'];
 
 const settings = {
   date_time_output_format: 'iso', // Default ClickHouse setting seems to come back wihtout a timezone...
@@ -94,6 +96,8 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
   const expressions: Record<string, string> = {
     bucket: `${request.interval === 'hour' ? 'toStartOfHour' : 'toStartOfDay'}(created_at)`,
     actor: 'actor_id',
+    user: 'user_id',
+    session: 'session_id',
   };
   const selectedKeys = GROUP_BY_KEYS.map((key) => {
     if (!usedKeys.includes(key)) return `NULL AS ${key}`;
@@ -109,9 +113,14 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
   if (request.model) conditions.push('logs.model = {model:String}');
   if (request.provider) conditions.push('logs.provider = {provider:String}');
   if (request.status) conditions.push('logs.status = {status:String}');
+  if (request.actor_id) conditions.push('logs.actor_id = {actor:UUID}');
+  if (request.user_id !== undefined) conditions.push('logs.user_id = {user:String}');
+  if (request.session_id !== undefined) conditions.push('logs.session_id = {session:String}');
 
-  // One scan answers every grouping. Ties are broken on every key, so rows come
-  // back in the same order every time.
+  // Ranges that ended over an hour ago can't change anymore, so cache them for
+  // the 5 minutes the page keeps asking for the same window.
+  const settled = request.end_date !== undefined && request.end_date.getTime() < Date.now() - 3_600_000;
+
   const query = `
     SELECT ${[...selectedKeys, `${setMask} AS set_mask`, ...METRIC_COLUMNS].join(', ')}
     FROM logs FINAL
@@ -120,11 +129,6 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     ORDER BY bucket, requests DESC, ${GROUP_BY_KEYS.join(', ')}
   `;
 
-  // Ranges that ended over an hour ago can't change anymore, so cache them for
-  // the 5 minutes the page keeps asking for the same window.
-  const settled = request.end_date !== undefined && request.end_date.getTime() < Date.now() - 3_600_000;
-
-  // The organization always comes from the caller, never from the request.
   const result = await clickhouse.query({
     query,
     query_params: {
@@ -134,6 +138,9 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
       model: request.model,
       provider: request.provider,
       status: request.status,
+      actor: request.actor_id,
+      user: request.user_id,
+      session: request.session_id,
     },
     clickhouse_settings: { ...settings, query_cache_ttl: settled ? 300 : 10 },
     format: 'JSONEachRow',
@@ -156,13 +163,19 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     for (const row of groupingRows) {
       const bucket = row.bucket ? new Date(row.bucket) : null;
       const actorType = row.actor ? getActorType(row.actor) : null;
-      points.push({ ...row, bucket, actor_id: row.actor, actor_type: actorType });
+      points.push({
+        ...row,
+        bucket,
+        actor_id: row.actor,
+        actor_type: actorType,
+        user_id: row.user,
+        session_id: row.session,
+      });
     }
 
     groupings.push({ group_by: grouping, points });
   }
 
-  // The parse checks every point and drops set_mask and actor.
   return Schemas.series.response.parse({ interval: request.interval, groupings });
 }
 

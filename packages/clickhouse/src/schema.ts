@@ -15,7 +15,13 @@ const LOGS = `
     output_tokens    UInt32,
     input_cost       Decimal(20, 12),
     output_cost      Decimal(20, 12),
-    response_time_ms Nullable(UInt32)
+    response_time_ms Nullable(UInt32),
+    tags             Map(LowCardinality(String), String),
+
+    -- Well-known tags, copied out of the map on insert so analytics can group
+    -- and filter on them like any other column. '' when a log isn't tagged.
+    user_id          String MATERIALIZED tags['user_id'],
+    session_id       String MATERIALIZED tags['session_id']
   )
   ENGINE = ReplacingMergeTree(updated_at)
   PARTITION BY toYYYYMM(created_at)

@@ -312,7 +312,7 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
  * The provider serving the inference request.
  *
  * @param tags
- * The raw ai-log-tags header, if any.
+ * The log's tags, already parsed, if any.
  *
  * @returns
  * The log, to pass to completeLog or failLog.
@@ -321,7 +321,7 @@ function startLog(entry: {
   operation: LogRow['operation'];
   model: string;
   provider: string;
-  tags?: string;
+  tags?: Record<string, string>;
 }): PendingLog {
   const caller = getCaller();
 
@@ -343,7 +343,7 @@ function startLog(entry: {
     span_id: trace?.spanId,
     parent_span_id: trace?.parentSpanId,
     actor_id: getActorId(caller),
-    tags: parseTags(entry.tags),
+    tags: entry.tags,
     created_at: createdAt,
   };
 }

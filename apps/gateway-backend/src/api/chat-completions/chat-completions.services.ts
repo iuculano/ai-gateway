@@ -4,7 +4,7 @@ import { createAzure } from '@ai-sdk/azure';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { createCacheKey } from '@repo/core';
+import { createCacheKey, parseTags } from '@repo/core';
 import { getCaller } from '@repo/hono';
 import {
   type CallSettings,
@@ -532,11 +532,18 @@ async function createChatCompletion(
   const tools = toSdkTools(body);
   const providerOptions = toSdkProviderOptions(body);
 
+  // The OpenAI-style user field fills the well-known user_id tag, unless the
+  // ai-log-tags header names one.
+  const tags = parseTags(headers['ai-log-tags']) ?? {};
+  if (body.user && tags.user_id === undefined) {
+    tags.user_id = body.user;
+  }
+
   const log = LogsService.startLog({
     operation: 'chat',
     model: model.modelId,
     provider: model.provider,
-    tags: headers['ai-log-tags'],
+    tags,
   });
   onLog?.(log.id);
 
@@ -644,11 +651,18 @@ async function* streamChatCompletion(
   const tools = toSdkTools(body);
   const providerOptions = toSdkProviderOptions(body);
 
+  // The OpenAI-style user field fills the well-known user_id tag, unless the
+  // ai-log-tags header names one.
+  const tags = parseTags(headers['ai-log-tags']) ?? {};
+  if (body.user && tags.user_id === undefined) {
+    tags.user_id = body.user;
+  }
+
   const log = LogsService.startLog({
     operation: 'chat',
     model: model.modelId,
     provider: model.provider,
-    tags: headers['ai-log-tags'],
+    tags,
   });
   onLog?.(log.id);
 

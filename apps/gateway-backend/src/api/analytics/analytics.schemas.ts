@@ -3,7 +3,7 @@ import { ACTOR_TYPES } from '@repo/core';
 import { createSchema } from '@repo/hono';
 
 // 'bucket' is the hour or day, per the interval.
-const dimension = z.enum(['bucket', 'model', 'provider', 'status', 'actor']);
+const dimension = z.enum(['bucket', 'model', 'provider', 'status', 'actor', 'user', 'session']);
 
 const point = z.object({
   // Null unless the dimension was grouped on.
@@ -13,6 +13,8 @@ const point = z.object({
   status: z.enum(['incomplete', 'complete', 'failed']).nullable(),
   actor_type: z.enum(ACTOR_TYPES).nullable(),
   actor_id: z.uuid().nullable(),
+  user_id: z.string().nullable(),
+  session_id: z.string().nullable(),
 
   requests: z.number(),
   input_tokens: z.number(),
@@ -37,6 +39,9 @@ const series = createSchema({
     model: z.string().optional(),
     provider: z.string().optional(),
     status: z.enum(['incomplete', 'complete', 'failed']).optional(),
+    actor_id: z.uuid().optional(),
+    user_id: z.string().optional(),
+    session_id: z.string().optional(),
   }),
 
   response: z.object({
