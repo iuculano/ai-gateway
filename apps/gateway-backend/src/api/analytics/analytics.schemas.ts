@@ -17,6 +17,7 @@ const point = z.object({
   session_id: z.string().nullable(),
 
   requests: z.number(),
+  gateway_cache_hits: z.number(),
   input_tokens: z.number(),
   output_tokens: z.number(),
   total_tokens: z.number(),
@@ -28,6 +29,8 @@ const point = z.object({
   average_latency_ms: z.number().nullable(),
   minimum_latency_ms: z.number().nullable(),
   maximum_latency_ms: z.number().nullable(),
+  median_latency_ms: z.number().nullable(),
+  p95_latency_ms: z.number().nullable(),
 });
 
 const series = createSchema({
@@ -55,10 +58,91 @@ const series = createSchema({
   }),
 });
 
+const users = createSchema({
+  body: z.object({
+    start_date: z.coerce.date().optional(),
+    end_date: z.coerce.date().optional(),
+    actor_id: z.uuid().optional(),
+    limit: z.number().int().positive().max(500).default(50),
+    offset: z.number().int().nonnegative().default(0),
+    sort: z.enum(['spend', 'tokens', 'requests']).default('spend'),
+  }),
+
+  response: z.object({
+    active_users: z.number(),
+    cost_percentiles: z.array(z.number()),
+    users: z.array(
+      z.object({
+        user_id: z.string(),
+        requests: z.number(),
+        tokens: z.number(),
+        cost_total: z.number(),
+      }),
+    ),
+  }),
+});
+
+const sessions = createSchema({
+  body: z.object({
+    start_date: z.coerce.date().optional(),
+    end_date: z.coerce.date().optional(),
+    actor_id: z.uuid().optional(),
+    user_id: z.string().optional(),
+    limit: z.number().int().positive().max(100).default(10),
+  }),
+
+  response: z.object({
+    count: z.number(),
+    top: z.array(
+      z.object({
+        session_id: z.string(),
+        user_id: z.string(),
+        users: z.number(),
+        requests: z.number(),
+        tokens: z.number(),
+        cost_total: z.number(),
+      }),
+    ),
+  }),
+});
+
+const tokenBands = z.array(z.object({ min: z.number(), max: z.number().nullable(), requests: z.number() }));
+
+const tokens = createSchema({
+  body: z.object({
+    start_date: z.coerce.date().optional(),
+    end_date: z.coerce.date().optional(),
+    actor_id: z.uuid().optional(),
+    user_id: z.string().optional(),
+  }),
+
+  response: z.object({
+    requests: z.number(),
+    input_tokens: z.number(),
+    output_tokens: z.number(),
+    cached_input_tokens: z.number(),
+    median_input_tokens: z.number().nullable(),
+    p95_input_tokens: z.number().nullable(),
+    median_output_tokens: z.number().nullable(),
+    p95_output_tokens: z.number().nullable(),
+    input_bands: tokenBands,
+    output_bands: tokenBands,
+  }),
+});
+
 export type AnalyticsDimension = z.infer<typeof dimension>;
 export type AnalyticsSeriesBody = z.infer<typeof series.body>;
 export type AnalyticsSeriesResponse = z.infer<typeof series.response>;
+export type AnalyticsUsersBody = z.infer<typeof users.body>;
+export type AnalyticsUsersResponse = z.infer<typeof users.response>;
+export type AnalyticsSessionsBody = z.infer<typeof sessions.body>;
+export type AnalyticsSessionsResponse = z.infer<typeof sessions.response>;
+export type AnalyticsTokensBody = z.infer<typeof tokens.body>;
+export type AnalyticsTokensResponse = z.infer<typeof tokens.response>;
 
 export default {
   series,
+  users,
+  sessions,
+  tokens,
 };

@@ -19,10 +19,13 @@ let {
   children: Snippet;
   compact?: boolean;
   /** Number of inline summaries across on wide screens. */
-  columns?: 4 | 5;
+  columns?: 4 | 5 | 6;
 } = $props();
+
+// Spelled out so Tailwind sees each class.
+const WIDE_COLUMNS = { 4: '2xl:grid-cols-4', 5: '2xl:grid-cols-5', 6: '2xl:grid-cols-6' };
 </script>
 
-<div class="grid {compact ? `mb-[var(--analytics-summary-gap,10px)] grid-cols-1 gap-[var(--analytics-gap,10px)] sm:grid-cols-2 ${columns === 5 ? '2xl:grid-cols-5' : '2xl:grid-cols-4'}` : 'mb-5 grid-cols-4 gap-3.5'}">
+<div class="grid {compact ? `mb-[var(--analytics-summary-gap,10px)] grid-cols-1 gap-[var(--analytics-gap,10px)] sm:grid-cols-2 ${WIDE_COLUMNS[columns]}` : 'mb-5 grid-cols-4 gap-3.5'}">
 	{@render children()}
 </div>
