@@ -26,6 +26,8 @@ const filters = getAnalyticsFilters();
 
 let points = $state<SeriesPoint[]>([]);
 let previousPoints = $state<SeriesPoint[]>([]);
+// Without the window before, a key's change is unknown, not 'New'.
+let previousFailed = $state(false);
 let prices = $state<ModelPrice[]>([]);
 let keys = $state<KeySummary[]>([]);
 let keysFailed = $state(false);
@@ -79,6 +81,7 @@ async function load() {
     points = series ?? [];
     windowStart = new Date(start);
     previousPoints = previous.status === 'fulfilled' ? (previous.value[0] ?? []) : [];
+    previousFailed = previous.status === 'rejected';
     prices = catalog.status === 'fulfilled' ? catalog.value.data.flatMap((provider) => provider.models) : [];
     keys = allKeys.status === 'fulfilled' ? allKeys.value : [];
     keysFailed = allKeys.status === 'rejected';
@@ -129,15 +132,15 @@ const whatIfSaving = $derived(
   whatIfRows.reduce((sum, { row, cost }) => (cost !== null && cost < row.cost ? sum + row.cost - cost : sum), 0),
 );
 
+// A model answered only from the cache has no cost to estimate from, so it
+// stays listed with its saving unknown.
 const cacheRows = $derived(
   usage
-    .flatMap((row) => {
-      const saved = cacheSaved(row);
-      return row.gatewayCacheHits > 0 && saved !== null ? [{ row, saved }] : [];
-    })
-    .sort((a, b) => b.saved - a.saved),
+    .filter((row) => row.gatewayCacheHits > 0)
+    .map((row) => ({ row, saved: cacheSaved(row) }))
+    .sort((a, b) => (b.saved ?? -1) - (a.saved ?? -1)),
 );
-const cacheTotal = $derived(cacheRows.reduce((sum, { saved }) => sum + saved, 0));
+const cacheTotal = $derived(cacheRows.reduce((sum, { saved }) => sum + (saved ?? 0), 0));
 
 const rankedKeys = $derived(rankKeys(points, previousPoints));
 const keyName = $derived(new Map(keys.map((key) => [key.id, key.name])));
@@ -146,6 +149,7 @@ const idle = $derived(idleKeys(keys, points, windowStart, new Date()));
 
 /** A window-on-window change, or 'New' for a key that spent nothing before. */
 function change(cost: number, previous: number) {
+  if (previousFailed) return '—';
   if (previous <= 0) return 'New';
   const percent = Math.round(((cost - previous) / previous) * 100);
   return `${percent > 0 ? '+' : ''}${percent}%`;
@@ -251,7 +255,7 @@ function date(value: string) {
 							{@render modelName(`${row.provider}/${row.model}`)}
 							<span class="text-right text-zinc-400">{fmt(row.gatewayCacheHits)}</span>
 							<span class="text-right text-zinc-400">{Math.round((row.gatewayCacheHits / row.requests) * 100)}%</span>
-							<span class="text-right text-emerald-400">~{fmtSpend(saved)}</span>
+							<span class="text-right {saved === null ? 'text-zinc-500' : 'text-emerald-400'}" title={saved === null ? 'Every request was a cache hit, so there is no cost to estimate from' : undefined}>{saved === null ? '—' : `~${fmtSpend(saved)}`}</span>
 						</div>
 					{:else}
 						<p class="py-4 text-[12.5px] text-zinc-500">{loading ? 'Loading…' : 'No cache hits in this window.'}</p>

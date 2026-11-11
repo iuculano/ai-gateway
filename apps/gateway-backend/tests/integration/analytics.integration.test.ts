@@ -242,6 +242,12 @@ test('token medians are per request a provider answered, untouched by one huge r
     outputTokens: 9_000,
     gatewayCacheHit: true,
   });
+  // Failed requests carry no usage, and an abandoned one only a cut-off answer.
+  // Counted, they'd pull the median down to 100.
+  for (const status of ['failed', 'failed'] as const) {
+    await seedLog({ model: 'm', provider: 'openai', status, ...usage, inputTokens: 0, outputTokens: 0 });
+  }
+  await seedLog({ model: 'm', provider: 'openai', status: 'incomplete', ...usage, inputTokens: 5, outputTokens: 1 });
 
   const result = await tokens();
 
@@ -251,8 +257,9 @@ test('token medians are per request a provider answered, untouched by one huge r
   expect(result.median_output_tokens).toBeGreaterThanOrEqual(20);
   expect(result.median_output_tokens).toBeLessThanOrEqual(30);
   expect(result.p95_input_tokens).toBeLessThanOrEqual(50_000);
-  // Totals and bands leave the cache hit out too.
-  expect(result).toMatchObject({ requests: 4, input_tokens: 50_600, output_tokens: 4_060 });
+  // Totals leave the cache hit out too, but keep the abandoned request's tokens
+  // because the provider used them. Requests and bands count answers only.
+  expect(result).toMatchObject({ requests: 4, input_tokens: 50_605, output_tokens: 4_061 });
   expect(result.input_bands.map((band) => band.requests)).toEqual([3, 0, 0, 1, 0]);
   expect(result.output_bands.map((band) => band.requests)).toEqual([3, 0, 0, 1, 0]);
   expect(result.input_bands[3]).toEqual({ min: 16_000, max: 64_000, requests: 1 });
@@ -409,8 +416,22 @@ function sessions(
   request: Partial<Parameters<typeof AnalyticsServices.queryAnalyticsSessions>[0]> = {},
   tenant = acme,
 ) {
-  const body = { limit: 10, ...request };
+  const body = { limit: 10, offset: 0, sort: 'spend' as const, ...request };
   return runWithCaller(callerFor(tenant), () => AnalyticsServices.queryAnalyticsSessions(body));
+}
+
+function sessionDistribution(
+  request: Partial<Parameters<typeof AnalyticsServices.queryAnalyticsSessionDistribution>[0]> = {},
+  tenant = acme,
+) {
+  return runWithCaller(callerFor(tenant), () => AnalyticsServices.queryAnalyticsSessionDistribution(request));
+}
+
+function sessionPositions(
+  request: Partial<Parameters<typeof AnalyticsServices.queryAnalyticsSessionPositions>[0]> = {},
+  tenant = acme,
+) {
+  return runWithCaller(callerFor(tenant), () => AnalyticsServices.queryAnalyticsSessionPositions(request));
 }
 
 test('users: how many, and a page of them biggest spend first', async () => {
@@ -492,8 +513,8 @@ test('sessions: count and the most expensive, for everyone or one user', async (
   const all = await sessions();
   expect(all.count).toBe(2);
   expect(all.top).toEqual([
-    { session_id: 's-1', user_id: 'u-1', users: 1, requests: 2, tokens: 4, cost_total: 3 },
-    { session_id: 's-2', user_id: 'u-2', users: 1, requests: 1, tokens: 2, cost_total: 1 },
+    { session_id: 's-1', user_id: 'u-1', users: 1, requests: 2, tokens: 4, cost_total: 3, seconds: 0 },
+    { session_id: 's-2', user_id: 'u-2', users: 1, requests: 1, tokens: 2, cost_total: 1, seconds: 0 },
   ]);
 
   // Limited to one, it still counts both.
@@ -526,16 +547,157 @@ test('sessions: a shared session stays one row with its whole cost, naming no on
 
   const all = await sessions();
   expect(all.count).toBe(1);
-  expect(all.top).toEqual([{ session_id: 's-1', user_id: '', users: 2, requests: 3, tokens: 6, cost_total: 7 }]);
+  expect(all.top).toEqual([
+    { session_id: 's-1', user_id: '', users: 2, requests: 3, tokens: 6, cost_total: 7, seconds: 0 },
+  ]);
 
   // Narrowed to one user, it's their part of the session.
   expect((await sessions({ user_id: 'u-2' })).top).toEqual([
-    { session_id: 's-1', user_id: 'u-2', users: 1, requests: 1, tokens: 2, cost_total: 2 },
+    { session_id: 's-1', user_id: 'u-2', users: 1, requests: 1, tokens: 2, cost_total: 2, seconds: 0 },
   ]);
+});
+
+test('sessions: ordered by requests or length, paged, or narrowed to one', async () => {
+  // s-1 spends most in one request, s-2 takes three requests over a minute, and
+  // s-3 takes two, an hour apart.
+  const at = (time: string) => `2026-10-28 ${time}.000`;
+  await seedLog({
+    model: 'm',
+    provider: 'openai',
+    status: 'complete',
+    ...usage,
+    inputCost: 5,
+    tags: { session_id: 's-1' },
+  });
+  for (const time of ['10:00:00', '10:00:30', '10:01:00']) {
+    await seedLog({
+      model: 'm',
+      provider: 'openai',
+      status: 'complete',
+      ...usage,
+      createdAt: at(time),
+      tags: { session_id: 's-2' },
+    });
+  }
+  for (const time of ['09:00:00', '10:00:00']) {
+    await seedLog({
+      model: 'm',
+      provider: 'openai',
+      status: 'complete',
+      ...usage,
+      createdAt: at(time),
+      tags: { session_id: 's-3' },
+    });
+  }
+
+  const order = async (sort: 'spend' | 'requests' | 'length') =>
+    (await sessions({ sort })).top.map((row) => [row.session_id, row.seconds]);
+  expect(await order('spend')).toEqual([
+    ['s-1', 0],
+    ['s-2', 60],
+    ['s-3', 3600],
+  ]);
+  expect(await order('requests')).toEqual([
+    ['s-2', 60],
+    ['s-3', 3600],
+    ['s-1', 0],
+  ]);
+  expect(await order('length')).toEqual([
+    ['s-3', 3600],
+    ['s-2', 60],
+    ['s-1', 0],
+  ]);
+
+  // The second page picks up where the first stopped, and counts everything.
+  const page = await sessions({ sort: 'length', limit: 1, offset: 1 });
+  expect(page.top.map((row) => row.session_id)).toEqual(['s-2']);
+  expect(page.count).toBe(3);
+
+  // Looked up by id, a session comes back on its own.
+  const one = await sessions({ session_id: 's-3' });
+  expect(one.count).toBe(1);
+  expect(one.top).toMatchObject([{ session_id: 's-3', requests: 2, seconds: 3600 }]);
+});
+
+test('session distribution: percentiles and bands across sessions, untagged logs left out', async () => {
+  const spend = (cost: number) => ({ ...usage, inputCost: cost, outputCost: 0 });
+  // Three single-request sessions under a cent, one of 20 cents over 6
+  // requests, and one of $15. Plus an untagged request that mustn't count.
+  for (const id of ['a', 'b', 'c']) {
+    await seedLog({ model: 'm', provider: 'openai', status: 'complete', ...spend(0.005), tags: { session_id: id } });
+  }
+  for (let i = 0; i < 6; i++) {
+    await seedLog({ model: 'm', provider: 'openai', status: 'complete', ...spend(0.2 / 6), tags: { session_id: 'd' } });
+  }
+  await seedLog({ model: 'm', provider: 'openai', status: 'complete', ...spend(15), tags: { session_id: 'e' } });
+  await seedLog({ model: 'm', provider: 'openai', status: 'complete', ...spend(99) });
+
+  const result = await sessionDistribution();
+
+  expect(result.sessions).toBe(5);
+  expect(result.cost_percentiles).toHaveLength(99);
+  expect(result.request_percentiles[49]).toBe(1); // the median session is one request
+  expect(result.cost_bands.map((band) => band.sessions)).toEqual([3, 0, 1, 0, 1]);
+  expect(result.cost_bands[0]?.cost_total).toBeCloseTo(0.015);
+  expect(result.cost_bands[2]?.cost_total).toBeCloseTo(0.2);
+  expect(result.cost_bands.at(-1)).toEqual({ min: 10, max: null, sessions: 1, cost_total: 15 });
+  expect(result.request_bands).toEqual([
+    { min: 1, max: 1, sessions: 4 },
+    { min: 2, max: 5, sessions: 0 },
+    { min: 6, max: 10, sessions: 1 },
+    { min: 11, max: 20, sessions: 0 },
+    { min: 21, max: null, sessions: 0 },
+  ]);
+});
+
+test('session distribution: with no sessions, nothing to place', async () => {
+  const result = await sessionDistribution();
+  expect(result).toMatchObject({ sessions: 0, cost_percentiles: [], request_percentiles: [], seconds_percentiles: [] });
+  expect(result.cost_bands.every((band) => band.sessions === 0)).toBe(true);
+});
+
+test('session positions: the nth request of every session, in time order, or of one', async () => {
+  const at = (time: string) => `2026-10-28 ${time}.000`;
+  // s-1's requests are seeded out of order, and position follows when they were made.
+  for (const [time, cost, input] of [
+    ['10:00:02', 3, 300],
+    ['10:00:00', 1, 100],
+    ['10:00:01', 2, 200],
+  ] as const) {
+    await seedLog({
+      model: 'm',
+      provider: 'openai',
+      status: 'complete',
+      ...usage,
+      inputCost: cost,
+      outputCost: 0,
+      inputTokens: input,
+      createdAt: at(time),
+      tags: { session_id: 's-1' },
+    });
+  }
+  await seedLog({
+    model: 'm',
+    provider: 'openai',
+    status: 'complete',
+    ...usage,
+    inputCost: 10,
+    outputCost: 0,
+    inputTokens: 1000,
+    tags: { session_id: 's-2' },
+  });
+
+  expect((await sessionPositions()).positions).toEqual([
+    { position: 1, requests: 2, sessions: 2, cost_total: 11, input_tokens: 1100 },
+    { position: 2, requests: 1, sessions: 1, cost_total: 2, input_tokens: 200 },
+    { position: 3, requests: 1, sessions: 1, cost_total: 3, input_tokens: 300 },
+  ]);
+  expect((await sessionPositions({ session_id: 's-1' })).positions.map((row) => row.cost_total)).toEqual([1, 2, 3]);
 });
 
 test('sessions: with no logs, the count is zero', async () => {
   expect(await sessions()).toEqual({ count: 0, top: [] });
+  expect(await sessionPositions()).toEqual({ positions: [] });
 });
 
 test('users: the list can be ordered by tokens or requests instead of spend', async () => {

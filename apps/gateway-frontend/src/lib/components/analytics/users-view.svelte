@@ -38,6 +38,9 @@ let summary = $state<UsersResponse | null>(null);
 // shifts with the list's order, so a re-sort keeps the ones already shown.
 let summaryScope = '';
 let users = $state<UsersResponse['users']>([]);
+// The window the list was loaded for. Later pages reuse it, so a page fetched
+// after the window moves on can't skip or repeat users.
+let listRange = { start_date: '', end_date: '' };
 let loading = $state(true);
 let loadingMore = $state(false);
 let failed = $state(false);
@@ -57,8 +60,10 @@ async function load() {
   failed = false;
 
   try {
-    const response = await fetchUsers({ ...rangeOf(), actor_id: actorId, limit: PAGE, sort });
+    const range = rangeOf();
+    const response = await fetchUsers({ ...range, actor_id: actorId, limit: PAGE, sort });
     if (current !== request) return;
+    listRange = range;
     const scope = `${days}:${actorId ?? ''}`;
     summary =
       summary && scope === summaryScope ? { ...response, cost_percentiles: summary.cost_percentiles } : response;
@@ -76,7 +81,7 @@ async function loadMore() {
   const current = request;
   loadingMore = true;
   try {
-    const response = await fetchUsers({ ...rangeOf(), actor_id: actorId, limit: PAGE, offset: users.length, sort });
+    const response = await fetchUsers({ ...listRange, actor_id: actorId, limit: PAGE, offset: users.length, sort });
     if (current === request) users = [...users, ...response.users];
   } catch {
     // The list keeps what it has; the button stays, so it can be tried again.

@@ -27,8 +27,10 @@ const current = $derived(tabs.findLast((tab) => page.url.pathname.startsWith(tab
 const filters = setAnalyticsFilters();
 let rangeOpen = $state(false);
 
-// Users and savings look across every model, so the model filters don't apply there.
-const modelFilters = $derived(current !== 'users' && current !== 'savings');
+// Users, sessions and savings look across every model, so the model filters
+// only apply to the overview. A session narrowed to one model would be a part
+// of one.
+const modelFilters = $derived(current === 'overview');
 
 let filterPoints = $state<SeriesPoint[]>([]);
 let filtersLoading = $state(true);

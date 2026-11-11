@@ -29,13 +29,35 @@ const app = new OpenAPIHono({ defaultHook: zodExceptionHook })
 
   /**
    * POST /analytics/sessions
-   * Session count and the most expensive sessions.
+   * Session count and a page of sessions, by spend, requests or length.
    */
   .openapi(Routes.postAnalyticsSessions, async (c) => {
     const body = c.req.valid('json');
     const sessions = await Services.queryAnalyticsSessions(body);
 
     return c.json(sessions, 200);
+  })
+
+  /**
+   * POST /analytics/session-distribution
+   * How spend, length and request counts spread across sessions.
+   */
+  .openapi(Routes.postAnalyticsSessionDistribution, async (c) => {
+    const body = c.req.valid('json');
+    const distribution = await Services.queryAnalyticsSessionDistribution(body);
+
+    return c.json(distribution, 200);
+  })
+
+  /**
+   * POST /analytics/session-positions
+   * What the nth request of a session costs and sends.
+   */
+  .openapi(Routes.postAnalyticsSessionPositions, async (c) => {
+    const body = c.req.valid('json');
+    const positions = await Services.queryAnalyticsSessionPositions(body);
+
+    return c.json(positions, 200);
   })
 
   /**

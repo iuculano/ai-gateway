@@ -88,7 +88,10 @@ const sessions = createSchema({
     end_date: z.coerce.date().optional(),
     actor_id: z.uuid().optional(),
     user_id: z.string().optional(),
-    limit: z.number().int().positive().max(100).default(10),
+    session_id: z.string().optional(),
+    limit: z.number().int().positive().max(500).default(10),
+    offset: z.number().int().nonnegative().default(0),
+    sort: z.enum(['spend', 'requests', 'length']).default('spend'),
   }),
 
   response: z.object({
@@ -101,6 +104,49 @@ const sessions = createSchema({
         requests: z.number(),
         tokens: z.number(),
         cost_total: z.number(),
+        seconds: z.number(), // From the session's first request in the window to its last.
+      }),
+    ),
+  }),
+});
+
+const sessionBand = z.object({ min: z.number(), max: z.number().nullable(), sessions: z.number() });
+
+const sessionDistribution = createSchema({
+  body: z.object({
+    start_date: z.coerce.date().optional(),
+    end_date: z.coerce.date().optional(),
+    actor_id: z.uuid().optional(),
+    user_id: z.string().optional(),
+  }),
+
+  response: z.object({
+    sessions: z.number(),
+    cost_percentiles: z.array(z.number()), // p1 to p99 across sessions, empty when there are none.
+    request_percentiles: z.array(z.number()),
+    seconds_percentiles: z.array(z.number()),
+    cost_bands: z.array(sessionBand.extend({ cost_total: z.number() })),
+    request_bands: z.array(sessionBand),
+  }),
+});
+
+const sessionPositions = createSchema({
+  body: z.object({
+    start_date: z.coerce.date().optional(),
+    end_date: z.coerce.date().optional(),
+    actor_id: z.uuid().optional(),
+    user_id: z.string().optional(),
+    session_id: z.string().optional(),
+  }),
+
+  response: z.object({
+    positions: z.array(
+      z.object({
+        position: z.number(),
+        requests: z.number(),
+        sessions: z.number(),
+        cost_total: z.number(),
+        input_tokens: z.number(),
       }),
     ),
   }),
@@ -117,6 +163,8 @@ const tokens = createSchema({
   }),
 
   response: z.object({
+    // Requests a provider finished answering, which the medians and bands
+    // describe. The token totals also include failed and abandoned requests.
     requests: z.number(),
     input_tokens: z.number(),
     output_tokens: z.number(),
@@ -137,6 +185,10 @@ export type AnalyticsUsersBody = z.infer<typeof users.body>;
 export type AnalyticsUsersResponse = z.infer<typeof users.response>;
 export type AnalyticsSessionsBody = z.infer<typeof sessions.body>;
 export type AnalyticsSessionsResponse = z.infer<typeof sessions.response>;
+export type AnalyticsSessionDistributionBody = z.infer<typeof sessionDistribution.body>;
+export type AnalyticsSessionDistributionResponse = z.infer<typeof sessionDistribution.response>;
+export type AnalyticsSessionPositionsBody = z.infer<typeof sessionPositions.body>;
+export type AnalyticsSessionPositionsResponse = z.infer<typeof sessionPositions.response>;
 export type AnalyticsTokensBody = z.infer<typeof tokens.body>;
 export type AnalyticsTokensResponse = z.infer<typeof tokens.response>;
 
@@ -144,5 +196,7 @@ export default {
   series,
   users,
   sessions,
+  sessionDistribution,
+  sessionPositions,
   tokens,
 };

@@ -77,10 +77,66 @@ const postAnalyticsSessions = createRoute({
   responses: {
     ...validatedProtectedRouteErrors,
     200: {
-      description: 'How many sessions there were, and the most expensive',
+      description: 'How many sessions there were, and a page of them by spend, requests or length',
       content: {
         'application/json': {
           schema: Schemas.sessions.response,
+        },
+      },
+    },
+  },
+});
+
+const postAnalyticsSessionDistribution = createRoute({
+  method: 'post' as const,
+  path: '/analytics/session-distribution',
+  security: bearerSecurity,
+  middleware: [authorize({ scopes: [SCOPES.logsRead] })],
+  request: {
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.sessionDistribution.body,
+        },
+      },
+    },
+  },
+  responses: {
+    ...validatedProtectedRouteErrors,
+    200: {
+      description: 'How spend, length and request counts spread across sessions',
+      content: {
+        'application/json': {
+          schema: Schemas.sessionDistribution.response,
+        },
+      },
+    },
+  },
+});
+
+const postAnalyticsSessionPositions = createRoute({
+  method: 'post' as const,
+  path: '/analytics/session-positions',
+  security: bearerSecurity,
+  middleware: [authorize({ scopes: [SCOPES.logsRead] })],
+  request: {
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: Schemas.sessionPositions.body,
+        },
+      },
+    },
+  },
+  responses: {
+    ...validatedProtectedRouteErrors,
+    200: {
+      description: 'What the nth request of a session costs and sends',
+      content: {
+        'application/json': {
+          schema: Schemas.sessionPositions.response,
         },
       },
     },
@@ -119,5 +175,7 @@ export default {
   postAnalyticsSeries,
   postAnalyticsUsers,
   postAnalyticsSessions,
+  postAnalyticsSessionDistribution,
+  postAnalyticsSessionPositions,
   postAnalyticsTokens,
 };

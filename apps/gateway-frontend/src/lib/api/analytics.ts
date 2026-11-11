@@ -48,13 +48,38 @@ export type UsersResponse = InferResponseType<typeof client.analytics.users.$pos
 
 export type SessionsRequest = InferRequestType<typeof client.analytics.sessions.$post>['json'];
 
-/** How many sessions there were (the session_id tag) and the most expensive. */
+/** How many sessions there were (the session_id tag), and a page of them by spend, requests or length. */
 export async function fetchSessions(request: SessionsRequest) {
   const response = await client.analytics.sessions.$post({ json: request });
   return response.json();
 }
 
 export type SessionsResponse = InferResponseType<typeof client.analytics.sessions.$post, 200>;
+
+export type SessionDistributionRequest = InferRequestType<
+  (typeof client.analytics)['session-distribution']['$post']
+>['json'];
+
+/** How spend, length and request counts spread across sessions. */
+export async function fetchSessionDistribution(request: SessionDistributionRequest) {
+  const response = await client.analytics['session-distribution'].$post({ json: request });
+  return response.json();
+}
+
+export type SessionDistributionResponse = InferResponseType<
+  (typeof client.analytics)['session-distribution']['$post'],
+  200
+>;
+
+export type SessionPositionsRequest = InferRequestType<(typeof client.analytics)['session-positions']['$post']>['json'];
+
+/** What a session's requests cost and send by their position, across every session or within one. */
+export async function fetchSessionPositions(request: SessionPositionsRequest) {
+  const response = await client.analytics['session-positions'].$post({ json: request });
+  return response.json();
+}
+
+export type SessionPositionsResponse = InferResponseType<(typeof client.analytics)['session-positions']['$post'], 200>;
 
 export type TokensRequest = InferRequestType<typeof client.analytics.tokens.$post>['json'];
 

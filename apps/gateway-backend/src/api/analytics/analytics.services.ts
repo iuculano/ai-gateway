@@ -5,6 +5,10 @@ import Schemas, {
   type AnalyticsDimension,
   type AnalyticsSeriesBody,
   type AnalyticsSeriesResponse,
+  type AnalyticsSessionDistributionBody,
+  type AnalyticsSessionDistributionResponse,
+  type AnalyticsSessionPositionsBody,
+  type AnalyticsSessionPositionsResponse,
   type AnalyticsSessionsBody,
   type AnalyticsSessionsResponse,
   type AnalyticsTokensBody,
@@ -56,13 +60,13 @@ const METRIC_COLUMNS = [
 const GROUP_BY_KEYS = ['bucket', 'model', 'provider', 'status', 'actor', 'user', 'session'];
 
 const settings = {
-  date_time_output_format: 'iso', // Default ClickHouse setting seems to come back wihtout a timezone...
+  date_time_output_format: 'iso', // ClickHouse's default format leaves the timezone off.
   group_by_use_nulls: 1, // Keys a row isn't grouped by come back null rather than '' or 0.
   use_query_cache: 1,
 } as const;
 
 /**
- * Works out which rows of the combined result belong to a grouping.
+ * Works out the set_mask that marks a grouping's rows in a GROUPING SETS result.
  *
  * @param groupingKeys
  * The group-by keys of this grouping.
@@ -86,10 +90,11 @@ function maskOf(groupingKeys: string[], usedKeys: string[]): number {
 }
 
 /**
- * A number, or null for ClickHouse's NaN / null (nothing to measure).
+ * Turns ClickHouse's NaN or null, which it returns when there was nothing to
+ * measure, into null.
  *
  * @param value
- * The value to measure.
+ * The value ClickHouse returned.
  *
  * @returns
  * The value if it's a finite number, or null otherwise.
@@ -99,8 +104,8 @@ function measured(value: number | null | undefined): number | null {
 }
 
 /**
- * The WHERE clause, parameters and cache settings for a request's filters, the
- * same for every analytics query.
+ * Builds the WHERE clause, parameters and cache settings that every analytics
+ * query shares, scoped to the caller's organization.
  *
  * @param request
  * The filters. Any that are unset don't narrow anything.
@@ -141,7 +146,8 @@ function queryOptionsFor(
 }
 
 /**
- * What it says on the tin.
+ * Totals and breakdowns of usage, spend and latency, answering several
+ * groupings in one scan.
  *
  * @param request
  * The date range, filters, bucket size, and the groupings to answer.
@@ -195,8 +201,8 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
     const mask = maskOf(keys, usedKeys);
     const groupingRows = rowsByMask.get(mask) ?? [];
 
-    // ClickHouse hands bucket back as an ISO string; the response wants a Date.
-    // The actor's type comes out of its id.
+    // ClickHouse hands bucket back as an ISO string, and the response wants a
+    // Date. The actor's type comes out of its id.
     const points = [];
     for (const row of groupingRows) {
       const bucket = row.bucket ? new Date(row.bucket) : null;
@@ -219,9 +225,16 @@ async function queryAnalyticsSeries(request: AnalyticsSeriesBody): Promise<Analy
   return Schemas.series.response.parse({ interval: request.interval, groupings });
 }
 
-// p1 to p99, for placing one user's spend among everyone's.
+// p1 to p99, for placing one user's or session's spend among everyone's.
 const PERCENTILES = Array.from({ length: 99 }, (_, index) => (index + 1) / 100).join(', ');
 
+/**
+ * A page of users from the user_id tag, with how many there are and how their
+ * spend spreads.
+ *
+ * @param request
+ * The date range, an optional API key to narrow to, the order, and the page.
+ */
 async function queryAnalyticsUsers(request: AnalyticsUsersBody): Promise<AnalyticsUsersResponse> {
   const { where, ...options } = queryOptionsFor(request);
 
@@ -264,9 +277,19 @@ async function queryAnalyticsUsers(request: AnalyticsUsersBody): Promise<Analyti
   });
 }
 
+/**
+ * A page of sessions from the session_id tag, with how many there are.
+ *
+ * @param request
+ * The date range, an optional API key, user or session to narrow to, the
+ * order, and the page.
+ */
 async function queryAnalyticsSessions(request: AnalyticsSessionsBody): Promise<AnalyticsSessionsResponse> {
   const { where, ...options } = queryOptionsFor(request);
 
+  // Biggest first by the chosen measure, with ties broken by id so pages don't
+  // overlap or skip.
+  const sortColumn = { spend: 'cost_total', requests: 'requests', length: 'seconds' }[request.sort];
   const query = `
     SELECT
       session_id,
@@ -275,17 +298,18 @@ async function queryAnalyticsSessions(request: AnalyticsSessionsBody): Promise<A
       count() AS requests,
       sumIf(input_tokens + output_tokens, NOT gateway_cache_hit) AS tokens,
       toFloat64(sum(input_cost + output_cost)) AS cost_total,
+      dateDiff('second', min(logs.created_at), max(logs.created_at)) AS seconds,
       count() OVER () AS sessions
     FROM logs FINAL WHERE ${where} AND session_id != ''
     GROUP BY session_id
-    ORDER BY cost_total DESC, session_id
-    LIMIT {limit:UInt32}
+    ORDER BY ${sortColumn} DESC, session_id
+    LIMIT {limit:UInt32} OFFSET {offset:UInt32}
   `;
 
   const result = await clickhouse.query({
     query,
     ...options,
-    query_params: { ...options.query_params, limit: request.limit },
+    query_params: { ...options.query_params, limit: request.limit, offset: request.offset },
     format: 'JSONEachRow',
   });
   const top = await result.json<{
@@ -295,27 +319,175 @@ async function queryAnalyticsSessions(request: AnalyticsSessionsBody): Promise<A
     requests: number;
     tokens: number;
     cost_total: number;
+    seconds: number;
     sessions: number;
   }>();
 
   return Schemas.sessions.response.parse({ count: top[0]?.sessions ?? 0, top });
 }
 
-// Where each token band starts, per request
+// Where each session band starts, in dollars of spend and in requests.
+const COST_BANDS = [0, 0.01, 0.1, 1, 10];
+const REQUEST_BANDS = [1, 2, 6, 11, 21];
+
+/**
+ * How spend, request count and length spread across sessions, as percentiles
+ * and bands.
+ *
+ * @param request
+ * The date range, and an optional API key or user to narrow to.
+ */
+async function queryAnalyticsSessionDistribution(
+  request: AnalyticsSessionDistributionBody,
+): Promise<AnalyticsSessionDistributionResponse> {
+  const { where, ...options } = queryOptionsFor(request);
+  const costBands = bandConditions('cost_total', COST_BANDS);
+  const requestBands = bandConditions('requests', REQUEST_BANDS);
+
+  // A query of its own, so the spread is worked out once rather than repeated
+  // on every listed session.
+  const query = `
+    SELECT
+      count() AS sessions,
+      quantiles(${PERCENTILES})(cost_total) AS cost_percentiles,
+      quantiles(${PERCENTILES})(requests) AS request_percentiles,
+      quantiles(${PERCENTILES})(seconds) AS seconds_percentiles,
+      [${costBands.map((band) => `countIf(${band})`).join(', ')}] AS cost_band_sessions,
+      [${costBands.map((band) => `sumIf(cost_total, ${band})`).join(', ')}] AS cost_band_spend,
+      [${requestBands.map((band) => `countIf(${band})`).join(', ')}] AS request_band_sessions
+    FROM (
+      SELECT
+        count() AS requests,
+        toFloat64(sum(input_cost + output_cost)) AS cost_total,
+        dateDiff('second', min(logs.created_at), max(logs.created_at)) AS seconds
+      FROM logs FINAL WHERE ${where} AND session_id != ''
+      GROUP BY session_id
+    )
+  `;
+
+  const result = await clickhouse.query({ query, ...options, format: 'JSONEachRow' });
+
+  // Exactly one row, even over no sessions at all.
+  const [row] = await result.json<{
+    sessions: number;
+    cost_percentiles: number[];
+    request_percentiles: number[];
+    seconds_percentiles: number[];
+    cost_band_sessions: number[];
+    cost_band_spend: number[];
+    request_band_sessions: number[];
+  }>();
+  const sessions = row?.sessions ?? 0;
+
+  const costRows = [];
+  for (const [index, min] of COST_BANDS.entries()) {
+    costRows.push({
+      min,
+      max: COST_BANDS[index + 1] ?? null,
+      sessions: row?.cost_band_sessions[index] ?? 0,
+      cost_total: row?.cost_band_spend[index] ?? 0,
+    });
+  }
+  const requestRows = [];
+  for (const [index, min] of REQUEST_BANDS.entries()) {
+    // Request counts are whole, so a band ends just before the next starts.
+    const next = REQUEST_BANDS[index + 1];
+    requestRows.push({
+      min,
+      max: next === undefined ? null : next - 1,
+      sessions: row?.request_band_sessions[index] ?? 0,
+    });
+  }
+
+  return Schemas.sessionDistribution.response.parse({
+    sessions,
+    // Over no sessions the quantiles come back as NaN, so there is nothing to place.
+    cost_percentiles: sessions > 0 ? row?.cost_percentiles : [],
+    request_percentiles: sessions > 0 ? row?.request_percentiles : [],
+    seconds_percentiles: sessions > 0 ? row?.seconds_percentiles : [],
+    cost_bands: costRows,
+    request_bands: requestRows,
+  });
+}
+
+// Requests past this position in a session are counted together in it.
+const MAX_POSITION = 1000;
+
+/**
+ * What a session's requests cost and send, by their position in it, across
+ * every session or within one.
+ *
+ * @param request
+ * The date range, and an optional API key, user or session to narrow to.
+ */
+async function queryAnalyticsSessionPositions(
+  request: AnalyticsSessionPositionsBody,
+): Promise<AnalyticsSessionPositionsResponse> {
+  const { where, ...options } = queryOptionsFor(request);
+
+  // Numbering each session's sorted requests costs about a third of the CPU of
+  // row_number() over the same rows.
+  const query = `
+    SELECT
+      least(step, ${MAX_POSITION}) AS position,
+      count() AS requests,
+      countIf(step <= ${MAX_POSITION}) AS sessions,
+      toFloat64(sum(cost)) AS cost_total,
+      sum(input) AS input_tokens
+    FROM (
+      SELECT arraySort(groupArray((logs.created_at, logs.id, toFloat64(input_cost + output_cost), logs.input_tokens))) AS steps
+      FROM logs FINAL WHERE ${where} AND session_id != ''
+      GROUP BY session_id
+    )
+    ARRAY JOIN arrayEnumerate(steps) AS step, steps.3 AS cost, steps.4 AS input
+    GROUP BY position
+    ORDER BY position
+  `;
+
+  const result = await clickhouse.query({ query, ...options, format: 'JSONEachRow' });
+  const positions = await result.json<{
+    position: number;
+    requests: number;
+    sessions: number;
+    cost_total: number;
+    input_tokens: number;
+  }>();
+
+  return Schemas.sessionPositions.response.parse({ positions });
+}
+
+// Where each token band starts, per request.
 const INPUT_BANDS = [0, 1_000, 4_000, 16_000, 64_000];
 const OUTPUT_BANDS = [0, 100, 500, 2_000, 8_000];
 
-function bandCounts(column: string, starts: number[]) {
-  const counts = [];
+/**
+ * Writes each band's range as a SQL condition on a column. The last band has no
+ * upper end.
+ *
+ * @param column
+ * The column or alias to compare.
+ *
+ * @param starts
+ * Where each band starts, in order.
+ */
+function bandConditions(column: string, starts: number[]) {
+  const conditions = [];
   for (const [index, start] of starts.entries()) {
     const end = starts[index + 1];
-    counts.push(
-      end === undefined ? `countIf(${column} >= ${start})` : `countIf(${column} >= ${start} AND ${column} < ${end})`,
-    );
+    conditions.push(end === undefined ? `${column} >= ${start}` : `${column} >= ${start} AND ${column} < ${end}`);
   }
-  return `[${counts.join(', ')}]`;
+  return conditions;
 }
 
+/**
+ * Pairs each token band's range with how many requests fell in it.
+ *
+ * @param starts
+ * Where each band starts, in order.
+ *
+ * @param counts
+ * The requests in each band, in the same order.
+ */
 function bandsOf(starts: number[], counts: number[]) {
   const bands = [];
   for (const [index, min] of starts.entries()) {
@@ -324,19 +496,29 @@ function bandsOf(starts: number[], counts: number[]) {
   return bands;
 }
 
+/**
+ * Token totals, prompt cache use, and how big requests and answers typically
+ * are.
+ *
+ * @param request
+ * The date range, and an optional API key or user to narrow to.
+ */
 async function queryAnalyticsTokens(request: AnalyticsTokensBody): Promise<AnalyticsTokensResponse> {
   const { where, ...options } = queryOptionsFor(request);
+  const inputBands = bandConditions('logs.input_tokens', INPUT_BANDS);
+  const outputBands = bandConditions('logs.output_tokens', OUTPUT_BANDS);
+
   const query = `
     SELECT
-      count() AS requests,
+      countIf(logs.status = 'complete') AS requests,
       sum(logs.input_tokens) AS input_tokens,
       sum(logs.output_tokens) AS output_tokens,
       sum(logs.cached_input_tokens) AS cached_input_tokens,
-      quantiles(0.5, 0.95)(logs.input_tokens) AS input_quantiles,
-      quantiles(0.5, 0.95)(logs.output_tokens) AS output_quantiles,
-      ${bandCounts('logs.input_tokens', INPUT_BANDS)} AS input_bands,
-      ${bandCounts('logs.output_tokens', OUTPUT_BANDS)} AS output_bands
-    FROM logs FINAL WHERE ${where} AND NOT gateway_cache_hit AND logs.status = 'complete'
+      quantilesIf(0.5, 0.95)(logs.input_tokens, logs.status = 'complete') AS input_quantiles,
+      quantilesIf(0.5, 0.95)(logs.output_tokens, logs.status = 'complete') AS output_quantiles,
+      [${inputBands.map((band) => `countIf(${band} AND logs.status = 'complete')`).join(', ')}] AS input_bands,
+      [${outputBands.map((band) => `countIf(${band} AND logs.status = 'complete')`).join(', ')}] AS output_bands
+    FROM logs FINAL WHERE ${where} AND NOT gateway_cache_hit
   `;
 
   const result = await clickhouse.query({ query, ...options, format: 'JSONEachRow' });
@@ -371,5 +553,7 @@ export default {
   queryAnalyticsSeries,
   queryAnalyticsUsers,
   queryAnalyticsSessions,
+  queryAnalyticsSessionDistribution,
+  queryAnalyticsSessionPositions,
   queryAnalyticsTokens,
 };
