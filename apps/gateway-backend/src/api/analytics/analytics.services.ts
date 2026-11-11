@@ -336,7 +336,7 @@ async function queryAnalyticsTokens(request: AnalyticsTokensBody): Promise<Analy
       quantiles(0.5, 0.95)(logs.output_tokens) AS output_quantiles,
       ${bandCounts('logs.input_tokens', INPUT_BANDS)} AS input_bands,
       ${bandCounts('logs.output_tokens', OUTPUT_BANDS)} AS output_bands
-    FROM logs FINAL WHERE ${where} AND NOT gateway_cache_hit
+    FROM logs FINAL WHERE ${where} AND NOT gateway_cache_hit AND logs.status = 'complete'
   `;
 
   const result = await clickhouse.query({ query, ...options, format: 'JSONEachRow' });
