@@ -141,7 +141,7 @@ function queryOptionsFor(
       user: request.user_id,
       session: request.session_id,
     },
-    clickhouse_settings: { ...settings, query_cache_ttl: settled ? 300 : 10 },
+    clickhouse_settings: { ...settings, query_cache_ttl: settled ? 300 : 30 },
   };
 }
 
