@@ -2,7 +2,11 @@
 import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
 import { listApiKeys } from '$lib/api/api-keys';
 import { listAllProviders } from '$lib/api/models';
-import { alignedNow, getAnalyticsFilters } from '$lib/components/analytics/analytics-filters.svelte';
+import {
+  alignedNow,
+  alignedPreviousEnd,
+  getAnalyticsFilters,
+} from '$lib/components/analytics/analytics-filters.svelte';
 import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
 import ChartCard from '$lib/components/app/chart-card.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
@@ -58,6 +62,7 @@ async function load() {
   const end = alignedNow();
   const duration = filters.range.days * 86_400_000;
   const start = end - duration;
+  const previousEnd = alignedPreviousEnd(start);
 
   try {
     const [[series], [previous, catalog, allKeys]] = await Promise.all([
@@ -69,8 +74,8 @@ async function load() {
       // None of these should hide the spend if they fail.
       Promise.allSettled([
         fetchSeries({
-          start_date: new Date(start - duration).toISOString(),
-          end_date: new Date(start).toISOString(),
+          start_date: new Date(previousEnd - duration).toISOString(),
+          end_date: new Date(previousEnd).toISOString(),
           groupings: [['actor']],
         }),
         listAllProviders(),

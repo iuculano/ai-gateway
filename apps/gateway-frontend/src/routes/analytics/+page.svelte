@@ -1,6 +1,10 @@
 <script lang="ts">
 import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import { alignedNow, getAnalyticsFilters } from '$lib/components/analytics/analytics-filters.svelte';
+import {
+  alignedNow,
+  alignedPreviousEnd,
+  getAnalyticsFilters,
+} from '$lib/components/analytics/analytics-filters.svelte';
 import ModelComparison from '$lib/components/analytics/model-comparison.svelte';
 import SpendChart from '$lib/components/analytics/spend-chart.svelte';
 import SpendForecast from '$lib/components/analytics/spend-forecast.svelte';
@@ -106,10 +110,7 @@ async function load() {
   const start = new Date(end - duration).toISOString();
   const filters = { provider: providerFilter || undefined, model: modelFilter || undefined };
   const common = { ...filters, start_date: start, end_date: new Date(end).toISOString() };
-  // The previous window ends on a 5-minute mark, so its query only changes every
-  // 5 minutes and the server's cache can answer it until then (its data no
-  // longer changes). It sits at most 5 minutes before the current one.
-  const previousEnd = Math.floor((end - duration) / 300_000) * 300_000;
+  const previousEnd = alignedPreviousEnd(end - duration);
   const previous = {
     ...filters,
     start_date: new Date(previousEnd - duration).toISOString(),

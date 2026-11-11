@@ -40,3 +40,12 @@ export function getAnalyticsFilters(): AnalyticsFilters {
 export function alignedNow() {
   return Math.floor(Date.now() / 30_000) * 30_000;
 }
+
+/**
+ * Where the window before one starting at `start` ends, on a 5-minute mark. Its
+ * query then only changes every 5 minutes, and the server's cache can answer it
+ * until then, since its data no longer changes. At most 5 minutes early.
+ */
+export function alignedPreviousEnd(start: number) {
+  return Math.floor(start / 300_000) * 300_000;
+}
