@@ -21,6 +21,7 @@ let {
   comparisonLabel,
   comparisonUnavailable,
   onretry,
+  onselect,
 }: {
   points: SeriesPoint[];
   failures: SeriesPoint[];
@@ -29,23 +30,22 @@ let {
   comparisonLabel: string;
   comparisonUnavailable: boolean;
   onretry: () => void;
+  /** Called with a row's provider and model when its name is clicked. */
+  onselect?: (provider: string, model: string) => void;
 } = $props();
 let sortKey = $state<ModelSortKey>('requests');
 let ascending = $state(false);
-let view = $state<'table' | 'bars' | 'efficiency' | 'changes-spend' | 'changes-requests'>('table');
+let view = $state<'table' | 'efficiency' | 'changes-spend' | 'changes-requests'>('table');
 const views = [
   { id: 'table', label: 'Table' },
   { id: 'efficiency', label: 'Efficiency' },
   { id: 'changes-spend', label: 'Changes in spend' },
   { id: 'changes-requests', label: 'Changes in requests' },
-  { id: 'bars', label: 'Bars' },
 ] satisfies { id: typeof view; label: string }[];
 const showingChanges = $derived(view === 'changes-spend' || view === 'changes-requests');
 const changeMetric: ModelChangeMetric = $derived(view === 'changes-requests' ? 'requests' : 'cost_total');
 const changeRows = $derived(modelChangeRows(points, previousPoints ?? [], changeMetric));
 const rows = $derived(sortModelRows(modelComparisonRows(points, failures), sortKey, ascending));
-const topModels = $derived(sortModelRows(rows, 'requests', false).slice(0, 6));
-const maxRequests = $derived(Math.max(1, topModels[0]?.requests ?? 0));
 const efficiencyColumns: { key: ModelSortKey; label: string }[] = [
   { key: 'model', label: 'Model' },
   { key: 'costPerMillion', label: '$ / 1M tokens' },
@@ -57,7 +57,7 @@ const comparisonColumns: { key: ModelSortKey; label: string }[] = [
   { key: 'requests', label: 'Requests' },
   { key: 'spend', label: 'Spend' },
   { key: 'averageCost', label: 'Avg $/req' },
-  { key: 'latency', label: 'Avg latency' },
+  { key: 'latency', label: 'Median latency' },
   { key: 'errorRate', label: 'Error rate' },
 ];
 const columns = $derived(view === 'efficiency' ? efficiencyColumns : comparisonColumns);
@@ -114,12 +114,12 @@ const preciseChangeValue = (value: number) =>
                             {@const comparison = periodComparison(row.current, row.previous, { label: comparisonLabel, lowerIsBetter: changeMetric === 'cost_total' })}
                             <tr class="h-10 border-b border-hairline last:border-0 hover:bg-surface-3">
                                 <td class="max-w-[240px] py-2 pr-3 pl-4">
-                                    <span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider}/${row.model}`}>
+                                    <button type="button" class="flex max-w-full min-w-0 items-center gap-[9px] text-left hover:underline" title={`Filter to ${row.provider}/${row.model}`} onclick={() => onselect?.(row.provider, row.model)}>
                                         <span class="size-[7px] shrink-0 rounded-full" style:background={providerTone(row.provider).color}></span>
                                         <span class="min-w-0">
                                             <span class="block truncate font-medium text-zinc-200">{row.provider}/{row.model}</span>
                                         </span>
-                                    </span>
+                                    </button>
                                 </td>
                                 <td class="px-3 py-1 text-right font-mono text-[13px] font-medium whitespace-nowrap text-zinc-200 tabular-nums" title={preciseChangeValue(row.current)}>{changeValue(row.current)}</td>
                                 <td class="px-3 py-1 text-right font-mono text-[13px] font-medium whitespace-nowrap text-zinc-300 tabular-nums" title={preciseChangeValue(row.previous)}>{changeValue(row.previous)}</td>
@@ -135,29 +135,6 @@ const preciseChangeValue = (value: number) =>
                 </table>
             </div>
         {/if}
-	{:else if view === 'bars'}
-		<div class="flex min-h-[calc(190px+var(--analytics-body-growth,0px))] flex-col justify-between gap-2 px-4 py-[var(--analytics-body-padding,8px)]">
-			{#if loading}
-				<p class="py-6 text-center text-[13px] text-zinc-500">Loading models…</p>
-			{:else}
-				{#each topModels as row (row.id)}
-					<div class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_50px_56px] items-center gap-3">
-						<span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider}/${row.model}`}>
-							<span class="size-[7px] shrink-0 rounded-full" style:background={providerTone(row.provider).color}></span>
-							<span class="truncate text-[12.5px] text-zinc-300">{row.provider}/{row.model}</span>
-						</span>
-						<div class="h-[18px] w-full" aria-hidden="true">
-							<div class="h-full rounded-r-[4px] bg-emerald-400" style:width={`${row.requests / maxRequests * 100}%`} style:opacity={0.35 + 0.65 * row.requests / maxRequests}></div>
-						</div>
-						<span class="text-right text-[12.5px] text-zinc-300 tabular-nums" title={`${row.requests.toLocaleString()} requests`}>{fmt(row.requests)}</span>
-						<span class="text-right text-[12.5px] text-zinc-600 tabular-nums" title="Spend">{fmtCostTotal(row.spend)}</span>
-					</div>
-				{:else}
-					<p class="py-6 text-center text-[13px] text-zinc-500">No requests in this window.</p>
-				{/each}
-				{#if rows.length > 6}<p class="text-[11px] text-zinc-600">Top 6 by request volume</p>{/if}
-			{/if}
-		</div>
 	{:else}
 	<div class="max-h-[calc(190px+var(--analytics-body-growth,0px))] overflow-auto">
 		<table class="w-full {view === 'efficiency' ? 'min-w-[520px]' : 'min-w-[640px]'} border-collapse text-[12.5px]">
@@ -180,10 +157,10 @@ const preciseChangeValue = (value: number) =>
 					{#each rows as row (row.id)}
 						<tr class="h-10 border-b border-hairline transition-colors duration-100 last:border-0 hover:bg-surface-3">
 							<td class="max-w-[240px] py-1 pr-3 pl-4">
-								<span class="flex min-w-0 items-center gap-[9px]" title={`${row.provider}/${row.model}`}>
+								<button type="button" class="flex max-w-full min-w-0 items-center gap-[9px] text-left hover:underline" title={`Filter to ${row.provider}/${row.model}`} onclick={() => onselect?.(row.provider, row.model)}>
 									<span class="size-[7px] shrink-0 rounded-full" style:background={providerTone(row.provider).color}></span>
 									<span class="truncate text-[13px] font-medium text-zinc-200">{row.provider}/{row.model}</span>
-								</span>
+								</button>
 							</td>
 							{#if view === 'efficiency'}
                             <td class="px-1.5 py-1 text-right text-zinc-300 tabular-nums" title="Total spend divided by total tokens, multiplied by 1 million">{row.costPerMillion === null ? '—' : money(row.costPerMillion)}</td>

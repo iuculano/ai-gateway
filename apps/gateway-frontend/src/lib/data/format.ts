@@ -10,6 +10,7 @@ export function genUsage(total: number, seed: number): number[] {
 }
 
 export function fmt(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return String(n);
@@ -142,6 +143,20 @@ export function fmtCost(dollars: number): string {
 export function fmtCostTotal(dollars: number): string {
   if (dollars >= 1000) return `$${Math.round(dollars).toLocaleString('en-US')}`;
   return `$${dollars.toFixed(2)}`;
+}
+
+/** Spend that may be under a cent, as one user's or one session's often is. */
+export function fmtSpend(dollars: number): string {
+  return dollars < 1 ? fmtCost(dollars) : fmtCostTotal(dollars);
+}
+
+/** A chart bucket on its axis: '14:00' for hours, 'Oct 3' for days. */
+export function fmtBucket(iso: string | null, interval: 'hour' | 'day'): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return interval === 'hour'
+    ? `${String(date.getHours()).padStart(2, '0')}:00`
+    : `${MONTHS[date.getMonth()]} ${date.getDate()}`;
 }
 
 /**

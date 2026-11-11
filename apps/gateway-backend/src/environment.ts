@@ -31,6 +31,7 @@ const environmentSchema = z.object({
   CLICKHOUSE_USER: z.string().default('default'),
   CLICKHOUSE_PASSWORD: z.string().default(''),
   CLICKHOUSE_DATABASE: z.string().default('ai_gateway'),
+  CLICKHOUSE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(1),
 
   AUTH_TOKEN_ISSUER: z.url(),
   AUTH_TOKEN_AUDIENCE: z.string().min(1),

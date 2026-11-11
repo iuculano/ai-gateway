@@ -42,6 +42,13 @@ jobs:
           - worker-model-catalog
           - worker-webhooks
 
+        # Not really an app, but supporting infra. We bake some config into the
+        # the container.
+        include:
+          - app:     clickhouse
+            context: infra/clickhouse
+            file:    infra/clickhouse/Dockerfile
+
     steps:
       - uses: actions/checkout@v7
 
@@ -74,9 +81,9 @@ jobs:
         id:   build
         uses: docker/build-push-action@v7
         with:
-          context:    .
+          context:    ${{ matrix.context || '.' }}
           push:       true
-          file:       apps/${{ matrix.app }}/Dockerfile
+          file:       ${{ matrix.file || format('apps/{0}/Dockerfile', matrix.app) }}
           tags:       ${{ steps.meta.outputs.tags }}
           labels:     ${{ steps.meta.outputs.labels }}
           sbom:       true

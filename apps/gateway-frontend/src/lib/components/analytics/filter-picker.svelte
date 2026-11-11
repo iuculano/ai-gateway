@@ -6,21 +6,24 @@ let {
   label,
   options,
   value = $bindable(''),
+  allLabel,
   class: fieldClass = '',
 }: {
   id: string;
   label: string;
   options: string[];
   value: string;
+  /** What the blank option reads as; "All <label>s" unless given. */
+  allLabel?: string;
   class?: string;
 } = $props();
 
 let open = $state(false);
 let query = $state('');
 let highlighted = $state(0);
-const allLabel = $derived(`All ${label.toLowerCase()}s`);
+const blankLabel = $derived(allLabel ?? `All ${label.toLowerCase()}s`);
 const matches = $derived([
-  { value: '', label: allLabel },
+  { value: '', label: blankLabel },
   ...[...new Set(value ? [value, ...options] : options)]
     .filter((option) => option.toLowerCase().includes(query.trim().toLowerCase()))
     .map((option) => ({ value: option, label: option })),
@@ -60,7 +63,7 @@ function onKeydown(event: KeyboardEvent) {
 	<Input
 		{id}
 		value={open ? query : value}
-		placeholder={open ? `Search ${label.toLowerCase()}s…` : allLabel}
+		placeholder={open ? `Search ${label.toLowerCase()}s…` : blankLabel}
 		aria-label={label}
 		role="combobox"
 		aria-expanded={open}

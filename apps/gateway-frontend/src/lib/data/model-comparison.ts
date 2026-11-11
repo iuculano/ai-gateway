@@ -36,7 +36,11 @@ export function modelComparisonRows(totals: SeriesPoint[], failures: SeriesPoint
     requests: point.requests,
     spend: point.cost_total,
     costPerMillion: point.total_tokens > 0 ? (point.cost_total / point.total_tokens) * 1_000_000 : null,
-    tokensPerRequest: point.requests > 0 ? point.total_tokens / point.requests : null,
+    // Over requests a provider answered: gateway cache hits carry no tokens here.
+    tokensPerRequest:
+      point.requests > point.gateway_cache_hits
+        ? point.total_tokens / (point.requests - point.gateway_cache_hits)
+        : null,
     inputTokens: point.input_tokens,
     outputTokens: point.output_tokens,
     inputShare:
@@ -44,7 +48,7 @@ export function modelComparisonRows(totals: SeriesPoint[], failures: SeriesPoint
         ? (point.input_tokens / (point.input_tokens + point.output_tokens)) * 100
         : null,
     averageCost: point.requests > 0 ? point.cost_total / point.requests : null,
-    latency: point.average_latency_ms,
+    latency: point.median_latency_ms,
     errorRate: point.requests > 0 ? ((failed.get(key(point)) ?? 0) / point.requests) * 100 : null,
   }));
 }
