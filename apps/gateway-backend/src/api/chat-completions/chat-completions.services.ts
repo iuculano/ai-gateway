@@ -135,7 +135,9 @@ async function resolveModel(
     return ok({ provider, modelId, instance: cached, info });
   }
 
-  const config = { apiKey: apiKey, baseURL: baseUrl };
+  // If we're overriding the base URL, we need to provide a custom fetch that
+  // prevents you from calling something internal to the gateway's network.
+  const config = { apiKey: apiKey, baseURL: baseUrl, ...(baseUrl ? { fetch: publicFetch } : {}) };
   let instance: LanguageModelInstance;
   switch (provider) {
     case 'openai':
@@ -151,7 +153,9 @@ async function resolveModel(
       instance = createAnthropic(config)(modelId);
       break;
     case 'openrouter':
-      instance = createOpenRouter(config)(modelId);
+      // Only strict mode asks for usage on streams - without it a stream's
+      // tokens and cost are lost.
+      instance = createOpenRouter({ ...config, compatibility: 'strict' })(modelId, { usage: { include: true } });
       break;
   }
 

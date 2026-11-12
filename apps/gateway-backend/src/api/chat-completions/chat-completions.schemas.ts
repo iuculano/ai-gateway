@@ -217,6 +217,7 @@ const usage = z.object({
   prompt_tokens_details: z
     .object({
       cached_tokens: z.number().int().nonnegative(),
+      cache_write_tokens: z.number().int().nonnegative().optional(), // Extension for other providers
     })
     .optional(),
   completion_tokens_details: z
@@ -244,7 +245,7 @@ const completion = z.object({
       finish_reason: finishReason,
     }),
   ),
-  usage: usage,
+  usage: usage.optional(), // Absent when the provider didn't report usage.
   service_tier: z.string().optional(),
   system_fingerprint: z.string().optional(),
 });
