@@ -102,6 +102,7 @@ async function createEmbedding(
 
   // Should have a valid model...
   const info = resolved.value;
+
   const sdkModel = createSdkEmbeddingModel(info.provider, info.name, {
     apiKey: headers['ai-api-key'],
     baseURL: headers['ai-base-url'],
@@ -119,12 +120,14 @@ async function createEmbedding(
     tags.user_id = body.user;
   }
 
+  // Start the request.
   const log = LogsService.startLog({
     operation: 'embedding',
     model: info.name,
     provider: info.provider,
     tags,
   });
+
   const startedAt = performance.now();
 
   //
@@ -150,7 +153,10 @@ async function createEmbedding(
   }
 
   const responseTimeMs = performance.now() - startedAt;
-  const tokens = result.usage.tokens;
+
+  // The AI SDK returns NaN when the provider sent no usage. Need to turn this
+  // into a null or it'll fail the log insertion.
+  const tokens = Number.isFinite(result.usage.tokens) ? result.usage.tokens : null;
 
   const response: EmbeddingResponse = {
     object: 'list',
@@ -160,9 +166,14 @@ async function createEmbedding(
       embedding: body.encoding_format === 'base64' ? toBase64(embedding) : embedding,
     })),
     model: info.name,
+
+    // Note that this is what we return to the user, not what we store.
+    //
+    // OpenAI expects a number for usage - it has no way to say "no usage."
+    // 0 will skew analytic results, so we store it as NULL instead and skip it.
     usage: {
-      prompt_tokens: tokens,
-      total_tokens: tokens,
+      prompt_tokens: tokens ?? 0,
+      total_tokens: tokens ?? 0,
     },
   };
 
@@ -172,7 +183,8 @@ async function createEmbedding(
     omitRequest: headers['ai-log-omit-request'],
     omitResponse: headers['ai-log-omit-response'],
     input_tokens: tokens,
-    ...(info.cost_input != null ? { input_cost: (tokens * info.cost_input) / 1_000_000 } : {}),
+    input_cost: tokens == null || info.cost_input == null ? null : (tokens * info.cost_input) / 1_000_000,
+    output_cost: null, // Embeddings have no output.
     response_time_ms: Math.round(responseTimeMs),
   });
 
