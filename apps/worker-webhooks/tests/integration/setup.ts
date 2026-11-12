@@ -14,6 +14,8 @@ if (!databaseName.endsWith('_test')) {
 }
 
 process.env.NODE_ENV = 'test';
+// Deliveries go to a server on this machine.
+process.env.ALLOW_PRIVATE_NETWORK_URLS = 'true';
 process.env.POSTGRES_CONNECTION_STRING = connectionString;
 process.env.WORKER_DELIVERY_TIMEOUT_MS = '250';
 
