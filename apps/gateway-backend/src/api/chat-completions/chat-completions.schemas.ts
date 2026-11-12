@@ -24,7 +24,7 @@ const headers = z.object({
   'ai-routing-strategy': z.enum(['random', 'weighted', 'cost']).optional(),
   'ai-routing-weights': z.string().optional(),
   'ai-cache-enabled': z.stringbool().optional(),
-  'ai-cache-ttl': z.coerce.number().int().positive().optional(),
+  'ai-cache-ttl': z.coerce.number().int().positive().max(86_400).optional(),
   'ai-cache-refresh': z.stringbool().optional(),
   'ai-rate-limit-policy': rateLimitPolicy.optional(),
   'ai-log-tags': z.string().optional(),
