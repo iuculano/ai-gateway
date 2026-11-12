@@ -180,7 +180,7 @@ const body = z.object({
   presence_penalty: z.number().min(-2).max(2).nullish(),
   prompt_cache_key: z.string().nullish(),
   prompt_cache_retention: z.enum(['in-memory', '24h']).nullish(),
-  reasoning_effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).nullish(),
+  reasoning_effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).nullish(),
   response_format: responseFormat.nullish(),
   safety_identifier: z.string().max(64).nullish(),
   seed: z.number().int().nullish(),
