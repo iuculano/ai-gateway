@@ -136,7 +136,7 @@ async function createEmbedding(
     result = await embedMany({
       model: sdkModel,
       values: typeof body.input === 'string' ? [body.input] : body.input,
-      maxRetries: headers['ai-max-retries'],
+      maxRetries: headers['ai-max-retries'] ?? 0,
       abortSignal: headers['ai-timeout-ms'] ? AbortSignal.timeout(headers['ai-timeout-ms']) : undefined,
 
       // Each provider reads only its own namespace.
