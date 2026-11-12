@@ -71,6 +71,9 @@ function createSdkDecisionModel(
  *
  * @param question
  * The original OpenAI shaped question object.
+ *
+ * @returns
+ * The transformed question in the AI SDK format.
  */
 function toSdkQuestion(question: Question): SdkQuestion {
   switch (question.type) {
@@ -101,6 +104,9 @@ function toSdkQuestion(question: Question): SdkQuestion {
  *
  * @param name
  * The name of the question, used as the key to look up the confidence score.
+ *
+ * @returns
+ * The confidence score for the given question, or undefined if not available.
  */
 function toOpenAIConfidence(metadata: SharedV4ProviderMetadata | undefined, name: string): number | undefined {
   // Kind of nasty, Providers report confidence in their own metadata namespace,
@@ -126,8 +132,13 @@ function toOpenAIConfidence(metadata: SharedV4ProviderMetadata | undefined, name
  *
  * @param confidence
  * The confidence score for the answer, if available.
+ *
+ * @returns
+ * The answer in OpenAI's expected format.
  */
 function toOpenAIAnswer(question: Question, answer: SdkAnswer, confidence: number | undefined): Answer {
+  // Need to get the name from the original question object, it's not included
+  // on the SDK's answer shape.
   const name = question.name;
 
   switch (answer.type) {
@@ -176,11 +187,15 @@ function toOpenAIAnswer(question: Question, answer: SdkAnswer, confidence: numbe
  *
  * @param body
  * The validated request body.
+ *
+ * @returns
+ * The result of the decision creation.
  */
 async function createDecision(
   headers: CreateDecisionHeaders,
   body: CreateDecisionBody,
 ): Promise<Result<CreateDecisionResponse, CreateDecisionFailure>> {
+  // Try to grab a model and its information.
   const resolved = await resolveModel(body.model, 'decision', {
     strategy: headers['ai-routing-strategy'],
     weights: headers['ai-routing-weights'],
@@ -191,6 +206,8 @@ async function createDecision(
   }
 
   const info = resolved.value;
+
+  // Actually create the SDK model instance.
   const sdkModel = createSdkDecisionModel(info.provider, info.name, {
     apiKey: headers['ai-api-key'],
     baseURL: headers['ai-base-url'],
@@ -200,13 +217,14 @@ async function createDecision(
     return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
 
-  //
+  // Start the decision call.
   const log = LogsService.startLog({
     operation: 'decision',
     model: info.name,
     provider: info.provider,
     tags: parseTags(headers['ai-log-tags']),
   });
+
   const startedAt = performance.now();
 
   // decide() throws away every answer when any one question is refused, where
@@ -215,9 +233,14 @@ async function createDecision(
   // doDecide() instead of the experimental decide() allows this behavior.
   let result: SdkResult;
   try {
+    const questions: Record<string, SdkQuestion> = {};
+    for (const question of body.questions) {
+      questions[question.name] = toSdkQuestion(question);
+    }
+
     result = await sdkModel.doDecide({
       state: body.input,
-      questions: Object.fromEntries(body.questions.map((question) => [question.name, toSdkQuestion(question)])),
+      questions: questions,
       abortSignal: headers['ai-timeout-ms'] ? AbortSignal.timeout(headers['ai-timeout-ms']) : undefined,
       providerOptions: {
         openai: { safetyIdentifier: body.safety_identifier ?? undefined },
@@ -257,7 +280,8 @@ async function createDecision(
     omitResponse: headers['ai-log-omit-response'],
     input_tokens: inputTokens,
     output_tokens: outputTokens,
-    ...(info.cost_input != null ? { input_cost: (inputTokens * info.cost_input) / 1_000_000 } : {}),
+    input_cost: info.cost_input == null ? null : (inputTokens * info.cost_input) / 1_000_000,
+    output_cost: 0, // Only input is billed for a decision.
     response_time_ms: Math.round(responseTimeMs),
   });
 
