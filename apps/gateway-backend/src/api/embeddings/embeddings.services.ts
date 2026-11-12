@@ -184,7 +184,7 @@ async function createEmbedding(
     omitResponse: headers['ai-log-omit-response'],
     input_tokens: tokens,
     input_cost: tokens == null || info.cost_input == null ? null : (tokens * info.cost_input) / 1_000_000,
-    output_cost: null, // Embeddings have no output.
+    output_cost: 0, // Embeddings have no output cost.
     response_time_ms: Math.round(responseTimeMs),
   });
 
