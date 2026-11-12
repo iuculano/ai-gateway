@@ -11,6 +11,9 @@ mock.module('@repo/drizzle', () => ({ ...actualDrizzle, db }));
 
 const { tickWebhookProcessor } = await import('../../src/worker/webhook-processor');
 
+// The endpoints here are made up and fetch is faked, so there's nothing to resolve.
+process.env.ALLOW_PRIVATE_NETWORK_URLS = 'true';
+
 const originalFetch = globalThis.fetch;
 const WEBHOOK_ID = '01912d3f-9b4a-7c3d-8e2f-000000000005';
 const OUTBOX_ID = '01912d3f-9b4a-7c3d-8e2f-000000000006';
