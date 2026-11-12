@@ -7,7 +7,7 @@ import type {
   SharedV4ProviderMetadata,
 } from '@ai-sdk/provider';
 import { createTypeSafeAi } from '@ai-sdk/typesafe-ai';
-import { parseTags } from '@repo/core';
+import { parseTags, publicFetch } from '@repo/core';
 import { err, ok, type Result } from 'neverthrow';
 import {
   type ModelResolutionFailure,
@@ -50,16 +50,20 @@ function createSdkDecisionModel(
   model: string,
   settings: ProviderSettings,
 ): DecisionModel | undefined {
+  // If we're overriding the base URL, we need to provide a custom fetch that
+  // prevents you from calling something internal to the gateway's network.
+  const config = settings.baseURL ? { ...settings, fetch: publicFetch } : settings;
+
   switch (provider) {
     case 'openai':
-      return createOpenAI(settings).decisionModel(model);
+      return createOpenAI(config).decisionModel(model);
 
     case 'typesafe-ai':
-      return createTypeSafeAi(settings).decisionModel(model);
+      return createTypeSafeAi(config).decisionModel(model);
 
     // seemingly unsupported
     // case 'openrouter':
-    //   return createOpenRouter(settings).decisionModel(model);
+    //   return createOpenRouter(config).decisionModel(model);
 
     default:
       return undefined;
