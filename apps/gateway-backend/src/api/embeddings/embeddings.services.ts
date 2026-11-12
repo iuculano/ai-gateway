@@ -2,7 +2,7 @@ import { createAzure } from '@ai-sdk/azure';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { parseTags } from '@repo/core';
+import { parseTags, publicFetch } from '@repo/core';
 import { type Embedding, type EmbeddingModel, embedMany } from 'ai';
 import { err, ok, type Result } from 'neverthrow';
 import {
@@ -25,12 +25,14 @@ interface ProviderSettings {
 /**
  * Instantiates an AI SDK embedding model based on the provider and model name.
  *
- * @param provider The name of the provider (e.g., 'openai', 'azure').
+ * @param provider
+ * The name of the provider (e.g., 'openai', 'azure').
  *
- * @param model The name of the embedding model.
+ * @param model
+ * The name of the embedding model.
  *
- * @param settings Provider specific configuration such as the API key and
- * optional base URL.
+ * @param settings
+ * Provider specific configuration such as the API key and optional base URL.
  *
  * @returns
  * The instantiated embedding model or undefined if the provider is unsupported.
@@ -40,18 +42,22 @@ function createSdkEmbeddingModel(
   model: string,
   settings: ProviderSettings,
 ): EmbeddingModel | undefined {
+  // If we're overriding the base URL, we need to provide a custom fetch that
+  // prevents you from calling something internal to the gateway's network.
+  const config = settings.baseURL ? { ...settings, fetch: publicFetch } : settings;
+
   switch (provider) {
     case 'openai':
-      return createOpenAI(settings).embedding(model);
+      return createOpenAI(config).embedding(model);
 
     case 'azure':
-      return createAzure(settings).embedding(model);
+      return createAzure(config).embedding(model);
 
     case 'google':
-      return createGoogleGenerativeAI(settings).embedding(model);
+      return createGoogleGenerativeAI(config).embedding(model);
 
     case 'openrouter':
-      return createOpenRouter(settings).textEmbeddingModel(model);
+      return createOpenRouter(config).textEmbeddingModel(model);
 
     default:
       return undefined;
