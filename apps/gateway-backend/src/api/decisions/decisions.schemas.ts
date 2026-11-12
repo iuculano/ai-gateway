@@ -61,7 +61,12 @@ const question = z.discriminatedUnion('type', [predicateQuestion, choiceQuestion
 const body = z.object({
   model: z.string().min(1), // This is a little special here and can be 'provider/model' instead...
   input: z.string().min(1),
-  questions: z.array(question).min(1),
+  questions: z
+    .array(question)
+    .min(1)
+    .refine((questions) => new Set(questions.map((question) => question.name)).size === questions.length, {
+      message: 'Question names must be unique',
+    }),
   safety_identifier: z.string().max(128).nullish(),
 });
 
