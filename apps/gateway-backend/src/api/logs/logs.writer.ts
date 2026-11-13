@@ -5,9 +5,18 @@ import { objectStorage } from '@repo/object-storage';
 
 export type PendingLog = Omit<typeof logs.$inferInsert, 'status'> & { id: string; organization_id: string };
 
-type SettledLog = PendingLog & { status: LogRow['status'] };
+export type FinishedLog = PendingLog & { status: LogRow['status'] };
 
-const writes = new Set<Promise<void>>();
+// Payload uploads and INSERTs still in progress, so waitForLogWrites can wait
+// for them.
+const pendingWrites = new Set<Promise<void>>();
+
+// Calls still waiting on their provider, by log id.
+const runningCalls = new Map<string, PendingLog>();
+
+export function markRunning(log: PendingLog): void {
+  runningCalls.set(log.id, log);
+}
 
 // Rows are inserted in batches: one multi-row INSERT per 100 rows or 250 ms.
 const BATCH_ROWS = 100;
@@ -17,13 +26,13 @@ const BATCH_MS = 250;
  * The rows waiting for the next INSERT.
  */
 interface Batch {
-  rows: SettledLog[];
+  rows: FinishedLog[];
   timer: Timer;
 }
 
 let batch: Batch | null = null;
 
-function queueRow(row: SettledLog): void {
+function queueRow(row: FinishedLog): void {
   // Start a new batch if none exists.
   batch ??= {
     rows: [],
@@ -48,13 +57,12 @@ function sendBatch(): void {
   track(insertRows(rows));
 }
 
-/** Holds onto a background write until it finishes, so flushLogs() can wait for it. */
 function track(write: Promise<void>): void {
-  writes.add(write);
-  write.finally(() => writes.delete(write));
+  pendingWrites.add(write);
+  write.finally(() => pendingWrites.delete(write));
 }
 
-async function insertRows(rows: SettledLog[]): Promise<void> {
+async function insertRows(rows: FinishedLog[]): Promise<void> {
   try {
     // Try to insert all rows in a single batch first.
     await db.insert(logs).values(rows);
@@ -75,7 +83,16 @@ export function payloadKey(organizationId: string, id: string): string {
   return `logs/${organizationId}/${id}.json.zst`;
 }
 
-export function settleLog(row: SettledLog, payloads: { request?: unknown; response?: unknown }): void {
+/**
+ * Hands a finished call's log off to be saved in the background.
+ */
+export function submitLog(row: FinishedLog, payloads: { request?: unknown; response?: unknown }): void {
+  // Takes the call off the running list. If it was already off, its row has
+  // been written, by a shutdown, so writing again would count it twice.
+  if (!runningCalls.delete(row.id)) {
+    return;
+  }
+
   // Don't fail the request if the background write fails, just log errors.
   const logger = getLogger();
   const id = row.id;
@@ -109,12 +126,37 @@ export function settleLog(row: SettledLog, payloads: { request?: unknown; respon
 }
 
 /**
- * Waits for every log write in flight. That's literally it.
+ * For shutdown only.
  *
- * Mostly for shutdown.
+ * Gives calls still running some time to finish before failing them as
+ * incomplete.
+ *
+ * @param graceMs
+ * How long to wait for calls still running.
  */
-export async function flushLogs(): Promise<void> {
-  await Promise.all(writes); // uploads finish and queue their rows
+export async function shutdownLogs(graceMs: number): Promise<void> {
+  // Just spin for a bit to give running calls some time to finish.
+  const deadline = Date.now() + graceMs;
+  while (runningCalls.size > 0 && Date.now() < deadline) {
+    await Bun.sleep(50);
+  }
+
+  // Record whatever is still running as incomplete.
+  for (const log of [...runningCalls.values()]) {
+    submitLog({ ...log, status: 'incomplete' }, {});
+  }
+
+  // Try to wwrite what we have to the database.
+  await waitForLogWrites();
+}
+
+/**
+ * Waits for queued log rows to reach the database.
+ *
+ * Unlike shutdownLogs, it leaves calls that are still running alone.
+ */
+export async function waitForLogWrites(): Promise<void> {
+  await Promise.all(pendingWrites); // uploads finish and queue their rows
   sendBatch(); // send whatever they queued
-  await Promise.all(writes); // wait for that INSERT
+  await Promise.all(pendingWrites); // wait for that INSERT
 }
