@@ -42,31 +42,19 @@ function rateLimitKey(caller: Caller): string {
  * @throws {HTTPException}
  * 429 when the caller is over quota, carrying the same headers plus Retry-After.
  */
-async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promise<Headers> {
-  const result = await consumeFixedWindowCounter(rateLimitKey(caller), {
+export async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promise<Headers> {
+  const result = await consumeFixedWindowCounter(rateLimitKey(caller, policy), {
     limit: policy.quota,
     windowSeconds: policy.windowSeconds,
   });
 
   const headers = new Headers();
+  headers.set('RateLimit-Limit', String(result.limit));
+  headers.set('RateLimit-Remaining', String(result.remainingQuota));
+  headers.set('X-RateLimit-Limit', String(result.limit));
+  headers.set('X-RateLimit-Remaining', String(result.remainingQuota));
 
-  // Both spellings. The IETF draft names are the standard ones; the X- forms
-  // are what most clients in the wild actually read.
-  //
-  // RateLimit-Limit is the LIMIT. It previously carried the consumed count,
-  // which made every response advertise a ceiling that climbed as quota was
-  // spent.
-  for (const [name, value] of [
-    ['RateLimit-Limit', result.limit],
-    ['RateLimit-Remaining', result.remainingQuota],
-  ] as const) {
-    headers.set(name, value.toString());
-    headers.set(`X-${name}`, value.toString());
-  }
-
-  // Only known once the window is actually being enforced - the limiter
-  // reports the reset as a retry-after, which is null while the caller is
-  // still under quota. Omitted rather than guessed.
+  // Only known once the window is actually being enforced.
   if (result.retryAfterSeconds != null) {
     headers.set('RateLimit-Reset', result.retryAfterSeconds.toString());
     headers.set('X-RateLimit-Reset', result.retryAfterSeconds.toString());
@@ -76,6 +64,7 @@ async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promis
     const retryAfter = result.retryAfterSeconds ?? policy.windowSeconds;
     headers.set('Retry-After', retryAfter.toString());
 
+    // The message matches OpenAI behavior.
     throw new HTTPException(429, {
       message: `Rate limit exceeded. Try again in ${retryAfter} seconds.`,
       res: new Response(null, { headers: headers }),
