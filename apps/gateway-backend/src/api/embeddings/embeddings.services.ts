@@ -146,7 +146,7 @@ async function createEmbedding(
       },
     });
   } catch (error) {
-    LogsService.failLog(log, { request: body, omitRequest: headers['ai-log-omit-request'] });
+    LogsService.finishLog({ ...log, status: 'failed' }, { request: body, headers: headers });
 
     const failure = toProviderFailure(error);
     return err(failure);
@@ -177,16 +177,17 @@ async function createEmbedding(
     },
   };
 
-  LogsService.completeLog(log, {
-    request: body,
-    response: response,
-    omitRequest: headers['ai-log-omit-request'],
-    omitResponse: headers['ai-log-omit-response'],
-    input_tokens: tokens,
-    input_cost: tokens == null || info.cost_input == null ? null : (tokens * info.cost_input) / 1_000_000,
-    output_cost: 0, // Embeddings have no output cost.
-    response_time_ms: Math.round(responseTimeMs),
-  });
+  LogsService.finishLog(
+    {
+      ...log,
+      status: 'complete',
+      input_tokens: tokens,
+      input_cost: tokens == null || info.cost_input == null ? null : (tokens * info.cost_input) / 1_000_000,
+      output_cost: 0, // Embeddings have no output cost.
+      response_time_ms: Math.round(responseTimeMs),
+    },
+    { request: body, response: response, headers: headers },
+  );
 
   return ok(response);
 }

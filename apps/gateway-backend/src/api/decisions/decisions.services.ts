@@ -251,7 +251,7 @@ async function createDecision(
       },
     });
   } catch (error) {
-    LogsService.failLog(log, { request: body, omitRequest: headers['ai-log-omit-request'] });
+    LogsService.finishLog({ ...log, status: 'failed' }, { request: body, headers: headers });
 
     const providerFailure = toProviderFailure(error);
     return err(providerFailure);
@@ -277,17 +277,18 @@ async function createDecision(
     },
   };
 
-  LogsService.completeLog(log, {
-    request: body,
-    response: response,
-    omitRequest: headers['ai-log-omit-request'],
-    omitResponse: headers['ai-log-omit-response'],
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    input_cost: info.cost_input == null ? null : (inputTokens * info.cost_input) / 1_000_000,
-    output_cost: 0, // Only input is billed for a decision.
-    response_time_ms: Math.round(responseTimeMs),
-  });
+  LogsService.finishLog(
+    {
+      ...log,
+      status: 'complete',
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      input_cost: info.cost_input == null ? null : (inputTokens * info.cost_input) / 1_000_000,
+      output_cost: 0, // Only input is billed for a decision.
+      response_time_ms: Math.round(responseTimeMs),
+    },
+    { request: body, response: response, headers: headers },
+  );
 
   return ok(response);
 }
