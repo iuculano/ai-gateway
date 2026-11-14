@@ -42,7 +42,10 @@ const tone = $derived(providerTone(log.provider));
 const throughput = $derived(log.gateway_cache_hit ? '—' : fmtThroughput(log.output_tokens, log.response_time_ms));
 // Coerced: postgres hands `numeric` back as a string, and a stray one here
 // would turn this addition into string concatenation.
-const totalCost = $derived(Number(log.input_cost) + Number(log.output_cost));
+// Null when the cost isn't known, which must not read as free.
+const totalCost = $derived(
+  log.input_cost == null || log.output_cost == null ? null : Number(log.input_cost) + Number(log.output_cost),
+);
 
 const STATUS = {
   complete: { label: 'Success', color: '#10b981' },
@@ -267,7 +270,7 @@ function copy(text: string, label: string) {
 		<span class="text-right font-mono text-xs text-zinc-400">{fmtTokens(log.input_tokens)}</span>
 		<span class="text-right font-mono text-xs text-zinc-400">{fmtTokens(log.output_tokens)}</span>
 		<span class="text-right font-mono text-xs text-zinc-400">{throughput}</span>
-		<span class="text-right font-mono text-xs text-zinc-400">{fmtCost(totalCost)}</span>
+		<span class="text-right font-mono text-xs text-zinc-400" title={totalCost === null ? 'Cost unknown: no usage reported, or the model has no price' : undefined}>{totalCost === null ? '—' : fmtCost(totalCost)}</span>
 		<span
 			class="text-right font-mono text-xs"
 			class:text-zinc-400={log.status !== 'incomplete'}

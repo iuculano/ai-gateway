@@ -127,7 +127,7 @@ export interface StreamedChunk {
   raw: string;
 }
 
-async function* readChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamedChunk> {
+export async function* readChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamedChunk> {
   let terminated = false;
 
   for await (const frame of readFrames(body)) {
@@ -139,7 +139,15 @@ async function* readChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<Str
       break;
     }
 
-    yield { chunk: JSON.parse(data) as ChatCompletionChunk, raw: data };
+    const parsed = JSON.parse(data) as ChatCompletionChunk | { error: { message: string } };
+
+    // A failure after the 200 was committed arrives as an error frame, in
+    // place of the rest of the answer.
+    if ('error' in parsed) {
+      throw new Error(parsed.error.message);
+    }
+
+    yield { chunk: parsed, raw: data };
   }
 
   // [DONE] is the last thing the gateway writes. Reaching the end of the body

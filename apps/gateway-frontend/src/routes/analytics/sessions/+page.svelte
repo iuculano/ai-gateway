@@ -538,7 +538,7 @@ let hoveredBar = $state<number | null>(null);
 								</span>
 								<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmt(log.input_tokens ?? 0)}</span>
 								<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmt(log.output_tokens ?? 0)}</span>
-								<span class="text-right text-[12.5px] text-zinc-200 tabular-nums">{fmtCost(log.input_cost + log.output_cost)}</span>
+								<span class="text-right text-[12.5px] text-zinc-200 tabular-nums">{log.input_cost == null || log.output_cost == null ? '—' : fmtCost(log.input_cost + log.output_cost)}</span>
 								<span class="truncate font-mono text-[11.5px] text-zinc-400" title={log.id}>{log.id.slice(-8)}</span>
 							</div>
 						{:else}
