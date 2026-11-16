@@ -14,66 +14,6 @@ import Services, {
   type StreamChatCompletionFailure,
 } from './chat-completions.services';
 
-/**
- * Returns a Redis key for rate limiting.
- *
- * @param id
- * The ID of the API key.
- *
- * @returns
- * The Redis key for the API key's quota counter.
- */
-function rateLimitKey(caller: Caller): string {
-  return `chat-completions:${caller.organization.id}:${getActorId(caller)}`;
-}
-
-/**
- * Acts on the caller's requested rate limit policy.
- *
- * @param caller
- * The authenticated caller for the current request.
- *
- * @param policy
- * The parsed policy from the ai-rate-limit-policy header.
- *
- * @returns
- * The headers to set on a successful response.
- *
- * @throws {HTTPException}
- * 429 when the caller is over quota, carrying the same headers plus Retry-After.
- */
-export async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promise<Headers> {
-  const result = await consumeFixedWindowCounter(rateLimitKey(caller, policy), {
-    limit: policy.quota,
-    windowSeconds: policy.windowSeconds,
-  });
-
-  const headers = new Headers();
-  headers.set('RateLimit-Limit', String(result.limit));
-  headers.set('RateLimit-Remaining', String(result.remainingQuota));
-  headers.set('X-RateLimit-Limit', String(result.limit));
-  headers.set('X-RateLimit-Remaining', String(result.remainingQuota));
-
-  // Only known once the window is actually being enforced.
-  if (result.retryAfterSeconds != null) {
-    headers.set('RateLimit-Reset', result.retryAfterSeconds.toString());
-    headers.set('X-RateLimit-Reset', result.retryAfterSeconds.toString());
-  }
-
-  if (result.isLimited) {
-    const retryAfter = result.retryAfterSeconds ?? policy.windowSeconds;
-    headers.set('Retry-After', retryAfter.toString());
-
-    // The message matches OpenAI behavior.
-    throw new HTTPException(429, {
-      message: `Rate limit exceeded. Try again in ${retryAfter} seconds.`,
-      res: new Response(null, { headers: headers }),
-    });
-  }
-
-  return headers;
-}
-
 // The HTTP translations, one per service failure union.
 function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPException {
   const { code } = failure;
