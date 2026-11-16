@@ -203,7 +203,7 @@ async function validateAndOrderModels(
   models: string,
   type: ModelType,
   options: ModelRoutingOptions,
-): Promise<Result<string[], ValidateAndOrderModelsFailure>> {
+): Promise<Result<GetModelResponse[], ValidateAndOrderModelsFailure>> {
   // So you can't do something like "openai/a,,google/b" and get an empty
   // string as a candidate.
   const candidates = models.split(',').map((model) => model.trim());
@@ -212,14 +212,14 @@ async function validateAndOrderModels(
   // as-is.
   const strategy = options.strategy;
   if (!strategy) {
-    const output: string[] = [];
+    const output: GetModelResponse[] = [];
     for (const slug of candidates) {
       const model = await getModelBySlug(slug, type);
       if (model.isErr()) {
         continue;
       }
 
-      output.push(slug);
+      output.push(model.value);
     }
 
     return output.length > 0 ? ok(output) : err({ code: 'MODEL_NOT_FOUND', model: models });
@@ -244,7 +244,7 @@ async function validateAndOrderModels(
     // Requested models and their weights together.
     const remaining = candidates.map((slug, index) => ({ slug, weight: weights[index] as number }));
 
-    const output: string[] = [];
+    const output: GetModelResponse[] = [];
 
     // For example:
     // Weights: [70, 20, 10], roll: 85
@@ -270,7 +270,7 @@ async function validateAndOrderModels(
 
           const model = await getModelBySlug(candidate.slug, type);
           if (model.isOk()) {
-            output.push(candidate.slug);
+            output.push(model.value);
           }
 
           break;
@@ -289,21 +289,21 @@ async function validateAndOrderModels(
       candidates[j] = temp;
     }
 
-    const output: string[] = [];
+    const output: GetModelResponse[] = [];
     for (const slug of candidates) {
       const model = await getModelBySlug(slug, type);
       if (model.isErr()) {
         continue;
       }
 
-      output.push(slug);
+      output.push(model.value);
     }
 
     return output.length > 0 ? ok(output) : err({ code: 'MODEL_NOT_FOUND', model: models });
   }
 
   if (strategy === 'cost') {
-    // Grab the slug and cost so we can sort.
+    // Grab the model and cost so we can sort.
     const priced = await Promise.all(
       candidates.map(async (slug) => {
         const model = await getModelBySlug(slug, type);
@@ -314,7 +314,7 @@ async function validateAndOrderModels(
         const { cost_input, cost_output } = model.value;
         const cost = cost_input != null && cost_output != null ? cost_input + cost_output : Number.POSITIVE_INFINITY; // Unknown prices sort last.
 
-        return { slug, cost };
+        return { model: model.value, cost };
       }),
     );
 
@@ -325,7 +325,7 @@ async function validateAndOrderModels(
     }
 
     const sorted = valid.sort((x, y) => x.cost - y.cost);
-    return ok(sorted.map(({ slug }) => slug));
+    return ok(sorted.map(({ model }) => model));
   }
 
   return err({ code: 'MODEL_INVALID_ROUTING', message: `Unknown routing strategy '${strategy}'` });

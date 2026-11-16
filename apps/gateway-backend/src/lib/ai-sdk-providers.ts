@@ -3,21 +3,9 @@ import { assertNever } from '@repo/core';
 import type { ModelType } from '@repo/drizzle/schemas';
 import { APICallError, InvalidArgumentError, InvalidMessageRoleError, InvalidPromptError, RetryError } from 'ai';
 import { HTTPException } from 'hono/http-exception';
-import { err, ok, type Result } from 'neverthrow';
-import type { GetModelResponse } from '../api/models/models.schemas';
-import ModelsService, { type ModelRoutingOptions } from '../api/models/models.services';
+import type { ValidateAndOrderModelsFailure } from '../api/models/models.services';
 
 // Failures from picking a catalog model for an AI SDK call.
-type ModelRoutingFailure = {
-  code: 'MODEL_INVALID_ROUTING';
-  message: string;
-};
-
-type ModelNotFoundFailure = {
-  code: 'MODEL_NOT_FOUND';
-  model: string;
-};
-
 type ModelUnsupportedProviderFailure = {
   code: 'MODEL_UNSUPPORTED_PROVIDER';
   model: string;
