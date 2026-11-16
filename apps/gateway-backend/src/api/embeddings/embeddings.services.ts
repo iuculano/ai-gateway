@@ -8,10 +8,12 @@ import { err, ok, type Result } from 'neverthrow';
 import {
   type ModelResolutionFailure,
   type ProviderFailure,
-  resolveModel,
+  shouldFallBack,
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
 import LogsService from '../logs/logs.services';
+import type { GetModelResponse } from '../models/models.schemas';
+import ModelsService from '../models/models.services';
 import type { EmbeddingBody, EmbeddingHeaders, EmbeddingResponse } from './embeddings.schemas';
 
 // The public service failure union.
@@ -78,31 +80,25 @@ function toBase64(embedding: Embedding): string {
 }
 
 /**
- * Creates embeddings for one or more inputs.
+ * One attempt at creating embeddings, against one catalog model.
+ *
+ * @param info
+ * The catalog model information.
  *
  * @param headers
  * The gateway headers, including the upstream credential.
  *
  * @param body
  * The validated request body.
+ *
+ * @returns
+ * The result of the embedding attempt.
  */
-async function createEmbedding(
+async function embedWithModel(
+  info: GetModelResponse,
   headers: EmbeddingHeaders,
   body: EmbeddingBody,
 ): Promise<Result<EmbeddingResponse, CreateEmbeddingFailure>> {
-  // Resolve the model based on the routing strategy and weights.
-  const resolved = await resolveModel(body.model, 'embedding', {
-    strategy: headers['ai-routing-strategy'],
-    weights: headers['ai-routing-weights'],
-  });
-
-  if (resolved.isErr()) {
-    return err(resolved.error);
-  }
-
-  // Should have a valid model...
-  const info = resolved.value;
-
   const sdkModel = createSdkEmbeddingModel(info.provider, info.name, {
     apiKey: headers['ai-api-key'],
     baseURL: headers['ai-base-url'],
@@ -190,6 +186,45 @@ async function createEmbedding(
   );
 
   return ok(response);
+}
+
+/**
+ * Creates embeddings for one or more inputs, trying each requested model in
+ * routing order until one answers.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ */
+async function createEmbedding(
+  headers: EmbeddingHeaders,
+  body: EmbeddingBody,
+): Promise<Result<EmbeddingResponse, CreateEmbeddingFailure>> {
+  // Order the models based on the routing strategy and weights.
+  const ordered = await ModelsService.validateAndOrderModels(body.model, 'embedding', {
+    strategy: headers['ai-routing-strategy'],
+    weights: headers['ai-routing-weights'],
+  });
+
+  if (ordered.isErr()) {
+    return err(ordered.error);
+  }
+
+  // Each attempt is its own upstream call with its own log row.
+  let failure: CreateEmbeddingFailure | undefined;
+  for (const info of ordered.value) {
+    const result = await embedWithModel(info, headers, body);
+    if (result.isOk() || !shouldFallBack(result.error)) {
+      return result;
+    }
+
+    failure = result.error;
+  }
+
+  // The list is never empty, so the loop ran at least once and set failure.
+  return err(failure as CreateEmbeddingFailure);
 }
 
 export default {

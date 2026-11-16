@@ -12,10 +12,12 @@ import { err, ok, type Result } from 'neverthrow';
 import {
   type ModelResolutionFailure,
   type ProviderFailure,
-  resolveModel,
+  shouldFallBack,
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
 import LogsService from '../logs/logs.services';
+import type { GetModelResponse } from '../models/models.schemas';
+import ModelsService from '../models/models.services';
 import type { CreateDecisionBody, CreateDecisionHeaders, CreateDecisionResponse } from './decisions.schemas';
 
 type Question = CreateDecisionBody['questions'][number];
@@ -184,7 +186,10 @@ function toOpenAIAnswer(question: Question, answer: SdkAnswer, confidence: numbe
 }
 
 /**
- * Answers typed questions about one input.
+ * One attempt at creating a decision, against one catalog model.
+ *
+ * @param info
+ * The catalog model information.
  *
  * @param headers
  * The gateway headers, including the upstream credential.
@@ -193,24 +198,13 @@ function toOpenAIAnswer(question: Question, answer: SdkAnswer, confidence: numbe
  * The validated request body.
  *
  * @returns
- * The result of the decision creation.
+ * The result of the decision attempt.
  */
-async function createDecision(
+async function decideWithModel(
+  info: GetModelResponse,
   headers: CreateDecisionHeaders,
   body: CreateDecisionBody,
 ): Promise<Result<CreateDecisionResponse, CreateDecisionFailure>> {
-  // Try to grab a model and its information.
-  const resolved = await resolveModel(body.model, 'decision', {
-    strategy: headers['ai-routing-strategy'],
-    weights: headers['ai-routing-weights'],
-  });
-
-  if (resolved.isErr()) {
-    return err(resolved.error);
-  }
-
-  const info = resolved.value;
-
   // Actually create the SDK model instance.
   const sdkModel = createSdkDecisionModel(info.provider, info.name, {
     apiKey: headers['ai-api-key'],
@@ -291,6 +285,48 @@ async function createDecision(
   );
 
   return ok(response);
+}
+
+/**
+ * Answers typed questions about one input, trying each requested model in
+ * routing order until one answers.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ *
+ * @returns
+ * The result of the decision creation.
+ */
+async function createDecision(
+  headers: CreateDecisionHeaders,
+  body: CreateDecisionBody,
+): Promise<Result<CreateDecisionResponse, CreateDecisionFailure>> {
+  // Order the models based on the routing strategy and weights.
+  const ordered = await ModelsService.validateAndOrderModels(body.model, 'decision', {
+    strategy: headers['ai-routing-strategy'],
+    weights: headers['ai-routing-weights'],
+  });
+
+  if (ordered.isErr()) {
+    return err(ordered.error);
+  }
+
+  // Each attempt is its own upstream call with its own log row.
+  let failure: CreateDecisionFailure | undefined;
+  for (const info of ordered.value) {
+    const result = await decideWithModel(info, headers, body);
+    if (result.isOk() || !shouldFallBack(result.error)) {
+      return result;
+    }
+
+    failure = result.error;
+  }
+
+  // The list is never empty, so the loop ran at least once and set failure.
+  return err(failure as CreateDecisionFailure);
 }
 
 export default {
