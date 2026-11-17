@@ -99,69 +99,51 @@ export type CreateChatCompletionFailure =
 
 export type StreamChatCompletionFailure = CreateChatCompletionFailure;
 
-/** Selects a catalog model and creates or reuses its provider instance. */
-async function resolveModel(
-  requestedModels: string,
-  headers: ChatCompletionHeaders,
-): Promise<Result<ResolvedModel, ModelResolutionFailure>> {
-  const resolved = await resolveCatalogModel(requestedModels, 'chat', {
-    strategy: headers['ai-routing-strategy'],
-    weights: headers['ai-routing-weights'],
-  });
-  if (resolved.isErr()) {
-    return err(resolved.error);
-  }
-
-  const info = resolved.value;
-  if (!isProvider(info.provider)) {
-    return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
-  }
-
-  const apiKey = headers['ai-api-key'];
-  const baseUrl = headers['ai-base-url'];
-
-  const provider = info.provider;
-  const modelId = info.name;
-
-  const cacheKey = createCacheKey('chat-completions:', {
-    provider: provider,
-    modelId: modelId,
-    apiKey: apiKey,
-    baseUrl: baseUrl ?? null,
-  });
-
-  const cached = providerCache.get(cacheKey);
-  if (cached) {
-    return ok({ provider, modelId, instance: cached, info });
-  }
-
+/**
+ * Instantiates an AI SDK chat model based on the provider and model name.
+ *
+ * @param provider
+ * The name of the provider (e.g., 'openai', 'anthropic').
+ *
+ * @param model
+ * The name of the chat model.
+ *
+ * @param settings
+ * Provider specific configuration such as the API key and optional base URL.
+ *
+ * @returns
+ * The instantiated chat model or undefined if the provider is unsupported.
+ */
+function createSdkChatModel(
+  provider: string,
+  model: string,
+  settings: ProviderSettings,
+): LanguageModelInstance | undefined {
   // If we're overriding the base URL, we need to provide a custom fetch that
   // prevents you from calling something internal to the gateway's network.
-  const config = { apiKey: apiKey, baseURL: baseUrl, ...(baseUrl ? { fetch: publicFetch } : {}) };
-  let instance: LanguageModelInstance;
+  const config = settings.baseURL ? { ...settings, fetch: publicFetch } : settings;
+
   switch (provider) {
     case 'openai':
-      instance = createOpenAI(config).chat(modelId);
-      break;
+      return createOpenAI(config).chat(model);
+
     case 'azure':
-      instance = createAzure(config).chat(modelId);
-      break;
+      return createAzure(config).chat(model);
+
     case 'google':
-      instance = createGoogleGenerativeAI(config)(modelId);
-      break;
+      return createGoogleGenerativeAI(config)(model);
+
     case 'anthropic':
-      instance = createAnthropic(config)(modelId);
-      break;
+      return createAnthropic(config)(model);
+
     case 'openrouter':
       // Only strict mode asks for usage on streams - without it a stream's
       // tokens and cost are lost.
-      instance = createOpenRouter({ ...config, compatibility: 'strict' })(modelId, { usage: { include: true } });
-      break;
+      return createOpenRouter({ ...config, compatibility: 'strict' })(model, { usage: { include: true } });
+
+    default:
+      return undefined;
   }
-
-  providerCache.set(cacheKey, instance);
-
-  return ok({ provider, modelId, instance, info });
 }
 
 function flattenText(content: string | Array<{ type: 'text'; text: string }>): string {
