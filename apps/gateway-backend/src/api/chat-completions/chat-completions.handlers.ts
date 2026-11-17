@@ -4,8 +4,8 @@ import { type Caller, getActorId, getCaller, zodExceptionHook } from '@repo/hono
 import { consumeFixedWindowCounter } from '@repo/redis';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
-import type { Result } from 'neverthrow';
 import { toProviderHttpException } from '../../lib/ai-sdk-providers';
+import { openAIErrorHandler, toOpenAIError } from '../../lib/openai-errors';
 import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
 import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from './chat-completions.schemas';
@@ -203,5 +203,8 @@ const createChatCompletion = defineOpenAPIRoute({
 const app = new OpenAPIHono({
   defaultHook: zodExceptionHook,
 }).openapiRoutes([createChatCompletion] as const);
+
+// Adapter our error handling to OpenAI's expected format.
+app.onError(openAIErrorHandler());
 
 export default app;

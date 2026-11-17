@@ -1,6 +1,7 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { zodExceptionHook } from '@repo/hono';
 import { toProviderHttpException } from '../../lib/ai-sdk-providers';
+import { openAIErrorHandler } from '../../lib/openai-errors';
 import Routes from './embeddings.routes';
 import Services from './embeddings.services';
 
@@ -28,5 +29,8 @@ const createEmbedding = defineOpenAPIRoute({
 const app = new OpenAPIHono({
   defaultHook: zodExceptionHook,
 }).openapiRoutes([createEmbedding] as const);
+
+// Adapt our error handling to OpenAI's expected format.
+app.onError(openAIErrorHandler());
 
 export default app;
