@@ -1,7 +1,16 @@
 import { STATUS_CODES } from 'node:http';
-import { assertNever } from '@repo/core';
-import type { ModelType } from '@repo/drizzle/schemas';
-import { APICallError, InvalidArgumentError, InvalidMessageRoleError, InvalidPromptError, RetryError } from 'ai';
+import { assertNever, BlockedUrlError } from '@repo/core';
+import { getLogger } from '@repo/hono';
+import {
+  AISDKError,
+  APICallError,
+  DownloadError,
+  InvalidArgumentError,
+  InvalidMessageRoleError,
+  InvalidPromptError,
+  RetryError,
+  UnsupportedFunctionalityError,
+} from 'ai';
 import { HTTPException } from 'hono/http-exception';
 import type { ValidateAndOrderModelsFailure } from '../api/models/models.services';
 
@@ -12,7 +21,7 @@ type ModelUnsupportedProviderFailure = {
   provider: string;
 };
 
-export type ModelResolutionFailure = ModelRoutingFailure | ModelNotFoundFailure | ModelUnsupportedProviderFailure;
+export type ModelResolutionFailure = ValidateAndOrderModelsFailure | ModelUnsupportedProviderFailure;
 
 // Failures from an upstream provider call made through the AI SDK.
 type ProviderInvalidRequestFailure = {
@@ -28,8 +37,9 @@ type ProviderRejectedRequestFailure = {
   cause: unknown;
 };
 
-type ProviderFailedFailure = {
-  code: 'PROVIDER_FAILED';
+// The provider broke on its side or couldn't be reached.
+type ProviderUnavailableFailure = {
+  code: 'PROVIDER_UNAVAILABLE';
   message: string;
   cause: unknown;
 };
@@ -39,44 +49,46 @@ type ProviderTimeoutFailure = {
   cause: unknown;
 };
 
+// Something on the gateway's side threw during the call, most likely a bug.
+type InternalFailure = {
+  code: 'INTERNAL_ERROR';
+  cause: unknown;
+};
+
 export type ProviderFailure =
   | ProviderInvalidRequestFailure
   | ProviderRejectedRequestFailure
-  | ProviderFailedFailure
-  | ProviderTimeoutFailure;
+  | ProviderUnavailableFailure
+  | ProviderTimeoutFailure
+  | InternalFailure;
+
+// Network failures the AI SDK passes through unwrapped. It wraps refused and
+// reset connections itself, but not failed DNS lookups.
+const NETWORK_ERROR_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE']);
 
 /**
- * Selects the catalog model to serve a request.
+ * Whether a failed call should move on to the next model in routing order.
  *
- * @param requested
- * The request's model field: one 'provider/model' slug, or several to route between.
- *
- * @param type
- * The endpoint asking. A slug with no catalog row of this type is not found.
- *
- * @param routing
- * The routing strategy and weights from the gateway headers.
+ * @param failure
+ * The failure object to evaluate.
  *
  * @returns
- * The catalog entry. Building the SDK model from it is up to the caller.
+ * True if the call should fall back to the next model, false otherwise.
  */
-export async function resolveModel(
-  requested: string,
-  type: ModelType,
-  routing: ModelRoutingOptions,
-): Promise<Result<GetModelResponse, ModelRoutingFailure | ModelNotFoundFailure>> {
-  const selected = await ModelsService.validateAndOrderModels(requested, type, routing);
-  if (!selected) {
-    return err({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
-  }
+export function shouldFallBack(failure: { code: string; status?: number }): boolean {
+  switch (failure.code) {
+    // This endpoint can't call that provider, but it may be able to call the next.
+    case 'MODEL_UNSUPPORTED_PROVIDER':
+    case 'PROVIDER_UNAVAILABLE':
+    case 'PROVIDER_TIMEOUT':
+      return true;
 
-  const model = selected[0] as string;
-  const registered = await ModelsService.getModelBySlug(model, type);
-  if (registered.isErr()) {
-    return err({ code: 'MODEL_NOT_FOUND', model });
-  }
+    case 'PROVIDER_REJECTED_REQUEST':
+      return failure.status === 429;
 
-  return ok(registered.value);
+    default:
+      return false;
+  }
 }
 
 /**
@@ -84,6 +96,9 @@ export async function resolveModel(
  *
  * @param error
  * Whatever generateText, streamText, embedMany and friends threw.
+ *
+ * @returns
+ * A typed provider failure representing the error.
  */
 export function toProviderFailure(error: unknown): ProviderFailure {
   // RetryError hides the provider error that determines the response status.
@@ -96,12 +111,27 @@ export function toProviderFailure(error: unknown): ProviderFailure {
     return toProviderFailure(error.lastError);
   }
 
+  // The caller's ai-base-url points somewhere the gateway won't call.
+  if (error instanceof BlockedUrlError) {
+    return { code: 'PROVIDER_INVALID_REQUEST', message: `ai-base-url: ${error.message}`, cause: error };
+  }
+
+  // An image URL in the request couldn't be fetched, or was too big.
+  if (DownloadError.isInstance(error)) {
+    return {
+      code: 'PROVIDER_INVALID_REQUEST',
+      message: `Could not fetch a URL in the request: ${error.message}`,
+      cause: error,
+    };
+  }
+
   // These SDK errors identify request problems before an upstream response
   // exists.
   const isValidationError =
     InvalidPromptError.isInstance(error) ||
     InvalidMessageRoleError.isInstance(error) ||
-    InvalidArgumentError.isInstance(error);
+    InvalidArgumentError.isInstance(error) ||
+    UnsupportedFunctionalityError.isInstance(error);
 
   if (isValidationError) {
     return { code: 'PROVIDER_INVALID_REQUEST', message: error.message, cause: error };
@@ -114,14 +144,27 @@ export function toProviderFailure(error: unknown): ProviderFailure {
       return { code: 'PROVIDER_REJECTED_REQUEST', status, message: error.message, cause: error };
     }
 
-    return { code: 'PROVIDER_FAILED', message: error.message, cause: error };
+    return { code: 'PROVIDER_UNAVAILABLE', message: error.message, cause: error };
   }
 
   if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
     return { code: 'PROVIDER_TIMEOUT', cause: error };
   }
 
-  return { code: 'PROVIDER_FAILED', message: 'Unknown error', cause: error };
+  // Any other SDK error is about what the provider sent back, such as a
+  // malformed response or no content at all.
+  if (AISDKError.isInstance(error)) {
+    return { code: 'PROVIDER_UNAVAILABLE', message: error.message, cause: error };
+  }
+
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (typeof code === 'string' && NETWORK_ERROR_CODES.has(code)) {
+    return { code: 'PROVIDER_UNAVAILABLE', message: `Cannot connect to the provider (${code})`, cause: error };
+  }
+
+  // Logged here because a failure mid-stream never reaches the error handler.
+  getLogger().error({ err: error }, 'Unexpected error during a provider call');
+  return { code: 'INTERNAL_ERROR', cause: error };
 }
 
 /**
@@ -129,7 +172,7 @@ export function toProviderFailure(error: unknown): ProviderFailure {
  * caller sees.
  *
  * @param failure
- * A failure from resolveModel or toProviderFailure.
+ * A failure from model routing or toProviderFailure.
  */
 export function toProviderHttpException(failure: ModelResolutionFailure | ProviderFailure): HTTPException {
   const { code } = failure;
@@ -162,7 +205,7 @@ export function toProviderHttpException(failure: ModelResolutionFailure | Provid
         res: new Response(null, { headers: { 'ai-error-source': 'upstream' } }),
       });
 
-    case 'PROVIDER_FAILED':
+    case 'PROVIDER_UNAVAILABLE':
       return new HTTPException(502, {
         message: `Provider error: ${failure.message}`,
         cause: failure.cause,
@@ -173,6 +216,10 @@ export function toProviderHttpException(failure: ModelResolutionFailure | Provid
         message: 'Provider error: Timed out',
         cause: failure.cause,
       });
+
+    // The cause stays out of the response. It's ours, not the provider's.
+    case 'INTERNAL_ERROR':
+      return new HTTPException(500, { message: 'Internal server error' });
 
     default:
       return assertNever(code);
