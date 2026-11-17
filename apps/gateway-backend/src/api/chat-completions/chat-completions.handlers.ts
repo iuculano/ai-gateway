@@ -137,14 +137,6 @@ const createChatCompletion = defineOpenAPIRoute({
     const headers = c.req.valid('header');
     const body = c.req.valid('json');
 
-    const policy = headers['ai-rate-limit-policy'];
-    if (policy) {
-      const rateLimitHeaders = await enforceRateLimit(getCaller(), policy);
-      rateLimitHeaders.forEach((value, name) => {
-        c.res.headers.set(name, value);
-      });
-    }
-
     // Before anything reaches the provider, and before the stream commits the
     // 200 - a prompt that will not expand has to be a normal error response.
     const expanded = await expandPrompt(body);
