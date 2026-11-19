@@ -146,7 +146,19 @@ function createSdkChatModel(
   }
 }
 
-function flattenText(content: string | Array<{ type: 'text'; text: string }>): string {
+/**
+ * Flattens the content into a single string.
+ *
+ * It's possible to submit content as an array of objects. This function
+ * normalizes it into a single string.
+ *
+ * @param content
+ * The content to flatten, either a string or an array of text parts.
+ *
+ * @returns
+ * The flattened string content.
+ */
+function normalizeContent(content: string | Array<{ type: 'text'; text: string }>): string {
   return typeof content === 'string' ? content : content.map((part) => part.text).join('');
 }
 
@@ -168,8 +180,8 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
       case 'system':
       case 'developer':
         converted.push({
-          role: 'system',
-          content: flattenText(message.content),
+          role: 'system', // AI SDK treats both 'system' and 'developer' as 'system'
+          content: normalizeContent(message.content),
         });
         break;
 
@@ -182,7 +194,13 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
               : message.content.map((part) =>
                   part.type === 'text'
                     ? { type: 'text' as const, text: part.text }
-                    : { type: 'image' as const, image: part.image_url.url },
+                    : {
+                        type: 'image' as const,
+                        image: part.image_url.url,
+                        ...(part.image_url.detail // Forwwward image detail setting for OpenAI
+                          ? { providerOptions: { openai: { imageDetail: part.image_url.detail } } }
+                          : {}),
+                      },
                 ),
         });
         break;
@@ -192,7 +210,7 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
           toolNamesByCallId.set(call.id, call.function.name);
         }
 
-        const text = message.content == null ? '' : flattenText(message.content);
+        const text = message.content == null ? '' : normalizeContent(message.content);
 
         converted.push({
           role: 'assistant',
@@ -222,7 +240,7 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
               type: 'tool-result',
               toolCallId: message.tool_call_id,
               toolName: toolName,
-              output: { type: 'text', value: flattenText(message.content) },
+              output: { type: 'text', value: normalizeContent(message.content) },
             },
           ],
         });
