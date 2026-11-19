@@ -22,7 +22,7 @@ let {
   running,
   error,
   finishReason,
-  logId,
+  traceId,
   label = 'Response',
   elapsedMs = null,
   tokens = null,
@@ -38,8 +38,8 @@ let {
   running: boolean;
   error: string | null;
   finishReason: string | null;
-  /** The gateway's own log id for the run, echoed on the response. */
-  logId: string | null;
+  /** The gateway's trace id for the run, which finds its log rows. */
+  traceId: string | null;
   /** Titles the panel. Compare mode passes the model, so each column names itself. */
   label?: string;
   /**
@@ -143,7 +143,7 @@ const FINISH_TONES: Record<string, string> = {
 		<JsonView {json} highlight={!running} />
 	{/if}
 
-	{#if finishReason || logId || elapsedMs !== null || tokens !== null}
+	{#if finishReason || traceId || elapsedMs !== null || tokens !== null}
 		<div class="flex flex-wrap items-center gap-3 border-t border-line px-3.5 py-2.5 text-[11.5px]">
 			{#if elapsedMs !== null}
 				<span class="text-zinc-500 tabular-nums">{fmtLatency(elapsedMs)}</span>
@@ -161,12 +161,12 @@ const FINISH_TONES: Record<string, string> = {
 					<code class="font-mono text-zinc-300">{finishReason}</code>
 				</span>
 			{/if}
-			{#if logId}
-				<!-- The gateway's log id, select-all so it can be pasted straight into
+			{#if traceId}
+				<!-- The gateway's trace id, select-all so it can be pasted straight into
 				     the logs search rather than picked out character by character. -->
 				<span class="ml-auto inline-flex items-center gap-[7px] text-zinc-600">
-					log
-					<code class="font-mono text-zinc-500 select-all">{logId}</code>
+					trace
+					<code class="font-mono text-zinc-500 select-all">{traceId}</code>
 				</span>
 			{/if}
 		</div>

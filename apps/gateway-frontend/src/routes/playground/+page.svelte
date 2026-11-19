@@ -450,7 +450,7 @@ function onKeydown(event: KeyboardEvent) {
 					running={entry.running}
 					error={entry.error}
 					finishReason={entry.assembly.finishReason}
-					logId={entry.logId}
+					traceId={entry.traceId}
 					elapsedMs={entry.elapsedMs}
 					tokens={entry.assembly.usage?.total_tokens ?? null}
 				>

@@ -44,7 +44,7 @@ export class PlaygroundRun {
 
   running = $state(false);
   error = $state<string | null>(null);
-  logId = $state<string | null>(null);
+  traceId = $state<string | null>(null);
   elapsedMs = $state<number | null>(null);
   firstTokenMs = $state<number | null>(null);
 
@@ -59,7 +59,7 @@ export class PlaygroundRun {
     this.assembly = emptyAssembly();
     this.wire = '';
     this.error = null;
-    this.logId = null;
+    this.traceId = null;
     this.elapsedMs = null;
     this.firstTokenMs = null;
   }
@@ -102,7 +102,7 @@ export class PlaygroundRun {
     try {
       if (stream) {
         const opened = await streamChatCompletion(sent, request, signal);
-        this.logId = opened.logId;
+        this.traceId = opened.traceId;
 
         for await (const { chunk, raw } of opened.chunks) {
           // Measured on the first frame that carries OUTPUT, not on the first
@@ -122,7 +122,7 @@ export class PlaygroundRun {
       } else {
         const result = await createChatCompletion(sent, request, signal);
 
-        this.logId = result.logId;
+        this.traceId = result.traceId;
         this.assembly = fromCompletion(result.completion);
         this.wire = JSON.stringify(result.completion, null, 2);
       }

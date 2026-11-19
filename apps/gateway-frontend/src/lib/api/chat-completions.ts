@@ -30,9 +30,6 @@ export type ChatCompletionRole = ChatCompletionMessage['role'];
  */
 export type { ChatCompletionChunk };
 
-/** Echoed by the gateway so a caller can find its own row on the logs page. */
-const LOG_ID_HEADER = 'ai-log-id';
-
 /** Echoed by the gateway so a caller can correlate every log in one trace. */
 const TRACE_ID_HEADER = 'ai-trace-id';
 
@@ -194,7 +191,6 @@ export async function createChatCompletion(headers: GatewayHeaders, body: ChatCo
   }
 
   return {
-    logId: response.headers.get(LOG_ID_HEADER),
     traceId: response.headers.get(TRACE_ID_HEADER),
     completion: payload,
   };
@@ -217,7 +213,7 @@ export async function createChatCompletion(headers: GatewayHeaders, body: ChatCo
  * Aborts the request, and the stream with it.
  *
  * @returns
- * The log id, and the frames as they arrive.
+ * The trace id, and the frames as they arrive.
  */
 export async function streamChatCompletion(headers: GatewayHeaders, body: ChatCompletionRequest, signal?: AbortSignal) {
   const response = await client.chat.completions.$post(
@@ -236,7 +232,6 @@ export async function streamChatCompletion(headers: GatewayHeaders, body: ChatCo
   }
 
   return {
-    logId: response.headers.get(LOG_ID_HEADER),
     traceId: response.headers.get(TRACE_ID_HEADER),
     chunks: readChunks(response.body),
   };
