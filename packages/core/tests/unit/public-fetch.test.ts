@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import * as dns from 'node:dns/promises';
 import { assertPublicUrl, BlockedUrlError, publicFetch } from '../../src/public-fetch';
 
 afterEach(() => {
@@ -21,6 +22,7 @@ const blocked = [
   'http://[::1]/',
   'http://[::ffff:127.0.0.1]/',
   'http://[fd00::1]/',
+  'http://[fe80::1]/',
   // NAT64 wrapping of 169.254.169.254.
   'http://[64:ff9b::a9fe:a9fe]/',
   'file:///etc/passwd',
@@ -62,4 +64,71 @@ test('publicFetch refuses before connecting, and returns a redirect instead of f
   const response = await publicFetch(`http://127.0.0.1:${server.port}/redirect`);
   expect(response.status).toBe(302);
   server.stop(true);
+});
+
+// A host that answers with a public address when checked, then a private one.
+function rebindingLookup() {
+  let calls = 0;
+  const lookup = spyOn(dns, 'lookup').mockImplementation((async () => {
+    calls++;
+    return [{ address: calls === 1 ? '203.0.113.10' : '127.0.0.1', family: 4 }];
+  }) as never);
+  return { lookup, calls: () => calls };
+}
+
+test('publicFetch connects to the address it checked, so a second lookup cannot change it', async () => {
+  const dnsStub = rebindingLookup();
+  const sent = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+  try {
+    await publicFetch('https://provider.test/v1/chat/completions?x=1', {
+      method: 'POST',
+      headers: { authorization: 'Bearer k' },
+      body: '{}',
+    });
+
+    expect(dnsStub.calls()).toBe(1);
+    const [url, init] = sent.mock.calls[0] as [URL, RequestInit & { tls?: { serverName?: string } }];
+    expect(String(url)).toBe('https://203.0.113.10/v1/chat/completions?x=1');
+    expect(new Headers(init.headers).get('host')).toBe('provider.test');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer k');
+    expect(init.tls?.serverName).toBe('provider.test');
+    expect(init).toMatchObject({ method: 'POST', body: '{}', redirect: 'manual' });
+  } finally {
+    sent.mockRestore();
+    dnsStub.lookup.mockRestore();
+  }
+});
+
+test('publicFetch keeps the port in Host, and plain http gets no TLS options', async () => {
+  const dnsStub = rebindingLookup();
+  const sent = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+  try {
+    await publicFetch('http://provider.test:8080/hook');
+
+    const [url, init] = sent.mock.calls[0] as [URL, RequestInit & { tls?: unknown }];
+    expect(String(url)).toBe('http://203.0.113.10:8080/hook');
+    expect(new Headers(init.headers).get('host')).toBe('provider.test:8080');
+    expect(init.tls).toBeUndefined();
+  } finally {
+    sent.mockRestore();
+    dnsStub.lookup.mockRestore();
+  }
+});
+
+test('publicFetch prefers an IPv4 address, whatever order DNS returns them in', async () => {
+  const lookup = spyOn(dns, 'lookup').mockResolvedValue([
+    { address: '2001:db8::10', family: 6 },
+    { address: '203.0.113.10', family: 4 },
+  ] as never);
+  const sent = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+  try {
+    await publicFetch('https://provider.test/');
+    expect(String(sent.mock.calls[0]?.[0])).toBe('https://203.0.113.10/');
+  } finally {
+    sent.mockRestore();
+    lookup.mockRestore();
+  }
 });
