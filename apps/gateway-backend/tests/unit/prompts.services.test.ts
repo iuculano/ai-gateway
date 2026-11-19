@@ -173,7 +173,7 @@ test('resolvePrompt honours a pinned version over the active one', async () => {
   const resolved = expectOk(await asCaller(() => Services.resolvePrompt({ name: 'support-triage', version: 1 })));
 
   // The version reported back is the one that was asked for, not the prompt's
-  // active pointer - that value is what the ai-prompt-version header echoes.
+  // active pointer. That value is what the stored request records.
   expect(resolved.version).toBe(1);
 });
 

@@ -21,12 +21,10 @@ async function openCorrelatedLog(tenant: Tenant, spanId: string): Promise<string
     callerFor(tenant),
     async () => {
       const log = LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' });
-      LogServices.completeLog(log, {
-        request: {},
-        response: {},
-        omitRequest: true,
-        omitResponse: true,
-      });
+      LogServices.finishLog(
+        { ...log, status: 'complete' },
+        { request: {}, response: {}, headers: { 'ai-log-omit-request': true, 'ai-log-omit-response': true } },
+      );
       return log.id;
     },
     {
@@ -37,7 +35,7 @@ async function openCorrelatedLog(tenant: Tenant, spanId: string): Promise<string
       },
     },
   );
-  await LogServices.flushLogs();
+  await LogServices.waitForLogWrites();
 
   return id;
 }

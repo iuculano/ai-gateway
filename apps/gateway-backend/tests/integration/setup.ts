@@ -68,6 +68,9 @@ function assertIsTestRedis(connectionString: string): void {
   }
 }
 
+// The suites stand in for providers with servers on this machine.
+process.env.ALLOW_PRIVATE_NETWORK_URLS = 'true';
+
 const adminConnectionString = required('POSTGRES_TEST_ADMIN_CONNECTION_STRING');
 const redisConnectionString = required('REDIS_TEST_URL');
 const victoriaTracesUrl = required('VICTORIA_TRACES_TEST_URL');

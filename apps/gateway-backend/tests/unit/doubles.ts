@@ -55,7 +55,7 @@ export function afterLogWrites<T>(value: T): T {
 /** Sends the open log batch and waits for every background log write. */
 export async function flushLogWrites(): Promise<void> {
   const { default: LogsService } = await import('../../src/api/logs/logs.services');
-  await LogsService.flushLogs();
+  await LogsService.waitForLogWrites();
 }
 
 /**

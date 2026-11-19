@@ -251,17 +251,15 @@ test('startLog writes nothing until the log settles', async () => {
   expect(database.queries).toHaveLength(0);
 });
 
-test('completeLog stores both payloads, then inserts one complete row', async () => {
+test('finishLog stores both payloads, then inserts one complete row', async () => {
   database.respondTo('insert', 'logs', rows());
 
   const log = await Services.startLog(opened);
-  await Services.completeLog(log, {
-    request: { messages: ['hello'] },
-    response: { answer: 'hi' },
-    input_tokens: 2,
-    output_tokens: 1,
-  });
-  await Services.flushLogs();
+  await Services.finishLog(
+    { ...log, status: 'complete', input_tokens: 2, output_tokens: 1 },
+    { request: { messages: ['hello'] }, response: { answer: 'hi' } },
+  );
+  await Services.waitForLogWrites();
 
   expect(objects.stored).toEqual({
     [KEY]: { request: { messages: ['hello'] }, response: { answer: 'hi' } },
@@ -279,30 +277,42 @@ test('completeLog stores both payloads, then inserts one complete row', async ()
   });
 });
 
-test('completeLog still writes the row, without references, when storage fails', async () => {
+test('finishLog records no cost at all when half of it is unknown', async () => {
+  database.respondTo('insert', 'logs', rows());
+
+  const log = await Services.startLog(opened);
+  await Services.finishLog(
+    { ...log, status: 'complete', input_cost: null, output_cost: 0 },
+    { request: {}, response: {} },
+  );
+  await Services.waitForLogWrites();
+
+  expect(insertedLog()).toMatchObject({ input_cost: null, output_cost: null });
+});
+
+test('finishLog still writes the row, without references, when storage fails', async () => {
   // The row carries the usage and cost; losing the payloads must not lose it.
   database.respondTo('insert', 'logs', rows());
   objects.failure = new Error('bucket unavailable');
 
   const log = await Services.startLog(opened);
-  await Services.completeLog(log, {
-    request: { messages: ['hello'] },
-    response: { choices: [] },
-    input_tokens: 2,
-  });
-  await Services.flushLogs();
+  await Services.finishLog(
+    { ...log, status: 'complete', input_tokens: 2 },
+    { request: { messages: ['hello'] }, response: { choices: [] } },
+  );
+  await Services.waitForLogWrites();
 
   expect(insertedLog()).toMatchObject({ status: 'complete', input_tokens: 2 });
   expect(insertedLog()).toHaveProperty('has_request', false);
   expect(insertedLog()).toHaveProperty('has_response', false);
 });
 
-test('failLog stores the request and inserts one failed row', async () => {
+test('finishLog stores only the request of a failed call', async () => {
   database.respondTo('insert', 'logs', rows());
 
   const log = await Services.startLog(opened);
-  await Services.failLog(log, { request: { messages: ['hello'] } });
-  await Services.flushLogs();
+  await Services.finishLog({ ...log, status: 'failed' }, { request: { messages: ['hello'] } });
+  await Services.waitForLogWrites();
 
   expect(objects.stored[KEY]).toEqual({ request: { messages: ['hello'] } });
   expect(insertedLog()).toMatchObject({ ...opened, status: 'failed', has_request: true });
@@ -311,12 +321,16 @@ test('failLog stores the request and inserts one failed row', async () => {
 test('logs that settle together are inserted as one batch', async () => {
   database.defaultResponse('insert', 'logs', rows());
 
-  // Called directly: forCaller would flush after each call, one batch apiece.
-  const log = await Services.startLog(opened);
+  // Settled directly: forCaller would flush after each call, one batch apiece.
+  // A log only settles once, so each row needs its own.
   for (let n = 0; n < 3; n++) {
-    RawServices.completeLog(log, { request: {}, response: {}, omitRequest: true, omitResponse: true });
+    const log = await Services.startLog(opened);
+    RawServices.finishLog(
+      { ...log, status: 'complete' },
+      { request: {}, response: {}, headers: { 'ai-log-omit-request': true, 'ai-log-omit-response': true } },
+    );
   }
-  await Services.flushLogs();
+  await Services.waitForLogWrites();
 
   const inserts = database.queriesFor('insert', 'logs');
   expect(inserts).toHaveLength(1);
@@ -328,10 +342,15 @@ test('a batch that fails is retried row by row, so a bad row only costs itself',
   database.respondTo('insert', 'logs', failsWith(new Error('violates check constraint')));
   database.defaultResponse('insert', 'logs', rows());
 
-  const log = await Services.startLog(opened);
-  RawServices.completeLog(log, { request: {}, response: {}, omitRequest: true, omitResponse: true });
-  RawServices.failLog(log, { request: {}, omitRequest: true });
-  await Services.flushLogs();
+  // Each finished before the next starts, since every test log shares one id.
+  const first = await Services.startLog(opened);
+  RawServices.finishLog(
+    { ...first, status: 'complete' },
+    { request: {}, response: {}, headers: { 'ai-log-omit-request': true, 'ai-log-omit-response': true } },
+  );
+  const second = await Services.startLog(opened);
+  RawServices.finishLog({ ...second, status: 'failed' }, { request: {}, headers: { 'ai-log-omit-request': true } });
+  await Services.waitForLogWrites();
 
   // The batch, then each row alone: the first row fails again, the second lands.
   const inserts = database
@@ -342,12 +361,12 @@ test('a batch that fails is retried row by row, so a bad row only costs itself',
   expect(inserts[2]).toMatchObject({ status: 'failed' });
 });
 
-test('failLog records a call whose caller left as incomplete', async () => {
+test('finishLog records a call whose caller left as incomplete', async () => {
   database.respondTo('insert', 'logs', rows());
 
   const log = await Services.startLog(opened);
-  await Services.failLog(log, { request: { messages: ['hello'] } }, 'incomplete');
-  await Services.flushLogs();
+  await Services.finishLog({ ...log, status: 'incomplete' }, { request: { messages: ['hello'] } });
+  await Services.waitForLogWrites();
 
   expect(insertedLog()).toMatchObject({
     ...opened,
@@ -370,4 +389,53 @@ test('getLog exposes gateway cache hits', async () => {
     input_cost: 0,
     output_cost: 0,
   });
+});
+
+// Shutdown: calls in flight must still leave a row.
+
+/** Settles logs earlier tests started and left open, so only this test's are in flight. */
+async function settleLeftovers() {
+  database.defaultResponse('insert', 'logs', rows());
+  await RawServices.shutdownLogs(0);
+  resetDoubles();
+}
+
+test('a shutdown waits for a call in flight, and records it as it finished', async () => {
+  await settleLeftovers();
+  database.respondTo('insert', 'logs', rows());
+
+  const log = await Services.startLog(opened);
+  setTimeout(
+    () =>
+      RawServices.finishLog(
+        { ...log, status: 'complete', input_tokens: 2, output_tokens: 1 },
+        { request: {}, response: {} },
+      ),
+    30,
+  );
+  await RawServices.shutdownLogs(1_000);
+
+  expect(database.queriesFor('insert', 'logs')).toHaveLength(1);
+  expect(insertedLog()).toMatchObject({ status: 'complete', input_tokens: 2, output_tokens: 1 });
+});
+
+test('a call still running when the shutdown deadline passes is recorded incomplete, once', async () => {
+  await settleLeftovers();
+  database.respondTo('insert', 'logs', rows());
+
+  const log = await Services.startLog(opened);
+  await RawServices.shutdownLogs(20);
+
+  expect(database.queriesFor('insert', 'logs')).toHaveLength(1);
+  expect(insertedLog()).toMatchObject({ ...opened, status: 'incomplete' });
+  // Usage is unknown, so it isn't made up.
+  expect(insertedLog()).not.toHaveProperty('input_tokens');
+
+  // The call finishing afterwards doesn't write a second row.
+  await Services.finishLog(
+    { ...log, status: 'complete', input_tokens: 2, output_tokens: 1 },
+    { request: {}, response: {} },
+  );
+  await Services.waitForLogWrites();
+  expect(database.queriesFor('insert', 'logs')).toHaveLength(1);
 });

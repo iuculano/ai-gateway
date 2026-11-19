@@ -686,10 +686,23 @@ test('session positions: the nth request of every session, in time order, or of 
     inputTokens: 1000,
     tags: { session_id: 's-2' },
   });
+  // A cache hit keeps the original usage, but adds no tokens the provider processed.
+  await seedLog({
+    model: 'm',
+    provider: 'openai',
+    status: 'complete',
+    ...usage,
+    inputCost: 0,
+    outputCost: 0,
+    inputTokens: 1000,
+    gatewayCacheHit: true,
+    createdAt: at('10:20:00'),
+    tags: { session_id: 's-2' },
+  });
 
   expect((await sessionPositions()).positions).toEqual([
     { position: 1, requests: 2, sessions: 2, cost_total: 11, input_tokens: 1100 },
-    { position: 2, requests: 1, sessions: 1, cost_total: 2, input_tokens: 200 },
+    { position: 2, requests: 2, sessions: 2, cost_total: 2, input_tokens: 200 },
     { position: 3, requests: 1, sessions: 1, cost_total: 3, input_tokens: 300 },
   ]);
   expect((await sessionPositions({ session_id: 's-1' })).positions.map((row) => row.cost_total)).toEqual([1, 2, 3]);
