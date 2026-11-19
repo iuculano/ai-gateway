@@ -1,6 +1,6 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { assertNever } from '@repo/core';
-import { keepAlive, writeFrame, zodExceptionHook } from '@repo/hono';
+import { getLogger, keepAlive, writeFrame, zodExceptionHook } from '@repo/hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import { toProviderHttpException } from '../../lib/ai-sdk-providers';
@@ -171,6 +171,14 @@ const createChatCompletion = defineOpenAPIRoute({
         }
 
         await writeFrame(sse, { data: '[DONE]' });
+      } catch (error) {
+        // We've sent 200, now an error frame is the only way left to say
+        // something has gone wrong.
+        //
+        // Without one the stream just ends, and OpenAI's SDKs read that as a
+        // finished answer.
+        getLogger().error({ err: error }, 'Chat completion stream failed after it opened');
+        await writeFrame(sse, { data: JSON.stringify(toOpenAIError(500, 'Internal server error', undefined)) });
       } finally {
         clearInterval(pings);
       }
