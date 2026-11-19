@@ -7,11 +7,12 @@ function point(provider: string, overrides: Partial<SeriesPoint> = {}): SeriesPo
     provider,
     model: 'shared-model',
     requests: 10,
+    gateway_cache_hits: 0,
     cost_total: 2,
     input_tokens: 1500,
     output_tokens: 500,
     total_tokens: 2000,
-    average_latency_ms: 500,
+    median_latency_ms: 500,
     ...overrides,
   } as SeriesPoint;
 }
@@ -26,6 +27,9 @@ test('computes cost and failure rates per provider/model without averaging laten
 test('efficiency uses total tokens for blended cost and request size, and input/output for mix', () => {
   const [row] = modelComparisonRows([point('openai')], []);
   expect(row).toMatchObject({ costPerMillion: 1000, tokensPerRequest: 200, inputShare: 75 });
+  // Half answered from the gateway's cache: the tokens came from the other half.
+  const [cached] = modelComparisonRows([point('openai', { gateway_cache_hits: 5 })], []);
+  expect(cached?.tokensPerRequest).toBe(400);
   const [empty] = modelComparisonRows(
     [
       point('openai', {
@@ -59,9 +63,9 @@ test('zero requests leave ratios unavailable', () => {
 test('numeric sorting works in both directions and leaves missing latency last', () => {
   const rows = modelComparisonRows(
     [
-      point('a', { requests: 2, average_latency_ms: null }),
-      point('b', { requests: 100, average_latency_ms: 900 }),
-      point('c', { requests: 10, average_latency_ms: 200 }),
+      point('a', { requests: 2, median_latency_ms: null }),
+      point('b', { requests: 100, median_latency_ms: 900 }),
+      point('c', { requests: 10, median_latency_ms: 200 }),
     ],
     [],
   );

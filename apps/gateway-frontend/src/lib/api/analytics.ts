@@ -1,20 +1,11 @@
-import type { InferResponseType } from 'hono/client';
+import type { InferRequestType, InferResponseType } from 'hono/client';
 import { topCallerReferences } from '$lib/data/caller-ranking';
 import { resolveActorNames } from './actors';
 import { client } from './client';
 
 export type AnalyticsInterval = 'hour' | 'day';
-export type AnalyticsDimension = 'bucket' | 'model' | 'provider' | 'status' | 'actor';
 
-export interface SeriesRequest {
-  start_date?: string;
-  end_date?: string;
-  interval?: AnalyticsInterval;
-  groupings: AnalyticsDimension[][];
-  model?: string;
-  provider?: string;
-  status?: 'incomplete' | 'complete' | 'failed';
-}
+export type SeriesRequest = InferRequestType<typeof client.analytics.series.$post>['json'];
 
 /**
  * Several groupings of the same logs from ClickHouse, in one request and one
@@ -44,3 +35,58 @@ export async function fetchSeries(request: SeriesRequest): Promise<SeriesPoint[]
 export type SeriesResponse = InferResponseType<typeof client.analytics.series.$post, 200>;
 // actor_label is filled in by fetchSeries for actor breakdowns.
 export type SeriesPoint = SeriesResponse['groupings'][number]['points'][number] & { actor_label?: string };
+
+export type UsersRequest = InferRequestType<typeof client.analytics.users.$post>['json'];
+
+/** A page of users (the user_id tag), and how many there are. */
+export async function fetchUsers(request: UsersRequest) {
+  const response = await client.analytics.users.$post({ json: request });
+  return response.json();
+}
+
+export type UsersResponse = InferResponseType<typeof client.analytics.users.$post, 200>;
+
+export type SessionsRequest = InferRequestType<typeof client.analytics.sessions.$post>['json'];
+
+/** How many sessions there were (the session_id tag), and a page of them by spend, requests or length. */
+export async function fetchSessions(request: SessionsRequest) {
+  const response = await client.analytics.sessions.$post({ json: request });
+  return response.json();
+}
+
+export type SessionsResponse = InferResponseType<typeof client.analytics.sessions.$post, 200>;
+
+export type SessionDistributionRequest = InferRequestType<
+  (typeof client.analytics)['session-distribution']['$post']
+>['json'];
+
+/** How spend, length and request counts spread across sessions. */
+export async function fetchSessionDistribution(request: SessionDistributionRequest) {
+  const response = await client.analytics['session-distribution'].$post({ json: request });
+  return response.json();
+}
+
+export type SessionDistributionResponse = InferResponseType<
+  (typeof client.analytics)['session-distribution']['$post'],
+  200
+>;
+
+export type SessionPositionsRequest = InferRequestType<(typeof client.analytics)['session-positions']['$post']>['json'];
+
+/** What a session's requests cost and send by their position, across every session or within one. */
+export async function fetchSessionPositions(request: SessionPositionsRequest) {
+  const response = await client.analytics['session-positions'].$post({ json: request });
+  return response.json();
+}
+
+export type SessionPositionsResponse = InferResponseType<(typeof client.analytics)['session-positions']['$post'], 200>;
+
+export type TokensRequest = InferRequestType<typeof client.analytics.tokens.$post>['json'];
+
+/** Median and p95 tokens per request, in and out, over the requests a provider answered. */
+export async function fetchTokens(request: TokensRequest) {
+  const response = await client.analytics.tokens.$post({ json: request });
+  return response.json();
+}
+
+export type TokensResponse = InferResponseType<typeof client.analytics.tokens.$post, 200>;

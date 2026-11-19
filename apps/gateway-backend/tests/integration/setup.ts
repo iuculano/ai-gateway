@@ -161,7 +161,7 @@ export async function syncLogsToClickHouse(): Promise<void> {
       to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') as updated_at,
       operation, model, provider, status, actor_id,
       input_tokens, output_tokens,
-      input_cost, output_cost, response_time_ms,
+      input_cost, output_cost, response_time_ms, gateway_cache_hit, cached_input_tokens,
       coalesce(tags, '{}'::jsonb) as tags
     from logs
   `;

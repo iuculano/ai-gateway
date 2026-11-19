@@ -19,6 +19,8 @@ type SyncedLog = Pick<
   | 'input_tokens'
   | 'output_tokens'
   | 'response_time_ms'
+  | 'gateway_cache_hit'
+  | 'cached_input_tokens'
 > & {
   created_at: string;
   updated_at: string;
@@ -72,6 +74,8 @@ export async function tickAnalyticsSync() {
         input_cost,
         output_cost,
         response_time_ms,
+        gateway_cache_hit,
+        cached_input_tokens,
         -- Untagged logs have null tags; ClickHouse wants an empty map.
         coalesce(tags, '{}'::jsonb) as tags
       from logs

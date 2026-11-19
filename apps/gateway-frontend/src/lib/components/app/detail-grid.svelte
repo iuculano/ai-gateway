@@ -18,6 +18,8 @@ export interface DetailItem {
   copyable?: boolean;
   /** Adds a link to the audit history for this value. */
   auditHref?: string;
+  /** Makes the value itself a link, e.g. to where it can be looked into. */
+  href?: string;
 }
 </script>
 
@@ -42,7 +44,11 @@ const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-co
 					style:color={item.tone}
 					title={item.title}
 				>
-					{item.value}
+					{#if item.href}
+						<a href={item.href} class="text-sky-300 hover:text-sky-200 hover:underline">{item.value}</a>
+					{:else}
+						{item.value}
+					{/if}
 				</div>
 				{#if item.copyable}
 					<button

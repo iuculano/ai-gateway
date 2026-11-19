@@ -142,6 +142,9 @@ $effect(() => {
   };
 });
 
+// Stored as a string map; the generated API type only knows it's JSON.
+const tags = $derived((log.tags ?? {}) as Record<string, string>);
+
 const detailItems: DetailItem[] = $derived([
   { label: 'Log ID', value: log.id, title: log.id, copyable: true },
   { label: 'Created at', value: fmtTs(new Date(log.created_at).toISOString()).full, mono: false },
@@ -149,6 +152,30 @@ const detailItems: DetailItem[] = $derived([
   { label: 'Endpoint', value: ENDPOINTS[log.operation] },
   { label: 'Throughput', value: throughput },
   { label: 'Finish reason', value: finishReason },
+  // The well-known tags, when the request carried them. Each opens on its
+  // analytics tab.
+  ...(tags.user_id
+    ? [
+        {
+          label: 'User',
+          value: tags.user_id,
+          title: `See ${tags.user_id} in analytics`,
+          href: `/analytics/users?user=${encodeURIComponent(tags.user_id)}`,
+          copyable: true,
+        },
+      ]
+    : []),
+  ...(tags.session_id
+    ? [
+        {
+          label: 'Session',
+          value: tags.session_id,
+          title: `See ${tags.session_id} in analytics`,
+          href: `/analytics/sessions?session=${encodeURIComponent(tags.session_id)}`,
+          copyable: true,
+        },
+      ]
+    : []),
 ]);
 
 const panels = $derived([
@@ -263,7 +290,8 @@ function copy(text: string, label: string) {
 	{/snippet}
 
 	{#snippet details()}
-		<DetailGrid items={detailItems} cols={6} />
+		<!-- Two even rows of four once the tags add cells, rather than six and a stub. -->
+		<DetailGrid items={detailItems} cols={detailItems.length > 6 ? 4 : 6} />
 
 
 		<div class="grid min-w-0 grid-cols-2 gap-3.5">

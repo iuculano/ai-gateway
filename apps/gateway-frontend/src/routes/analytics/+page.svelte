@@ -1,24 +1,22 @@
 <script lang="ts">
 import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
+import {
+  alignedNow,
+  alignedPreviousEnd,
+  getAnalyticsFilters,
+} from '$lib/components/analytics/analytics-filters.svelte';
 import ModelComparison from '$lib/components/analytics/model-comparison.svelte';
 import SpendChart from '$lib/components/analytics/spend-chart.svelte';
+import SpendForecast from '$lib/components/analytics/spend-forecast.svelte';
 import ChartCard from '$lib/components/app/chart-card.svelte';
 import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
 import StatCard from '$lib/components/app/stat-card.svelte';
 import StatGrid from '$lib/components/app/stat-grid.svelte';
 import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 import { periodComparison } from '$lib/data/analytics-comparison';
 import { type CallerMetric, rankCallers } from '$lib/data/caller-ranking';
 import { outcomeBuckets, outcomes } from '$lib/data/chart-series';
-import { fmt, fmtCostTotal } from '$lib/data/format';
-
-// Chart ink. Chrome comes from the app's own tokens so the cards match the rest
-// of the dashboard; only the DATA colours come from the validated palette.
-const GRID = '#1f1f23';
-const AXIS_INK = '#52525b';
-const ACCENT = '#10b981';
+import { fmt, fmtBucket, fmtCostTotal, fmtLatency } from '$lib/data/format';
 
 /**
  * Categorical hues for providers, validated against this surface (#0a0a0c) for
@@ -41,80 +39,17 @@ const PROVIDER_COLORS: Record<string, string> = {
 const OTHER_INK = '#52525b';
 const providerColor = (id: string) => PROVIDER_COLORS[id] ?? OTHER_INK;
 
-// 30 days is the default rather than the 14 the mock claimed: the window has to
-// be wide enough that the shape of a workload is visible, and a fortnight of a
-// bursty gateway is mostly noise.
-const DEFAULT_RANGE = { id: '30d' as const, label: 'Last 30 days', days: 30, interval: 'day' as const };
+// Chart ink. Chrome comes from the app's own tokens so the cards match the rest
+// of the dashboard; only the DATA colours come from the validated palette.
+const GRID = '#1f1f23';
+const AXIS_INK = '#52525b';
+const ACCENT = '#10b981';
 
-const RANGES = [
-  { id: '24h' as const, label: 'Last 24 hours', days: 1, interval: 'hour' as const },
-  { id: '7d' as const, label: 'Last 7 days', days: 7, interval: 'day' as const },
-  { id: '14d' as const, label: 'Last 14 days', days: 14, interval: 'day' as const },
-  DEFAULT_RANGE,
-];
-
-let rangeId = $state<(typeof RANGES)[number]['id']>(DEFAULT_RANGE.id);
-let rangeOpen = $state(false);
-const range = $derived(RANGES.find((r) => r.id === rangeId) ?? DEFAULT_RANGE);
-
-let providerFilter = $state('');
-let modelFilter = $state('');
-let filterPoints = $state<SeriesPoint[]>([]);
-let filtersLoading = $state(true);
-let filtersError = $state(false);
-let filterRequest = 0;
-const providerOptions = $derived(
-  [...new Set(filterPoints.flatMap((point) => (point.provider ? [point.provider] : [])))].sort(),
-);
-const modelOptions = $derived(
-  [
-    ...new Set(
-      filterPoints
-        .filter((point) => !providerFilter || point.provider === providerFilter)
-        .flatMap((point) => (point.model ? [point.model] : [])),
-    ),
-  ].sort(),
-);
-
-function setProvider(value: string) {
-  providerFilter = value;
-  modelFilter = '';
-}
-
-/**
- * Now, rounded down to 30 s, so repeat loads send identical queries that the
- * server can answer from cache. Loses nothing: logs reach analytics only once
- * they're 30 s old.
- */
-function alignedNow() {
-  return Math.floor(Date.now() / 30_000) * 30_000;
-}
-
-/** Keep options independent of the selected filters, including prior-period activity. */
-async function loadFilterOptions() {
-  const request = ++filterRequest;
-  filtersLoading = true;
-  filtersError = false;
-  const end = alignedNow();
-  const days = range.days;
-  try {
-    const [models] = await fetchSeries({
-      start_date: new Date(end - 2 * days * 86_400_000).toISOString(),
-      end_date: new Date(end).toISOString(),
-      groupings: [['provider', 'model']],
-    });
-    if (request === filterRequest) filterPoints = models;
-  } catch {
-    if (request === filterRequest) filtersError = true;
-  } finally {
-    if (request === filterRequest) filtersLoading = false;
-  }
-}
-
-$effect(() => {
-  void range.id;
-  void loadFilterOptions();
-});
+// The range and model filters come from the analytics layout, shared by every tab.
+const filters = getAnalyticsFilters();
+const range = $derived(filters.range);
+const providerFilter = $derived(filters.provider);
+const modelFilter = $derived(filters.model);
 
 let loading = $state(true);
 let loadError = $state<string | null>(null);
@@ -175,10 +110,7 @@ async function load() {
   const start = new Date(end - duration).toISOString();
   const filters = { provider: providerFilter || undefined, model: modelFilter || undefined };
   const common = { ...filters, start_date: start, end_date: new Date(end).toISOString() };
-  // The previous window ends on a 5-minute mark, so its query only changes every
-  // 5 minutes and the server's cache can answer it until then (its data no
-  // longer changes). It sits at most 5 minutes before the current one.
-  const previousEnd = Math.floor((end - duration) / 300_000) * 300_000;
+  const previousEnd = alignedPreviousEnd(end - duration);
   const previous = {
     ...filters,
     start_date: new Date(previousEnd - duration).toISOString(),
@@ -273,6 +205,7 @@ const comparisons = $derived.by(() => {
     const unavailable = { text: 'Unavailable', color: '#a1a1aa', title: `Could not load ${label}.` };
     return {
       requests: unavailable,
+      tokens: unavailable,
       spend: unavailable,
       averageCost: unavailable,
       latency: unavailable,
@@ -284,6 +217,7 @@ const comparisons = $derived.by(() => {
   const previousErrorRate = previousRequests ? (previousFailed / previousRequests) * 100 : null;
   return {
     requests: periodComparison(requestTotal, previousRequests, { label }),
+    tokens: periodComparison(totals?.total_tokens ?? 0, previousTotals?.total_tokens ?? null, { label }),
     spend: periodComparison(totals?.cost_total ?? 0, previousTotals?.cost_total ?? null, {
       label,
       lowerIsBetter: true,
@@ -293,7 +227,7 @@ const comparisons = $derived.by(() => {
       previousTotals && previousTotals.requests > 0 ? previousTotals.cost_total / previousTotals.requests : null,
       { label, lowerIsBetter: true },
     ),
-    latency: periodComparison(totals?.average_latency_ms ?? null, previousTotals?.average_latency_ms ?? null, {
+    latency: periodComparison(totals?.median_latency_ms ?? null, previousTotals?.median_latency_ms ?? null, {
       label,
       lowerIsBetter: true,
     }),
@@ -304,14 +238,8 @@ const comparisons = $derived.by(() => {
   };
 });
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 function bucketLabel(iso: string | null): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  return range.interval === 'hour'
-    ? `${String(date.getHours()).padStart(2, '0')}:00`
-    : `${MONTHS[date.getMonth()]} ${date.getDate()}`;
+  return fmtBucket(iso, range.interval);
 }
 
 /**
@@ -493,7 +421,7 @@ const providerBuckets = $derived([...new Set(providerPoints.map((p) => p.bucket 
  * Providers present in the window, ordered by total volume.
  *
  * The ORDER decides stacking, not colour - each provider's hue is fixed by name
- * above, so this can be re-sorted freely without any series changing colour.
+ * in provider-colors.ts, so this can be re-sorted freely without any series changing colour.
  */
 const providerSeries = $derived.by(() => {
   const totalsByProvider = new Map<string, number>();
@@ -541,68 +469,6 @@ const stacks = $derived(
   }),
 );
 
-// ---- average latency over time (single series, line) --------------------------
-//
-// Average, not percentiles. The rollup stores a latency sum and a count, which
-// reconstruct a mean exactly; a p95 cannot be recovered from stored p95s by any
-// arithmetic, so drawing one here would mean inventing it. That needs a latency
-// histogram, which is deliberately not in this iteration.
-const LAT_H = $derived(160 + bodyGrowth);
-const LAT_PAD = { top: 12, right: 12, bottom: 24, left: 46 };
-
-let latWidth = $state(360);
-let latHover = $state<number | null>(null);
-let latencyView = $state<'overall' | 'providers'>('providers');
-const latencyViews = [
-  { id: 'providers', label: 'By provider' },
-  { id: 'overall', label: 'Overall' },
-] satisfies { id: typeof latencyView; label: string }[];
-
-const latPoints = $derived(timeline);
-const latencySeries = $derived(
-  latencyView === 'overall'
-    ? [{ id: 'overall', label: 'Overall', color: '#3987e5', values: timeline.map((point) => point.average_latency_ms) }]
-    : providerSeries.map((series) => ({
-        ...series,
-        values: timeline.map(
-          (point) =>
-            providerPoints.find((p) => p.bucket === point.bucket && (p.provider ?? 'unknown') === series.id)
-              ?.average_latency_ms ?? null,
-        ),
-      })),
-);
-const hasLatency = $derived(latencySeries.some((series) => series.values.some((value) => value !== null)));
-const latMax = $derived(
-  niceMax(Math.max(1, ...latencySeries.flatMap((series) => series.values.map((value) => value ?? 0)))),
-);
-const latInnerW = $derived(Math.max(1, latWidth - LAT_PAD.left - LAT_PAD.right));
-const latInnerH = $derived(LAT_H - LAT_PAD.top - LAT_PAD.bottom);
-
-const latX = (i: number) => LAT_PAD.left + (i / Math.max(1, latPoints.length - 1)) * latInnerW;
-const latY = (v: number) => LAT_PAD.top + latInnerH - (v / latMax) * latInnerH;
-
-const latencyPaths = $derived(
-  latencySeries.map((series) => {
-    let connected = false;
-    const path = series.values
-      .map((value, i) => {
-        if (value === null) {
-          connected = false;
-          return '';
-        }
-        const command = connected ? 'L' : 'M';
-        connected = true;
-        return `${command}${latX(i)},${latY(value)}`;
-      })
-      .join(' ');
-    return { ...series, path };
-  }),
-);
-$effect(() => {
-  void timeline;
-  void latencyView;
-  latHover = null;
-});
 $effect(() => {
   void providerPoints;
   void providerView;
@@ -610,56 +476,9 @@ $effect(() => {
   barHover = null;
 });
 
-function onLatMove(event: MouseEvent) {
-  if (latPoints.length === 0) return;
-  const box = (event.currentTarget as SVGElement).getBoundingClientRect();
-  const ratio = (event.clientX - box.left - LAT_PAD.left) / latInnerW;
-  latHover = Math.max(0, Math.min(latPoints.length - 1, Math.round(ratio * (latPoints.length - 1))));
-}
-
 // ---- ranked lists (single hue - length already encodes the value) -------------
 </script>
 
-<div class="analytics-layout">
-
-<PageHeader title="Analytics" description="Traffic, spend and latency across every model routed through Relay.">
-	{#snippet actions()}
-		<FilterPicker id="analytics-provider" label="Provider" options={providerOptions} bind:value={() => providerFilter, setProvider} class="w-40" />
-		<FilterPicker id="analytics-model" label="Model" options={modelOptions} bind:value={modelFilter} class="w-52" />
-		{#if filtersLoading}<span class="text-xs text-zinc-500" role="status">Loading filters…</span>{/if}
-		{#if filtersError}<ToolbarButton onclick={loadFilterOptions}>Retry filters</ToolbarButton>{/if}
-		<div class="relative">
-			<ToolbarButton onclick={() => (rangeOpen = !rangeOpen)}>
-				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M2 6h12M5.5 1.5v3M10.5 1.5v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-				{range.label}
-				<svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="ml-0.5"><path d="M5 6.5L8 9.5L11 6.5" stroke="#71717a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			</ToolbarButton>
-
-			{#if rangeOpen}
-				<div class="absolute right-0 z-20 mt-1.5 w-[168px] overflow-hidden rounded-lg border border-line-strong bg-surface-5 py-1 shadow-[0_8px_24px_rgba(0,0,0,.5)]">
-					{#each RANGES as option (option.id)}
-						<button
-							type="button"
-							class="flex w-full items-center justify-between px-3 py-1.5 text-left text-[12.5px] hover:bg-surface-6 {option.id ===
-							rangeId
-								? 'text-zinc-100'
-								: 'text-zinc-400'}"
-							onclick={() => {
-								rangeId = option.id;
-								rangeOpen = false;
-							}}
-						>
-							{option.label}
-							{#if option.id === rangeId}
-								<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke={ACCENT} stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-							{/if}
-						</button>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	{/snippet}
-</PageHeader>
 
 {#if loadError}
 	<div class="mb-3.5 flex items-center gap-[9px] rounded-lg border border-red-500/20 bg-red-500/7 px-[13px] py-2.5">
@@ -668,8 +487,14 @@ function onLatMove(event: MouseEvent) {
 	</div>
 {/if}
 
-<StatGrid compact columns={5}>
+<StatGrid compact columns={6}>
 	<StatCard compact label="Requests" value={loading ? '—' : fmt(requestTotal)} comparison={comparisons?.requests} />
+	<StatCard
+		compact
+		label="Tokens used"
+		value={loading ? '—' : fmt(totals?.total_tokens ?? 0)}
+		comparison={comparisons?.tokens}
+	/>
 	<StatCard compact label="Spend" value={loading ? '—' : fmtCostTotal(totals?.cost_total ?? 0)} comparison={comparisons?.spend} />
     <StatCard
         compact
@@ -679,9 +504,10 @@ function onLatMove(event: MouseEvent) {
     />
 	<StatCard
         compact
-		label="Average latency"
+		label="Median latency"
 		comparison={comparisons?.latency}
-		value={loading || !totals?.average_latency_ms ? '—' : `${(totals.average_latency_ms / 1000).toFixed(2)}s`}
+		value={loading ? '—' : fmtLatency(totals?.median_latency_ms ?? null)}
+		hint={loading || totals?.p95_latency_ms == null ? undefined : `p95 ${fmtLatency(totals.p95_latency_ms)}`}
 	/>
 	<StatCard
         compact
@@ -890,71 +716,8 @@ function onLatMove(event: MouseEvent) {
 		</div>
 	</ChartCard>
 
-	<!-- average latency -->
-	<ChartCard title="Average latency" hint="Average response time in milliseconds.">
-        {#snippet actions()}<FilterTabs tabs={latencyViews} bind:value={latencyView} />{/snippet}
-        {#if latencyView === 'providers'}
-            <div class="flex flex-wrap gap-x-3 gap-y-1.5">
-                {#each latencySeries as series (series.id)}<span class="flex items-center gap-1.5 text-[11.5px] text-zinc-400"><span class="size-[7px] rounded-full" style:background={series.color}></span>{series.label}</span>{/each}
-            </div>
-        {/if}
-		<div class="relative" bind:clientWidth={latWidth}>
-			{#if loading}
-                <div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">Loading latency…</div>
-            {:else if !hasLatency}
-				<div class="flex h-[calc(160px+var(--analytics-body-growth,0px))] items-center justify-center text-[12.5px] text-zinc-600">No latency recorded.</div>
-			{:else}
-				<svg
-					width={latWidth}
-					height={LAT_H}
-					role="img"
-					aria-label="Average latency over {range.label.toLowerCase()}"
-					onmousemove={onLatMove}
-					onmouseleave={() => (latHover = null)}
-				>
-					{#each [0, 0.5, 1] as tick (tick)}
-						{@const y = LAT_PAD.top + latInnerH * tick}
-						<line x1={LAT_PAD.left} y1={y} x2={latWidth - LAT_PAD.right} y2={y} stroke={GRID} stroke-width="1" />
-						<text x={LAT_PAD.left - 8} y={y + 3.5} text-anchor="end" font-size="10" fill={AXIS_INK} class="tabular-nums">
-							{Math.round(latMax * (1 - tick))}
-						</text>
-					{/each}
-
-					{#each latencyPaths as series (series.id)}
-                        <path d={series.path} fill="none" stroke={series.color} stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-                        {#each series.values as value, i}
-                            {#if value !== null}<circle cx={latX(i)} cy={latY(value)} r={latHover === i ? 4 : 2} fill={series.color} />{/if}
-                        {/each}
-                    {/each}
-
-					{#each latPoints as point, i (point.bucket)}
-						{#if showTick(i, Math.max(1, Math.ceil(latPoints.length / 5)), latPoints.length)}
-							<text x={latX(i)} y={LAT_H - 6} text-anchor="middle" font-size="10" fill={AXIS_INK}>
-								{bucketLabel(point.bucket)}
-							</text>
-						{/if}
-					{/each}
-
-				</svg>
-
-				{#if latHover !== null && latPoints[latHover]}
-					{@const point = latPoints[latHover]!}
-					<div
-						class="pointer-events-none absolute top-1 z-10 -translate-x-1/2 rounded-lg border border-line-strong bg-surface-5 px-2.5 py-2 shadow-[0_8px_24px_rgba(0,0,0,.5)]"
-						style:left="{Math.min(Math.max(latX(latHover), 80), latWidth - 80)}px"
-					>
-						<div class="mb-1 text-[10.5px] text-zinc-500">{bucketLabel(point.bucket)}</div>
-                        {#each latencySeries as series (series.id)}
-                            <div class="flex justify-between gap-4 text-[12px] whitespace-nowrap" style:color={series.color}><span>{series.label}</span><span class="tabular-nums">{series.values[latHover] == null ? '—' : `${series.values[latHover]!.toLocaleString('en-US', { maximumFractionDigits: 1 })}ms`}</span></div>
-                        {/each}
-                        {#if latencyView === 'overall' && point.minimum_latency_ms !== null && point.maximum_latency_ms !== null}
-                            <div class="mt-0.5 text-[11.5px] whitespace-nowrap text-zinc-500 tabular-nums">{point.minimum_latency_ms}–{point.maximum_latency_ms}ms range</div>
-                        {/if}
-					</div>
-				{/if}
-			{/if}
-		</div>
-	</ChartCard>
+	<!-- this month's spend and forecast -->
+	<SpendForecast provider={providerFilter} model={modelFilter} height={AREA_H} />
 
 	<ModelComparison
         points={modelPoints}
@@ -964,6 +727,10 @@ function onLatMove(event: MouseEvent) {
         comparisonUnavailable={loadError !== null || previousModelPoints === null}
         onretry={load}
         {loading}
+        onselect={(provider, model) => {
+          filters.provider = provider;
+          filters.model = model;
+        }}
     />
 
 	<!-- top callers -->
@@ -985,7 +752,12 @@ function onLatMove(event: MouseEvent) {
                 {@const previousValue = previousCallerValues.get(JSON.stringify([caller.actor_type, caller.actor_id])) ?? 0}
                 {@const delta = caller.value - previousValue}
                 {@const comparison = periodComparison(caller.value, previousValue, { label: comparisonLabel, lowerIsBetter: callerMetric === 'cost_total' })}
-				<div class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_64px_100px] items-center gap-3">
+				<!-- Opens the users behind this caller on the Users tab. -->
+				<a
+					href="/analytics/users?actor={caller.actor_id}"
+					title="See the users behind {caller.actor_label ?? 'this caller'}"
+					class="grid grid-cols-[minmax(80px,1.1fr)_minmax(0,1fr)_64px_100px] items-center gap-3 rounded-[4px] hover:bg-surface-6"
+				>
 					<span class="flex min-w-0 items-center gap-1.5">
 						<!--
 							The kind of credential, not decoration: a key and a human are
@@ -1018,7 +790,7 @@ function onLatMove(event: MouseEvent) {
                                 <span class="block whitespace-nowrap text-[11px] font-medium" style:color={comparison.color}>{comparison.text}</span>
                             {/if}
                         </span>
-				</div>
+				</a>
 			{:else}
 				<div class="py-8 text-center text-[12.5px] text-zinc-600">No requests in this window.</div>
 			{/each}
@@ -1026,23 +798,3 @@ function onLatMove(event: MouseEvent) {
 		</div>
 	</ChartCard>
 </div>
-
-</div>
-
-<style>
-  .analytics-layout {
-    --analytics-gap: 10px;
-    --analytics-summary-gap: 10px;
-    --analytics-body-padding: 8px;
-  }
-
-  /* Restore normal spacing gradually, reserving enough room for the charts
-     near 1080p. The card sizing action accounts for these computed values. */
-  @media (min-width: 1024px) and (min-height: 1080px) {
-    .analytics-layout {
-      --analytics-gap: clamp(10px, calc(3.333333vh - 26px), 14px);
-      --analytics-summary-gap: clamp(10px, calc(8.333333vh - 80px), 20px);
-      --analytics-body-padding: clamp(8px, calc(6.666667vh - 64px), 16px);
-    }
-  }
-</style>

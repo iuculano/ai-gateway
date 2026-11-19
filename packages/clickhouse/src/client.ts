@@ -9,6 +9,7 @@ function createClickHouseClient() {
     password: process.env.CLICKHOUSE_PASSWORD || '',
     database: process.env.CLICKHOUSE_DATABASE || 'ai_gateway',
     clickhouse_settings: { output_format_json_quote_64bit_integers: 0 },
+    max_open_connections: Number(process.env.CLICKHOUSE_MAX_CONNECTIONS) || 1,
   });
 }
 
