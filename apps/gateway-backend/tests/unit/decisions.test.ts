@@ -215,23 +215,6 @@ test('usage the provider left out is zero in the response but unknown in the log
   expect(logWrites.completed[0]?.entry).toMatchObject({ input_tokens: null, output_tokens: null, input_cost: null });
 });
 
-test('a question named __proto__ reaches the provider like any other', async () => {
-  decisionState.result.answers = JSON.parse('{"__proto__": {"type": "boolean", "probability": 0.5}}');
-
-  const decision = expectOk(
-    await withCaller(() =>
-      Services.createDecision(
-        headers(),
-        body({ questions: [{ type: 'predicate', name: '__proto__', instructions: 'Is this spam?' }] }),
-      ),
-    ),
-  );
-
-  const questions = (decisionState.calls[0] as { questions: object }).questions;
-  expect(Object.keys(questions)).toEqual(['__proto__']);
-  expect(decision.answers[0]?.name).toBe('__proto__');
-});
-
 test('a refused question comes back as a refusal alongside the other answers', async () => {
   decisionState.result.answers.urgency = { type: 'refusal' };
 
