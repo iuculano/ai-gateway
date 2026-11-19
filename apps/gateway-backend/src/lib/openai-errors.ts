@@ -70,9 +70,13 @@ export function openAIErrorHandler() {
     const field = details.details?.[0]?.field;
     const param = typeof field === 'string' ? field.replace(/^json\./, '') : null;
 
+    // OpenAI's shape has no list of issues, so the first one's reason goes in
+    // the message.
+    const issue = details.details?.[0]?.issue;
+
     const body = toOpenAIError(
       response.status,
-      details.message,
+      typeof issue === 'string' ? `${details.message} ${issue}` : details.message,
       error instanceof HTTPException ? error.cause : undefined,
       param,
     );
