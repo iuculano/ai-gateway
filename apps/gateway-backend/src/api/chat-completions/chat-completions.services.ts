@@ -575,6 +575,7 @@ function calculateCosts(
     const cacheCost =
       cachedTokens * (model.cost_cache_read ?? model.cost_input) +
       writtenTokens * (typeof writePrice === 'number' ? writePrice : model.cost_input);
+
     input = ((usage.prompt_tokens - cachedTokens - writtenTokens) * model.cost_input + cacheCost) / 1_000_000;
     output = (usage.completion_tokens * model.cost_output) / 1_000_000;
   }
@@ -592,8 +593,7 @@ function calculateCosts(
     return { input_cost: reportedCost, output_cost: 0 };
   }
 
-  // Otherwise split it in the same proportions as the catalog estimate. If the
-  // catalog put 80% of the cost on input, so does the reported charge.
+  // Otherwise split it in the same proportions as the catalog estimate.
   const estimated = input + output;
   return {
     input_cost: (reportedCost * input) / estimated,
@@ -615,13 +615,13 @@ function reportedCostOf(provider: string, usage: LanguageModelUsage): number | u
   const raw = usage.raw as
     | { cost?: number; is_byok?: boolean; cost_details?: { upstream_inference_cost?: number | null } }
     | undefined;
+
   if (provider !== 'openrouter' || typeof raw?.cost !== 'number') {
     return undefined;
   }
 
-  // With your own provider key (BYOK), cost is only OpenRouter's fee and the
-  // upstream's charge comes separately. Added only then, so a call on
-  // OpenRouter's own keys can't be counted twice.
+  // With your own provider key, cost is only OpenRouter's fee and the
+  // upstream's charge comes separately.
   return raw.cost + (raw.is_byok ? (raw.cost_details?.upstream_inference_cost ?? 0) : 0);
 }
 
@@ -646,25 +646,10 @@ type SdkCall = LanguageModelCallOptions &
     experimental_download: typeof downloadImages;
   };
 
-// The SDK downloads images itself for models that can't fetch a URL, holding each
-// in memory. Its default cap is 2 GB, sized for any file type, so images get a
-// cap near the largest the providers accept.
-const downloadImage = createDownload({ maxBytes: 20 * 1024 * 1024 });
-
-/**
- * Downloads the images a model can't fetch for itself, each capped in size.
- *
- * @param requests
- * The URLs in the request, and whether the model can fetch each one itself.
- */
-async function downloadImages(requests: { url: URL; isUrlSupportedByModel: boolean }[]) {
-  const downloads = [];
-  for (const request of requests) {
-    // Null leaves the URL for the model to fetch itself.
-    downloads.push(request.isUrlSupportedByModel ? null : downloadImage({ url: request.url }));
-  }
-  return Promise.all(downloads);
-}
+// Images are downloaded here for models that can't fetch a URL.
+//
+// AI SDK feature.
+const downloadImages = createDownload({ maxBytes: 20 * 1024 * 1024, fetch: publicFetch });
 
 /**
  * A signal that aborts some time after the caller has left, and never while
@@ -839,7 +824,10 @@ async function generateWithModel(
     toolCalls: result.toolCalls.map((call) => ({
       id: call.toolCallId,
       type: 'function' as const,
-      function: { name: call.toolName, arguments: JSON.stringify(call.input ?? {}) },
+      function: {
+        name: call.toolName,
+        arguments: typeof call.input === 'string' ? call.input : JSON.stringify(call.input ?? {}),
+      },
     })),
     finishReason: toOpenAIFinishReason(result.finishReason),
     usage: toOpenAIUsage(result.usage),

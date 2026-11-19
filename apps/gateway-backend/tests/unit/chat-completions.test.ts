@@ -114,6 +114,9 @@ const aiState = {
   /** Fails only the next generateText or streamText call, so a fallback can succeed. */
   firstCallError: null as unknown,
 
+  /** Thrown by the stream itself once its parts have gone out, which no part can stand in for. */
+  streamCrash: null as unknown,
+
   reset() {
     aiState.generateCalls = [];
     aiState.streamCalls = [];
@@ -130,6 +133,7 @@ const aiState = {
     ];
     aiState.streamOnError = null;
     aiState.firstCallError = null;
+    aiState.streamCrash = null;
     aiState.generateResult = {
       finalStep: { response: responseMetadata },
       text: 'Hello from the provider',
@@ -191,6 +195,10 @@ mock.module('ai', () => ({
       stream: (async function* () {
         for (const part of aiState.streamParts) {
           yield part;
+        }
+
+        if (aiState.streamCrash) {
+          throw aiState.streamCrash;
         }
       })(),
     };
@@ -1542,6 +1550,28 @@ test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', as
   expect(logWrites.completed[0]?.entry.response).toMatchObject({
     choices: [{ message: { content: 'Hello stream' } }],
   });
+});
+
+test('a stream that throws after it opened ends with an error frame, not a silent close', async () => {
+  aiState.streamParts = [{ type: 'text-delta', text: 'Hello ' }];
+  aiState.streamCrash = new Error('the stream broke in a way nothing reports');
+
+  const response = await post(body({ stream: true }));
+
+  expect(response.status).toBe(200);
+
+  const frames = (await response.text())
+    .split('\n\n')
+    .filter((frame) => frame.startsWith('data: '))
+    .map((frame) => frame.slice('data: '.length));
+
+  // OpenAI's SDKs raise on the error frame. With neither it nor [DONE], they
+  // read the cut-off answer as a finished one.
+  expect(JSON.parse(frames[1] ?? '')).toMatchObject({ choices: [{ delta: { content: 'Hello ' } }] });
+  expect(JSON.parse(frames.at(-1) ?? '')).toEqual({
+    error: { message: 'Internal server error', type: 'server_error', param: null, code: null },
+  });
+  expect(frames).toHaveLength(3);
 });
 
 test('a failure before the first chunk is still a normal error response, not a broken stream', async () => {

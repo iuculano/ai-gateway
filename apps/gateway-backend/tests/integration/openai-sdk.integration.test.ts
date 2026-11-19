@@ -1,7 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
+import { hostname } from 'node:os';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { callerContext, errorHandler, traceContext } from '@repo/hono';
 import OpenAI from 'openai';
+import { zodResponseFormat } from 'openai/helpers/zod';
+import { z } from 'zod';
 import handlers from '../../src/api/chat-completions/chat-completions.handlers';
 import decisionHandlers from '../../src/api/decisions/decisions.handlers';
 import embeddingHandlers from '../../src/api/embeddings/embeddings.handlers';
@@ -13,7 +16,6 @@ import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant 
  * The real openai client against the real chat completions handler, AI SDK and
  * OpenAI provider, with a local stand-in for OpenAI behind it. If the official
  * SDK is happy here, callers using it are.
- *
  */
 
 type UpstreamBody = Record<string, unknown> & { stream?: boolean };
@@ -74,9 +76,27 @@ function upstreamError(status: number, error: Record<string, unknown>) {
   return Response.json({ error: { param: null, ...error } }, { status });
 }
 
-/** A log's accounting, once queued writes have landed. Costs come back as numbers or null. */
-// Each request here gets its own trace, so its trace id finds its log row.
-// Without one, the latest row.
+/**
+ * Reads a stream to its end, returning the text it carried and the error that
+ * ended it, if one did.
+ */
+async function drain(stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>) {
+  let text = '';
+  try {
+    for await (const part of stream) {
+      text += part.choices[0]?.delta.content ?? '';
+    }
+  } catch (error) {
+    return { text, error };
+  }
+
+  return { text, error: null };
+}
+
+/**
+ * A log's accounting, once queued writes have landed. The row is found by its
+ * trace id, or is the latest one when the caller left before seeing an id.
+ */
 async function logRow(traceId?: string | null) {
   await LogServices.waitForLogWrites();
   const [row] = await admin`
@@ -124,7 +144,8 @@ beforeEach(async () => {
   await admin`
     insert into models (name, provider, cost_input, cost_output)
     values ('test-model', 'openai', 1, 2), ('gpt-6-luna', 'openai', 0.1, 0.5),
-      ('unpriced-model', 'openai', null, null), ('or-model', 'openrouter', 1, 3)
+      ('unpriced-model', 'openai', null, null), ('or-model', 'openrouter', 1, 3),
+      ('gemini-test', 'google', 1, 2)
   `;
   await admin`insert into models (name, provider, type, cost_input) values ('embed-model', 'openai', 'embedding', 0.5)`;
   await admin`insert into models (name, provider, type, cost_input) values ('gpt-6-luna', 'openai', 'decision', 0.1)`;
@@ -153,10 +174,39 @@ test('create returns what the SDK expects, and echoes the trace id', async () =>
     .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }] })
     .withResponse();
 
-  expect(data.choices[0]?.message.content).toBe('Hello there');
-  expect(data.choices[0]?.finish_reason).toBe('stop');
-  expect(data.usage).toMatchObject(USAGE);
+  expect(data).toMatchObject({
+    id: 'chatcmpl-upstream',
+    object: 'chat.completion',
+    created: 1_790_000_000,
+    model: 'test-model',
+    choices: [
+      {
+        index: 0,
+        message: { role: 'assistant', content: 'Hello there', refusal: null },
+        logprobs: null,
+        finish_reason: 'stop',
+      },
+    ],
+    usage: USAGE,
+  });
   expect(response.headers.get('ai-trace-id')).toMatch(/^[0-9a-f]{32}$/);
+});
+
+test('a request without ai-api-key is a 400 naming the header', async () => {
+  const keyless = new OpenAI({
+    apiKey: 'gateway-key-unchecked-here',
+    baseURL: 'http://gateway.test/v1',
+    maxRetries: 0,
+    fetch: async (url: RequestInfo | URL, init?: RequestInit) => app.request(String(url), init),
+  });
+
+  const error = (await keyless.chat.completions
+    .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }] })
+    .catch((caught: unknown) => caught)) as InstanceType<typeof OpenAI.APIError>;
+
+  expect(error).toBeInstanceOf(OpenAI.BadRequestError);
+  expect(error.param).toBe('header.ai-api-key');
+  expect(upstream.requests).toHaveLength(0);
 });
 
 test('request settings reach the provider as OpenAI sent them', async () => {
@@ -207,18 +257,42 @@ test('a stream reads as text, ends cleanly, and includes usage when asked', asyn
     stream_options: { include_usage: true },
   });
 
+  const parts: OpenAI.Chat.ChatCompletionChunk[] = [];
   let text = '';
-  let usage: unknown = null;
   let finishReason: string | null = null;
   for await (const part of stream) {
+    parts.push(part);
     text += part.choices[0]?.delta.content ?? '';
     finishReason = part.choices[0]?.finish_reason ?? finishReason;
-    usage = part.usage ?? usage;
   }
 
   expect(text).toBe('Hello');
   expect(finishReason).toBe('stop');
-  expect(usage).toMatchObject(USAGE);
+
+  // One id for the whole stream, the role announced first, and usage alone on the last frame.
+  expect(new Set(parts.map((part) => part.id)).size).toBe(1);
+  expect(parts.every((part) => part.object === 'chat.completion.chunk')).toBe(true);
+  expect(parts[0]?.choices[0]?.delta.role).toBe('assistant');
+  expect(parts.at(-1)).toMatchObject({ choices: [], usage: USAGE });
+});
+
+test('a stream carries no usage frame unless the caller asks for one', async () => {
+  upstream.respond = () =>
+    sse([chunk({ role: 'assistant', content: '' }), chunk({ content: 'Hi' }), chunk({}, 'stop', USAGE)]);
+
+  const stream = await client.chat.completions.create({
+    model: 'openai/test-model',
+    messages: [{ role: 'user', content: 'Hi' }],
+    stream: true,
+  });
+
+  const parts: OpenAI.Chat.ChatCompletionChunk[] = [];
+  for await (const part of stream) {
+    parts.push(part);
+  }
+
+  expect(parts.some((part) => part.usage)).toBe(false);
+  expect(parts.every((part) => part.choices.length === 1)).toBe(true);
 });
 
 test('the SDK stream helper assembles a final message', async () => {
@@ -303,6 +377,126 @@ test('a streamed tool call is assembled by the SDK stream helper', async () => {
   expect(call?.type === 'function' ? JSON.parse(call.function.arguments) : null).toEqual({ id: 'A1' });
 });
 
+test('tool arguments cut off by max_tokens come back as the provider wrote them', async () => {
+  // Not valid JSON, which is how the caller finds out the call was cut short.
+  const cutOff = '{"id":"A';
+  upstream.respond = (body) =>
+    body.stream
+      ? sse([
+          chunk({ role: 'assistant', content: null }),
+          chunk({
+            tool_calls: [
+              { index: 0, id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: '' } },
+            ],
+          }),
+          chunk({ tool_calls: [{ index: 0, function: { arguments: cutOff } }] }),
+          chunk({}, 'length', USAGE),
+        ])
+      : completion(
+          {
+            content: null,
+            tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: cutOff } }],
+          },
+          'length',
+        );
+  const request = {
+    model: 'openai/test-model',
+    messages: [{ role: 'user' as const, content: 'Where is A1?' }],
+    tools: [lookupOrder],
+    max_tokens: 5,
+  };
+
+  const whole = await client.chat.completions.create(request);
+  const streamed = await client.chat.completions.stream(request).finalChatCompletion();
+
+  for (const result of [whole, streamed]) {
+    const call = result.choices[0]?.message.tool_calls?.[0];
+    expect(result.choices[0]?.finish_reason).toBe('length');
+    expect(call?.type === 'function' ? call.function.arguments : null).toBe(cutOff);
+  }
+});
+
+/** The lookup_order tool as the SDK's tool runner takes it, recording the ids it was asked for. */
+function runnableLookupOrder(seen: string[]) {
+  return {
+    type: 'function' as const,
+    function: {
+      ...lookupOrder.function,
+      parse: JSON.parse,
+      function: async (args: { id: string }) => {
+        seen.push(args.id);
+        return { status: 'shipped', id: args.id };
+      },
+    },
+  };
+}
+
+test('the SDK tool runner calls the tool and sends its result back', async () => {
+  const replies = [
+    completion(
+      {
+        content: null,
+        tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: '{"id":"A1"}' } }],
+      },
+      'tool_calls',
+    ),
+    completion({ content: 'It ships tomorrow.' }),
+  ];
+  upstream.respond = () => replies.shift() ?? completion({ content: 'One request too many' });
+
+  const seen: string[] = [];
+  const final = await client.chat.completions
+    .runTools({
+      model: 'openai/test-model',
+      messages: [{ role: 'user', content: 'Where is A1?' }],
+      tools: [runnableLookupOrder(seen)],
+    })
+    .finalContent();
+
+  expect(final).toBe('It ships tomorrow.');
+  expect(seen).toEqual(['A1']);
+  expect(upstream.requests[1]?.messages).toMatchObject([
+    { role: 'user' },
+    { role: 'assistant', tool_calls: [{ id: 'call_1' }] },
+    { role: 'tool', tool_call_id: 'call_1', content: '{"status":"shipped","id":"A1"}' },
+  ]);
+});
+
+test('the SDK tool runner assembles parallel tool calls from a stream that interleaves them', async () => {
+  const replies = [
+    sse([
+      chunk({ role: 'assistant', content: null }),
+      chunk({
+        tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: '' } }],
+      }),
+      chunk({
+        tool_calls: [{ index: 1, id: 'call_2', type: 'function', function: { name: 'lookup_order', arguments: '' } }],
+      }),
+      chunk({ tool_calls: [{ index: 0, function: { arguments: '{"id":' } }] }),
+      chunk({ tool_calls: [{ index: 1, function: { arguments: '{"id":' } }] }),
+      chunk({ tool_calls: [{ index: 0, function: { arguments: '"A1"}' } }] }),
+      chunk({ tool_calls: [{ index: 1, function: { arguments: '"B2"}' } }] }),
+      chunk({}, 'tool_calls', USAGE),
+    ]),
+    sse([chunk({ role: 'assistant', content: '' }), chunk({ content: 'Both shipped.' }), chunk({}, 'stop', USAGE)]),
+  ];
+  upstream.respond = () => replies.shift() ?? completion({ content: 'One request too many' });
+
+  const seen: string[] = [];
+  const runner = client.chat.completions.runTools({
+    model: 'openai/test-model',
+    messages: [{ role: 'user', content: 'Where are A1 and B2?' }],
+    stream: true,
+    stream_options: { include_usage: true },
+    tools: [runnableLookupOrder(seen)],
+  });
+
+  expect(await runner.finalContent()).toBe('Both shipped.');
+  expect(seen).toEqual(['A1', 'B2']);
+  // Both turns, added up by the SDK from the usage frames.
+  expect(await runner.totalUsage()).toMatchObject({ prompt_tokens: 24, completion_tokens: 8, total_tokens: 32 });
+});
+
 test('a model the catalog does not have is a 404 the SDK raises', async () => {
   const error = await client.chat.completions
     .create({ model: 'openai/not-in-catalog', messages: [{ role: 'user', content: 'Hi' }] })
@@ -340,6 +534,19 @@ test('an upstream 429 raises RateLimitError', async () => {
   expect(upstream.requests).toHaveLength(1);
 });
 
+test('a stream the provider rejects is an HTTP error, not a 200 that fails later', async () => {
+  upstream.respond = () =>
+    upstreamError(429, { message: 'Rate limit reached', type: 'requests', code: 'rate_limit_exceeded' });
+
+  const error = (await client.chat.completions
+    .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }], stream: true })
+    .catch((caught: unknown) => caught)) as InstanceType<typeof OpenAI.APIError>;
+
+  // The status is what makes the SDK retry it.
+  expect(error).toBeInstanceOf(OpenAI.RateLimitError);
+  expect(error.code).toBe('rate_limit_exceeded');
+});
+
 test('errors keep the OpenAI type and code clients branch on', async () => {
   upstream.respond = () =>
     upstreamError(400, {
@@ -374,16 +581,11 @@ test('a provider failure after the stream opens raises in the SDK, not a silentl
     messages: [{ role: 'user', content: 'Hi' }],
     stream: true,
   });
+  const { text, error } = await drain(stream);
 
-  let threw = false;
-  try {
-    for await (const _part of stream) {
-      // drain
-    }
-  } catch {
-    threw = true;
-  }
-  expect(threw).toBe(true);
+  // What had arrived stays readable, and the failure is the SDK's own error type.
+  expect(text).toBe('Partial');
+  expect(error).toBeInstanceOf(OpenAI.APIError);
 });
 
 test('json_schema structured output is supported', async () => {
@@ -409,6 +611,22 @@ test('json_schema structured output is supported', async () => {
 
   expect(JSON.parse(result.choices[0]?.message.content ?? '')).toEqual({ city: 'Paris' });
   expect(upstream.requests[0]?.response_format).toMatchObject({ type: 'json_schema', json_schema: { name: 'answer' } });
+});
+
+test('the SDK parse helper sends a strict schema and returns the parsed object', async () => {
+  upstream.respond = () => completion({ content: '{"city":"Paris"}' });
+
+  const result = await client.chat.completions.parse({
+    model: 'openai/test-model',
+    messages: [{ role: 'user', content: 'Capital of France?' }],
+    response_format: zodResponseFormat(z.object({ city: z.string() }), 'answer'),
+  });
+
+  expect(result.choices[0]?.message.parsed).toEqual({ city: 'Paris' });
+  expect(upstream.requests[0]?.response_format).toMatchObject({
+    type: 'json_schema',
+    json_schema: { name: 'answer', strict: true },
+  });
 });
 
 test('json_object output is supported', async () => {
@@ -469,6 +687,16 @@ test('a malformed request is a 400 naming the field at fault', async () => {
   expect(error).toBeInstanceOf(OpenAI.BadRequestError);
   expect(error.type).toBe('invalid_request_error');
   expect(error.param).toStartWith('messages');
+});
+
+test('more than one choice is refused with a 400 naming n, not answered with one', async () => {
+  const error = (await client.chat.completions
+    .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }], n: 2 })
+    .catch((caught: unknown) => caught)) as InstanceType<typeof OpenAI.APIError>;
+
+  expect(error).toBeInstanceOf(OpenAI.BadRequestError);
+  expect(error.param).toBe('n');
+  expect(upstream.requests).toHaveLength(0);
 });
 
 test('the gateway adds no reasoning_effort the caller did not send', async () => {
@@ -793,9 +1021,7 @@ test('accounting: a stream without usage is stored as unknown, never zero', asyn
   const { data: stream, response } = await client.chat.completions
     .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }], stream: true })
     .withResponse();
-  for await (const _part of stream) {
-    // drain
-  }
+  expect((await drain(stream)).error).toBeNull();
 
   expect(await logRow(response.headers.get('ai-trace-id'))).toMatchObject({ input_tokens: null, input_cost: null });
 });
@@ -806,16 +1032,10 @@ test('accounting: a stream the provider cuts off raises in the SDK and is logged
   const { data: stream, response } = await client.chat.completions
     .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }], stream: true })
     .withResponse();
-  let threw = false;
-  try {
-    for await (const _part of stream) {
-      // drain
-    }
-  } catch {
-    threw = true;
-  }
+  const { text, error } = await drain(stream);
 
-  expect(threw).toBe(true);
+  expect(text).toBe('Hel');
+  expect(error).toBeInstanceOf(OpenAI.APIError);
   expect(await logRow(response.headers.get('ai-trace-id'))).toMatchObject({
     status: 'failed',
     input_tokens: null,
@@ -886,18 +1106,13 @@ for (const [name, frames] of Object.entries(brokenStreams)) {
     upstream.respond = () => sse(frames, false);
     const options = { headers: { 'ai-cache-enabled': 'true' } };
 
+    // Both attempts fail. The point is whether the second reached the provider.
     for (const _attempt of [1, 2]) {
-      try {
-        const stream = await client.chat.completions.create(
-          { model: 'openai/test-model', messages: [{ role: 'user', content: `cache ${name}` }], stream: true },
-          options,
-        );
-        for await (const _part of stream) {
-          // drain
-        }
-      } catch {
-        // Both attempts fail. The point is whether the second reached the provider.
-      }
+      const stream = await client.chat.completions.create(
+        { model: 'openai/test-model', messages: [{ role: 'user', content: `cache ${name}` }], stream: true },
+        options,
+      );
+      expect((await drain(stream)).error).toBeInstanceOf(OpenAI.APIError);
     }
 
     expect(upstream.requests).toHaveLength(2);
@@ -938,9 +1153,7 @@ test('accounting: OpenRouter streams ask for usage, so their cost is recorded', 
   const { data: stream, response } = await client.chat.completions
     .create({ model: 'openrouter/or-model', messages: [{ role: 'user', content: 'Hi' }], stream: true })
     .withResponse();
-  for await (const _part of stream) {
-    // drain
-  }
+  expect((await drain(stream)).error).toBeNull();
 
   expect(upstream.requests[0]?.stream_options).toEqual({ include_usage: true });
   const row = await logRow(response.headers.get('ai-trace-id'));
@@ -973,16 +1186,9 @@ test('timeout: mid-stream it raises in the SDK, and the log is failed with unkno
   const { data: stream, response } = await client.chat.completions
     .create({ model: 'openai/test-model', messages: [{ role: 'user', content: 'Hi' }], stream: true }, shortTimeout)
     .withResponse();
-  let threw = false;
-  try {
-    for await (const _part of stream) {
-      // drain
-    }
-  } catch {
-    threw = true;
-  }
+  const { error } = await drain(stream);
 
-  expect(threw).toBe(true);
+  expect(error).toBeInstanceOf(OpenAI.APIError);
   expect(await logRow(response.headers.get('ai-trace-id'))).toMatchObject({ status: 'failed', input_tokens: null });
 });
 
@@ -1381,26 +1587,205 @@ test('Gemini gets the reasoning effort', async () => {
   expect(upstream.requests[0]).toMatchObject({ generationConfig: { thinkingConfig: {} } });
 });
 
-test('an image the gateway cannot fetch is a 400 naming the problem, not a provider failure', async () => {
-  await admin`insert into models (name, provider, cost_input, cost_output) values ('gemini-test', 'google', 1, 2)`;
+const GEMINI_USAGE = { promptTokenCount: 5, candidatesTokenCount: 2, totalTokenCount: 7 };
 
-  // Google models can't fetch a URL themselves, so the gateway downloads it, and it refuses this one.
-  const error = (await client.chat.completions
-    .create({
+function geminiAnswer(text: string) {
+  return Response.json({
+    candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP' }],
+    usageMetadata: GEMINI_USAGE,
+  });
+}
+
+test('a Gemini tool call streams through the SDK helper, and its result goes back', async () => {
+  // Gemini sends a call whole, with no id and no argument fragments.
+  const event = {
+    candidates: [
+      {
+        content: { role: 'model', parts: [{ functionCall: { name: 'lookup_order', args: { id: 'A1' } } }] },
+        finishReason: 'STOP',
+      },
+    ],
+    usageMetadata: GEMINI_USAGE,
+  };
+  upstream.respond = () =>
+    new Response(`data: ${JSON.stringify(event)}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+
+  const final = await client.chat.completions
+    .stream({
       model: 'google/gemini-test',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'What is this?' },
-            { type: 'image_url', image_url: { url: 'http://169.254.169.254/latest/meta-data' } },
-          ],
-        },
-      ],
+      messages: [{ role: 'user', content: 'Where is A1?' }],
+      tools: [lookupOrder],
     })
-    .catch((caught: unknown) => caught)) as InstanceType<typeof OpenAI.APIError>;
+    .finalChatCompletion();
 
-  expect(error).toBeInstanceOf(OpenAI.BadRequestError);
-  expect(error.message).toContain('Could not fetch a URL');
+  const call = final.choices[0]?.message.tool_calls?.[0];
+  expect(final.choices[0]?.finish_reason).toBe('tool_calls');
+  expect(call?.type === 'function' ? JSON.parse(call.function.arguments) : null).toEqual({ id: 'A1' });
+
+  // The id is one the gateway made up, and the tool result has to find its call by it.
+  upstream.respond = () => geminiAnswer('It ships tomorrow.');
+  const second = await client.chat.completions.create({
+    model: 'google/gemini-test',
+    messages: [
+      { role: 'user', content: 'Where is A1?' },
+      { role: 'assistant', content: null, tool_calls: final.choices[0]?.message.tool_calls },
+      { role: 'tool', tool_call_id: call?.id ?? '', content: '{"status":"shipped"}' },
+    ],
+    tools: [lookupOrder],
+  });
+
+  expect(second.choices[0]?.message.content).toBe('It ships tomorrow.');
+  expect(upstream.requests[1]).toMatchObject({
+    contents: [
+      { role: 'user' },
+      { role: 'model', parts: [{ functionCall: { name: 'lookup_order', args: { id: 'A1' } } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'lookup_order' } }] },
+    ],
+  });
+});
+
+test('an OpenRouter tool call streams through the SDK helper', async () => {
+  upstream.respond = () =>
+    sse([
+      chunk({ role: 'assistant', content: null }),
+      chunk({
+        tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: '' } }],
+      }),
+      chunk({ tool_calls: [{ index: 0, function: { arguments: '{"id":"A1"}' } }] }),
+      chunk({}, 'tool_calls', USAGE),
+    ]);
+
+  const final = await client.chat.completions
+    .stream({
+      model: 'openrouter/or-model',
+      messages: [{ role: 'user', content: 'Where is A1?' }],
+      tools: [lookupOrder],
+    })
+    .finalChatCompletion();
+
+  const call = final.choices[0]?.message.tool_calls?.[0];
+  expect(final.choices[0]?.finish_reason).toBe('tool_calls');
+  expect(call).toMatchObject({ id: 'call_1', function: { name: 'lookup_order' } });
+  expect(call?.type === 'function' ? JSON.parse(call.function.arguments) : null).toEqual({ id: 'A1' });
+});
+
+// Images. Gemini can't fetch a URL itself, so the gateway downloads the image and sends it inline.
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+const PNG_BASE64 = Buffer.from(PNG).toString('base64');
+
+// The SDK refuses localhost, or an address written into the URL, whatever this
+// suite's setup allows. So the image servers here are reached by the machine's
+// own name, which only a lookup shows to be private.
+const IMAGE_HOST = hostname();
+
+/** Asks Gemini about one image, given by URL. */
+function askAboutImage(url: string) {
+  return client.chat.completions.create({
+    model: 'google/gemini-test',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is this?' },
+          { type: 'image_url', image_url: { url } },
+        ],
+      },
+    ],
+  });
+}
+
+const inlinePng = {
+  contents: [{ parts: [{ text: 'What is this?' }, { inlineData: { mimeType: 'image/png', data: PNG_BASE64 } }] }],
+};
+
+test('an image by URL is downloaded for Gemini and sent inline, redirects followed', async () => {
+  const images = Bun.serve({
+    port: 0,
+    hostname: '0.0.0.0',
+    fetch(request) {
+      if (new URL(request.url).pathname === '/moved') {
+        return new Response(null, { status: 302, headers: { location: '/cat' } });
+      }
+
+      return new Response(PNG, { headers: { 'content-type': 'image/png' } });
+    },
+  });
+  upstream.respond = () => geminiAnswer('A cat.');
+
+  try {
+    const result = await askAboutImage(`http://${IMAGE_HOST}:${images.port}/moved`);
+    expect(result.choices[0]?.message.content).toBe('A cat.');
+  } finally {
+    images.stop(true);
+  }
+
+  expect(upstream.requests[0]).toMatchObject(inlinePng);
+});
+
+test('a base64 image goes to Gemini inline, with nothing to download', async () => {
+  upstream.respond = () => geminiAnswer('A cat.');
+
+  await askAboutImage(`data:image/png;base64,${PNG_BASE64}`);
+
+  expect(upstream.requests[0]).toMatchObject(inlinePng);
+});
+
+test('an image URL inside the gateway-s own network is a 400, and is never fetched', async () => {
+  let fetched = 0;
+  const internal = Bun.serve({
+    port: 0,
+    hostname: '0.0.0.0',
+    fetch() {
+      fetched++;
+      return new Response('secret');
+    },
+  });
+  const urls = ['http://169.254.169.254/latest/meta-data', `http://${IMAGE_HOST}:${internal.port}/secret`];
+
+  // The suite's own setup allows private addresses, since the stand-in provider is local.
+  delete process.env.ALLOW_PRIVATE_NETWORK_URLS;
+  try {
+    for (const url of urls) {
+      const error = (await askAboutImage(url).catch((caught: unknown) => caught)) as InstanceType<
+        typeof OpenAI.APIError
+      >;
+
+      expect(error).toBeInstanceOf(OpenAI.BadRequestError);
+      expect(error.message).toContain('Could not fetch a URL');
+    }
+  } finally {
+    process.env.ALLOW_PRIVATE_NETWORK_URLS = 'true';
+    internal.stop(true);
+  }
+
+  expect(fetched).toBe(0);
+  expect(upstream.requests).toHaveLength(0);
+});
+
+test('an image over the size cap is a 400, and never reaches the provider', async () => {
+  let served = 0;
+  const images = Bun.serve({
+    port: 0,
+    hostname: '0.0.0.0',
+    fetch() {
+      served++;
+      return new Response(new Uint8Array(21 * 1024 * 1024));
+    },
+  });
+
+  try {
+    const error = (await askAboutImage(`http://${IMAGE_HOST}:${images.port}/huge`).catch(
+      (caught: unknown) => caught,
+    )) as InstanceType<typeof OpenAI.APIError>;
+
+    expect(error).toBeInstanceOf(OpenAI.BadRequestError);
+    expect(error.message).toContain('Could not fetch a URL');
+  } finally {
+    images.stop(true);
+  }
+
+  // It was asked for, so the address was allowed and the size is what stopped it.
+  expect(served).toBe(1);
   expect(upstream.requests).toHaveLength(0);
 });
