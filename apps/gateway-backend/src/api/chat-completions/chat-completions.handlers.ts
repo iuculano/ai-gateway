@@ -1,14 +1,13 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { assertNever } from '@repo/core';
-import { type Caller, getActorId, getCaller, zodExceptionHook } from '@repo/hono';
-import { consumeFixedWindowCounter } from '@repo/redis';
+import { keepAlive, writeFrame, zodExceptionHook } from '@repo/hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import { toProviderHttpException } from '../../lib/ai-sdk-providers';
 import { openAIErrorHandler, toOpenAIError } from '../../lib/openai-errors';
 import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
-import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from './chat-completions.schemas';
+import type { ChatCompletionBody } from './chat-completions.schemas';
 import Services, {
   type CreateChatCompletionFailure,
   type StreamChatCompletionFailure,
@@ -52,7 +51,7 @@ function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPExcept
   }
 }
 
-function toChatCompletionHttpException(
+export function toChatCompletionHttpException(
   failure: CreateChatCompletionFailure | StreamChatCompletionFailure,
 ): HTTPException {
   const { code } = failure;
@@ -65,16 +64,6 @@ function toChatCompletionHttpException(
           'preceding assistant message issued',
       });
 
-    case 'UNSUPPORTED_RESPONSE_FORMAT':
-      return new HTTPException(400, {
-        message: `response_format '${failure.response_format}' is not supported by this gateway`,
-      });
-
-    case 'TOP_LOGPROBS_REQUIRES_LOGPROBS':
-      return new HTTPException(400, {
-        message: 'top_logprobs requires logprobs to be true',
-      });
-
     case 'WEBHOOK_NOT_FOUND':
       return new HTTPException(404, {
         message: `No webhook with id '${failure.id}'`,
@@ -85,8 +74,9 @@ function toChatCompletionHttpException(
     case 'MODEL_UNSUPPORTED_PROVIDER':
     case 'PROVIDER_INVALID_REQUEST':
     case 'PROVIDER_REJECTED_REQUEST':
-    case 'PROVIDER_FAILED':
+    case 'PROVIDER_UNAVAILABLE':
     case 'PROVIDER_TIMEOUT':
+    case 'INTERNAL_ERROR':
       return toProviderHttpException(failure);
 
     default:
@@ -104,23 +94,22 @@ function toChatCompletionHttpException(
  * The body to send upstream, and the version that was expanded when one was.
  */
 async function expandPrompt(body: ChatCompletionBody): Promise<{ body: ChatCompletionBody; version: number | null }> {
+  // Return as is if no prompt is specified.
   if (!body.prompt) {
     return { body, version: null };
   }
 
   const resolved = await PromptServices.resolvePrompt(body.prompt);
-
   if (resolved.isErr()) {
     throw toResolvePromptHttpException(resolved.error);
   }
 
-  // `prompt` is dropped on the way through - it is this gateway's field, and
-  // the provider has no idea what it means.
-  const { prompt: _reference, ...rest } = body;
-
+  // Add a reference to the resolved prompt, and inject it innto the system
+  // message.
   return {
     body: {
-      ...rest,
+      ...body,
+      prompt: { ...body.prompt, version: resolved.value.version },
       messages: [{ role: 'system', content: resolved.value.prompt }, ...body.messages],
     },
     version: resolved.value.version,
@@ -137,25 +126,11 @@ const createChatCompletion = defineOpenAPIRoute({
     const headers = c.req.valid('header');
     const body = c.req.valid('json');
 
-    // Before anything reaches the provider, and before the stream commits the
-    // 200 - a prompt that will not expand has to be a normal error response.
+    // If a prompt is specified, expand it into the system message.
     const expanded = await expandPrompt(body);
 
-    // Which version actually produced this, echoed for the same reason as
-    // ai-log-id. Without it, "what did we send" is unanswerable once the
-    // active version moves.
-    if (expanded.version !== null) {
-      c.res.headers.set('ai-prompt-version', String(expanded.version));
-    }
-
-    // Echoed so a caller can fetch the stored payloads afterwards without
-    // having to guess which log row was theirs.
-    const echoLogId = (logId: string) => {
-      c.res.headers.set('ai-log-id', logId);
-    };
-
     if (!expanded.body.stream) {
-      const result = await Services.createChatCompletion(headers, expanded.body, echoLogId);
+      const result = await Services.createChatCompletion(headers, expanded.body, c.req.raw.signal);
 
       return result.match(
         (completion) => c.json(completion, 200),
@@ -165,37 +140,40 @@ const createChatCompletion = defineOpenAPIRoute({
       );
     }
 
-    // The first chunk is pulled before streamSSE() takes over so that a
-    // failure to even reach the provider is still a normal error response.
-    // Once the stream opens, the 200 is committed and nothing can change it -
-    // including the ai-log-id header, which is why the log has to be opened
-    // before this point rather than when the stream finishes.
-    const chunks = Services.streamChatCompletion(headers, expanded.body, echoLogId);
+    // Need to read at least one chunk to infer a status. Otherwise, once
+    // the SSE stream starts, we've already committed to a 200 status.
+    const chunks = Services.streamChatCompletion(headers, expanded.body, c.req.raw.signal);
     const first = await chunks.next();
 
-    const unwrap = (result: Result<ChatCompletionChunk, StreamChatCompletionFailure>) =>
-      result.match(
-        (chunk) => chunk,
-        (failure) => {
-          throw toChatCompletionHttpException(failure);
-        },
-      );
-
-    // Unwrap before streamSSE commits a 200. Once the response begins, an Err
-    // can only terminate the stream; before it begins, it remains a normal
-    // JSON error response with the status chosen above.
-    const firstChunk = first.done ? undefined : unwrap(first.value);
+    if (!first.done && first.value.isErr()) {
+      throw toChatCompletionHttpException(first.value.error);
+    }
 
     return streamSSE(c, async (sse) => {
-      if (firstChunk) {
-        await sse.writeSSE({ data: JSON.stringify(firstChunk) });
-      }
+      const pings = keepAlive(sse);
+      try {
+        // Already taken from above, so the loop below starts at the second.
+        if (!first.done && first.value.isOk()) {
+          await writeFrame(sse, { data: JSON.stringify(first.value.value) });
+        }
 
-      for await (const result of chunks) {
-        await sse.writeSSE({ data: JSON.stringify(unwrap(result)) });
-      }
+        for await (const result of chunks) {
+          if (result.isErr()) {
+            // OpenAI's SDKs raise on an error frame, rather than treating the
+            // cut-off answer as complete.
+            const exception = toChatCompletionHttpException(result.error);
+            const error = toOpenAIError(exception.status, exception.message, exception.cause);
+            await writeFrame(sse, { data: JSON.stringify(error) });
+            return;
+          }
 
-      await sse.writeSSE({ data: '[DONE]' });
+          await writeFrame(sse, { data: JSON.stringify(result.value) });
+        }
+
+        await writeFrame(sse, { data: '[DONE]' });
+      } finally {
+        clearInterval(pings);
+      }
     });
   },
 });

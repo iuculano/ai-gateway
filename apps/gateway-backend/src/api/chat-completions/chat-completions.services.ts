@@ -326,12 +326,27 @@ function toSdkCallSettings(
  * @returns
  * The provider-specific options, or undefined if none are applicable.
  */
-function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<string, JSONValue>> | undefined {
+function toSdkProviderOptions(
+  body: ChatCompletionBody,
+  provider: string,
+): Record<string, Record<string, JSONValue>> | undefined {
+  // Normalize some provider-specific options...
+  if (provider === 'openrouter') {
+    const options: Record<string, JSONValue> = {
+      ...(body.user != null ? { user: body.user } : {}),
+      ...(body.parallel_tool_calls != null ? { parallel_tool_calls: body.parallel_tool_calls } : {}),
+      ...(body.reasoning_effort != null ? { reasoning: { effort: body.reasoning_effort } } : {}),
+    };
+
+    return Object.keys(options).length > 0 ? { openrouter: options } : undefined;
+  }
+
+  const strict = body.response_format?.type === 'json_schema' ? body.response_format.json_schema.strict : undefined;
+
   const options: Record<string, JSONValue> = {
     ...(body.logit_bias != null ? { logitBias: body.logit_bias } : {}),
     ...(body.parallel_tool_calls != null ? { parallelToolCalls: body.parallel_tool_calls } : {}),
     ...(body.user != null ? { user: body.user } : {}),
-    ...(body.reasoning_effort != null ? { reasoningEffort: body.reasoning_effort } : {}),
     ...(body.store != null ? { store: body.store } : {}),
     ...(body.metadata != null ? { metadata: body.metadata } : {}),
     ...(body.prediction != null ? { prediction: body.prediction as JSONValue } : {}),
@@ -339,6 +354,7 @@ function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<s
     ...(body.verbosity != null ? { textVerbosity: body.verbosity } : {}),
     ...(body.prompt_cache_key != null ? { promptCacheKey: body.prompt_cache_key } : {}),
     ...(body.safety_identifier != null ? { safetyIdentifier: body.safety_identifier } : {}),
+    ...(body.response_format?.type === 'json_schema' ? { strictJsonSchema: strict ?? false } : {}), // The AI SDK makes schemas strict unless told otherwise, and OpenAI doesn't.
 
     // The SDK uses in_memory; the request uses in-memory.
     ...(body.prompt_cache_retention != null
@@ -346,9 +362,6 @@ function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<s
           promptCacheRetention: body.prompt_cache_retention === 'in-memory' ? 'in_memory' : body.prompt_cache_retention,
         }
       : {}),
-
-    // The SDK accepts true or the number of alternative tokens.
-    ...(body.logprobs ? { logprobs: body.top_logprobs ?? true } : {}),
   };
 
   return Object.keys(options).length > 0 ? { openai: options } : undefined;

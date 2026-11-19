@@ -22,7 +22,6 @@ const headers = z.object({
 });
 
 const responseHeaders = z.object({
-  'ai-log-id': z.uuid(),
   'ai-trace-id': z.string().regex(/^[0-9a-f]{32}$/),
 });
 
