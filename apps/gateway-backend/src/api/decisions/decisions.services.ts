@@ -252,8 +252,13 @@ async function decideWithModel(
   }
 
   const responseTimeMs = performance.now() - startedAt;
-  const inputTokens = result.usage?.inputTokens ?? 0;
-  const outputTokens = result.usage?.outputTokens ?? 0;
+  // Null when the provider sent no usage, so the log records the cost as
+  // unknown rather than free (which messes with analytics).
+  //
+  //The response still says 0, since OpenAI's usage fields are plain numbers
+  // with no way to say unknown.
+  const inputTokens = result.usage?.inputTokens ?? null;
+  const outputTokens = result.usage?.outputTokens ?? null;
 
   const response: CreateDecisionResponse = {
     model: result.response?.modelId ?? info.name,
@@ -265,9 +270,9 @@ async function decideWithModel(
       ),
     ),
     usage: {
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens,
+      input_tokens: inputTokens ?? 0,
+      output_tokens: outputTokens ?? 0,
+      total_tokens: (inputTokens ?? 0) + (outputTokens ?? 0),
     },
   };
 
@@ -277,7 +282,7 @@ async function decideWithModel(
       status: 'complete',
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      input_cost: info.cost_input == null ? null : (inputTokens * info.cost_input) / 1_000_000,
+      input_cost: inputTokens == null || info.cost_input == null ? null : (inputTokens * info.cost_input) / 1_000_000,
       output_cost: 0, // Only input is billed for a decision.
       response_time_ms: Math.round(responseTimeMs),
     },
