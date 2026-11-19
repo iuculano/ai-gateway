@@ -252,45 +252,52 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
   return ok(converted);
 }
 
-/** Preserves malformed tool arguments as a string. */
+/**
+ * Try to fall back on a parse failure.
+ *
+ * Seems possible in some edge cases like a tool call getting cut off by
+ * `max_tokens`.
+ *
+ * This feels a bit hacky and I kind of hate it...
+ *
+ * @param value
+ * The JSON string to parse.
+ *
+ * @returns
+ * The parsed object, or an empty object if parsing fails.
+ */
 function safeParseJson(value: string): unknown {
   try {
     return JSON.parse(value);
   } catch {
-    return value;
+    return {};
   }
-}
-
-function checkSupported(
-  body: ChatCompletionBody,
-): Result<void, UnsupportedResponseFormatFailure | TopLogprobsRequiresLogprobsFailure> {
-  // Structured output needs the SDK's output option, which is not implemented here.
-  if (body.response_format && body.response_format.type !== 'text') {
-    return err({ code: 'UNSUPPORTED_RESPONSE_FORMAT', response_format: body.response_format.type });
-  }
-
-  if (body.top_logprobs != null && !body.logprobs) {
-    return err({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
-  }
-
-  return ok(undefined);
 }
 
 /**
- * The generation settings that map onto the SDK's own call options.
+ * Convert the request body and headers into the SDK's call settings.
+ *
+ * This is effectively a translation from OpenAI's request format to the AI
+ * SDK's call settings.
  *
  * @param body
  * The validated request body.
  *
  * @param headers
  * The gateway headers, which carry the retry and timeout overrides.
+ *
+ * @returns
+ * The SDK call settings.
  */
 function toSdkCallSettings(
   body: ChatCompletionBody,
   headers: ChatCompletionHeaders,
-): CallSettings & { timeout?: number } {
-  // max_completion_tokens supersedes max_tokens upstream, so it wins here too.
+): LanguageModelCallOptions & RequestOptions {
+  // `max_completion_tokens` supersedes `max_tokens`
   const maxOutputTokens = body.max_completion_tokens ?? body.max_tokens;
+
+  // Seems like this isn't guaranteed to return a string... it can actually wind
+  // up as a string array???
   const stopSequences = body.stop == null ? undefined : typeof body.stop === 'string' ? [body.stop] : body.stop;
 
   return {
@@ -301,17 +308,23 @@ function toSdkCallSettings(
     ...(body.frequency_penalty != null ? { frequencyPenalty: body.frequency_penalty } : {}),
     ...(body.seed != null ? { seed: body.seed } : {}),
     ...(stopSequences?.length ? { stopSequences: stopSequences } : {}),
-    ...(headers['ai-max-retries'] != null ? { maxRetries: headers['ai-max-retries'] } : {}),
+    ...(body.reasoning_effort != null ? { reasoning: body.reasoning_effort } : {}),
     ...(headers['ai-timeout-ms'] != null ? { timeout: headers['ai-timeout-ms'] } : {}),
+    maxRetries: headers['ai-max-retries'] ?? 0, // OpenAI SDK retries on its own, make this opt in
   };
 }
 
 /**
- * The settings that have no cross-provider equivalent and ride along in the
- * provider's own namespace.
+ * Convert the request body into AI SDK provider-specific options.
  *
  * @param body
  * The validated request body.
+ *
+ * @param provider
+ * The provider name.
+ *
+ * @returns
+ * The provider-specific options, or undefined if none are applicable.
  */
 function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<string, JSONValue>> | undefined {
   const options: Record<string, JSONValue> = {
@@ -342,10 +355,13 @@ function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<s
 }
 
 /**
- * Translates OpenAI tool definitions into an SDK tool set.
+ * Converts OpenAI tool definitions into an AI SDK tool set.
  *
  * @param body
  * The validated request body.
+ *
+ * @returns
+ * The corresponding AI SDK tool set, or undefined if no tools are defined.
  */
 function toSdkTools(body: ChatCompletionBody): ToolSet | undefined {
   if (!body.tools?.length) {
@@ -356,6 +372,7 @@ function toSdkTools(body: ChatCompletionBody): ToolSet | undefined {
   for (const definition of body.tools) {
     tools[definition.function.name] = tool({
       ...(definition.function.description ? { description: definition.function.description } : {}),
+      ...(definition.function.strict != null ? { strict: definition.function.strict } : {}),
       inputSchema: jsonSchema((definition.function.parameters ?? { type: 'object', properties: {} }) as JSONSchema7),
     });
   }
@@ -375,7 +392,15 @@ function toSdkToolChoice(body: ChatCompletionBody): ToolChoice<ToolSet> | undefi
   return { type: 'tool' as const, toolName: body.tool_choice.function.name };
 }
 
-/** SDK finish reasons without an OpenAI equivalent map to stop. */
+/**
+ * Convert AI SDK finish reasons into OpenAI's shape.
+ *
+ * @param reason
+ * The finish reason from the SDK.
+ *
+ * @returns
+ * The corresponding OpenAI finish reason.
+ */
 function toOpenAIFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   switch (reason) {
     case 'length':
@@ -392,18 +417,44 @@ function toOpenAIFinishReason(reason: FinishReason): ChatCompletionFinishReason 
   }
 }
 
-function toOpenAIUsage(usage: LanguageModelUsage): ChatCompletionUsage {
+/**
+ * Convert AI SDK usage into OpenAI's usage shape.
+ *
+ * @param usage
+ * The usage information from the AI SDK.
+ *
+ * @returns
+ * The usage information in OpenAI's shape, or undefined if not available.
+ */
+function toOpenAIUsage(usage: LanguageModelUsage): ChatCompletionUsage | undefined {
+  // Something probably went wrong, but some providers can also deliberately
+  // omit usage information (like OpenRouter, seemingly).
+  if (usage.inputTokens == null && usage.outputTokens == null) {
+    return undefined;
+  }
+
+  // OpenAI seems to always set a value for these.
   const promptTokens = usage.inputTokens ?? 0;
   const completionTokens = usage.outputTokens ?? 0;
 
+  // OpenAI ALSO seemingly always sets these, but we differentiate to make
+  // logging clearer / to give it a clear "unknown" marker.
   const cachedTokens = usage.inputTokenDetails?.cacheReadTokens;
+  const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens;
   const reasoningTokens = usage.outputTokenDetails?.reasoningTokens;
 
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: usage.totalTokens ?? promptTokens + completionTokens,
-    ...(cachedTokens != null ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
+    ...(cachedTokens != null || cacheWriteTokens != null
+      ? {
+          prompt_tokens_details: {
+            cached_tokens: cachedTokens ?? 0,
+            ...(cacheWriteTokens != null ? { cache_write_tokens: cacheWriteTokens } : {}),
+          },
+        }
+      : {}),
     ...(reasoningTokens != null ? { completion_tokens_details: { reasoning_tokens: reasoningTokens } } : {}),
   };
 }
