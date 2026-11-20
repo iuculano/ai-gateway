@@ -8,8 +8,9 @@ import type {
   PromptVersion,
   Trace,
   TraceDetail,
+  Webhook,
 } from '../../src/lib/api/types';
-import type { ApiMock, RecordedApiRequest } from './api-mock';
+import type { ApiMock, MockApiResponse, RecordedApiRequest } from './api-mock';
 
 export const IDS = {
   apiKey: '0198f100-0000-7000-8000-000000000001',
@@ -21,6 +22,7 @@ export const IDS = {
   model: '0198f100-0000-7000-8000-000000000007',
   trace: '0198f100-0000-7000-8000-000000000008',
   failedTrace: '0198f100-0000-7000-8000-000000000009',
+  webhook: '0198f100-0000-7000-8000-00000000000a',
 } as const;
 
 /** W3C ids, which are hex rather than uuids - see the trace schemas. */
@@ -78,6 +80,18 @@ export const PROMPT_VERSION: PromptVersion = {
   version: 1,
   created_at: CREATED_AT,
   updated_at: UPDATED_AT,
+};
+
+export const WEBHOOK: Webhook = {
+  creator_id: null,
+  id: IDS.webhook,
+  name: 'Billing webhook',
+  description: 'Original description',
+  endpoint: 'https://example.com/webhook',
+  filter: {},
+  tags: {},
+  created_at: CREATED_AT,
+  updated_at: CREATED_AT,
 };
 
 export const SUCCESS_LOG: Log = {
@@ -261,6 +275,12 @@ export const CATALOG: CatalogProvider[] = [
   },
 ];
 
+/** A completion stream that ends at once, for tests that only inspect the request. */
+export const EMPTY_COMPLETION_STREAM: MockApiResponse = {
+  body: 'data: [DONE]\n\n',
+  headers: { 'content-type': 'text/event-stream' },
+};
+
 export function emptySeries(request: RecordedApiRequest): SeriesResponse {
   const body = (request.body ?? {}) as {
     interval?: SeriesResponse['interval'];
@@ -273,11 +293,11 @@ export function emptySeries(request: RecordedApiRequest): SeriesResponse {
   };
 }
 
-/** Responses needed to visit every page with no application data. */
+/** Responses needed to visit every page with no application data. The `api` fixture registers them for every test. */
 export function registerEmptyApp(api: ApiMock): void {
   api.get('/api/api-keys/count', { json: { count: 0, estimated: false } });
   api.get('/api/api-keys', { json: { data: [], meta: PAGE_META } });
-  api.get('/api/models/providers', { json: { data: [], meta: { oldest_id: null, more_data: false } } });
+  api.get('/api/models/providers', { json: { data: [], meta: PAGE_META } });
   api.get('/api/prompts', { json: { data: [], meta: PAGE_META } });
   api.post('/api/internal/actors/resolve', {
     json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },

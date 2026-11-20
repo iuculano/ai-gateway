@@ -19,7 +19,9 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
 
   if (response.status === 401 && response.headers.get('ai-error-source') !== 'upstream') {
     if (typeof window !== 'undefined') {
-      window.location.href = '/auth/login';
+      // Carries the current page along so signing back in returns to it.
+      const target = window.location.pathname + window.location.search;
+      window.location.href = `/auth/login?redirect_to=${encodeURIComponent(target)}`;
     }
     throw new ApiError(401, 'Session expired.');
   }

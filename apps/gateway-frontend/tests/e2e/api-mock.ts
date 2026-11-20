@@ -1,9 +1,10 @@
 import { test as base, expect, type Page } from '@playwright/test';
+import { registerEmptyApp } from './fixtures';
 
 export interface RecordedApiRequest {
   method: string;
   pathname: string;
-  search: string;
+  query: URLSearchParams;
   headers: Record<string, string>;
   body: unknown;
 }
@@ -63,7 +64,7 @@ export class ApiMock {
       const request: RecordedApiRequest = {
         method: browserRequest.method(),
         pathname: url.pathname,
-        search: url.search,
+        query: url.searchParams,
         headers: browserRequest.headers(),
         body: body,
       };
@@ -78,7 +79,7 @@ export class ApiMock {
       );
 
       if (!registration) {
-        const label = `${request.method} ${request.pathname}${request.search}`;
+        const label = `${request.method} ${request.pathname}${url.search}`;
         this.unhandled.push(label);
         await route.fulfill({
           status: 500,
@@ -131,17 +132,30 @@ export class ApiMock {
   matching(method: string, pathname: string): RecordedApiRequest[] {
     return this.calls.filter((call) => call.method === method.toUpperCase() && call.pathname === pathname);
   }
+
+  /** Gives a runaway retry loop time to show itself in `calls`. */
+  async settle(): Promise<void> {
+    // A request that should not happen cannot be awaited, so this is a fixed wait.
+    await this.#page.waitForTimeout(500);
+  }
 }
 
 export const test = base.extend<{ api: ApiMock }>({
-  api: async ({ page }, use) => {
-    const api = new ApiMock(page);
-    await api.install();
-    await use(api);
+  // Automatic, so every page is mocked whether or not the test asks for `api`.
+  api: [
+    async ({ page }, use) => {
+      const api = new ApiMock(page);
+      await api.install();
 
-    expect.soft(api.unhandled, 'every browser API request should have an explicit mock').toEqual([]);
-    expect.soft(api.pageErrors, 'the page should not raise uncaught browser errors').toEqual([]);
-  },
+      // Every page loads with no data. A test replaces only what it cares about.
+      registerEmptyApp(api);
+      await use(api);
+
+      expect.soft(api.unhandled, 'every browser API request should have an explicit mock').toEqual([]);
+      expect.soft(api.pageErrors, 'the page should not raise uncaught browser errors').toEqual([]);
+    },
+    { auto: true },
+  ],
 });
 
 export { expect } from '@playwright/test';

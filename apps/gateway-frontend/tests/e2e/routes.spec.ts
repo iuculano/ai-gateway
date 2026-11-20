@@ -1,9 +1,7 @@
 import { expect, test } from './api-mock';
-import { CATALOG, registerEmptyApp } from './fixtures';
+import { CATALOG, PAGE_META } from './fixtures';
 
 test('the authenticated shell loads every primary frontend route', async ({ page, api }) => {
-  registerEmptyApp(api);
-
   let catalogAttempts = 0;
   api.get('/api/models/providers', () => {
     catalogAttempts += 1;
@@ -14,7 +12,7 @@ test('the authenticated shell loads every primary frontend route', async ({ page
       };
     }
 
-    return { json: { data: CATALOG, meta: { oldest_id: null, more_data: false } } };
+    return { json: { data: CATALOG, meta: PAGE_META } };
   });
 
   await test.step('a representative API failure can be retried', async () => {

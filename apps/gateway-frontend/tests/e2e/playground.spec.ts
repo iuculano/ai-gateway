@@ -1,9 +1,7 @@
 import { expect, test } from './api-mock';
-import { registerEmptyApp, TRACE_IDS } from './fixtures';
+import { EMPTY_COMPLETION_STREAM, TRACE_IDS } from './fixtures';
 
 test('the playground streams a completion and sends the intended request', async ({ page, api }) => {
-  registerEmptyApp(api);
-
   const frames = [
     {
       id: 'chatcmpl-playwright',
@@ -65,11 +63,7 @@ test('the playground streams a completion and sends the intended request', async
 });
 
 test('numeric parameters send edited values and are omitted after clearing', async ({ page, api }) => {
-  registerEmptyApp(api);
-  api.post('/api/chat/completions', {
-    body: 'data: [DONE]\n\n',
-    headers: { 'content-type': 'text/event-stream' },
-  });
+  api.post('/api/chat/completions', EMPTY_COMPLETION_STREAM);
 
   await page.goto('/playground');
   await page.getByPlaceholder('What do you want to ask?').fill('Hello');
@@ -126,7 +120,6 @@ for (const invalid of [
   },
 ]) {
   test(`invalid ${invalid.label} ${invalid.value} does not send a request`, async ({ page, api }) => {
-    registerEmptyApp(api);
     await page.goto('/playground');
     await page.getByPlaceholder('What do you want to ask?').fill('Hello');
     await page.getByPlaceholder('Provider API key').fill('test-provider-key');
@@ -144,9 +137,7 @@ for (const stream of [true, false]) {
     for (const action of ['stop', 'navigate'] as const) {
       test(`${action} cancels ${count} comparison requests (${stream ? 'streaming' : 'whole response'})`, async ({
         page,
-        api,
       }) => {
-        registerEmptyApp(api);
         await page.addInitScript(() => {
           const requests: { aborted: boolean }[] = [];
           Object.assign(window, { playgroundRequests: requests });
@@ -237,8 +228,7 @@ for (const stream of [true, false]) {
   }
 }
 
-test('the playground has one comparison layout with one to four model columns', async ({ page, api }) => {
-  registerEmptyApp(api);
+test('the playground has one comparison layout with one to four model columns', async ({ page }) => {
   await page.goto('/playground');
   await expect(page.getByRole('button', { name: /^(Single|Compare)$/ })).toHaveCount(0);
   const keys = page.getByPlaceholder('Provider API key');
@@ -260,7 +250,6 @@ test('the playground has one comparison layout with one to four model columns', 
 });
 
 test('the decisions tab sends typed questions and renders the answers', async ({ page, api }) => {
-  registerEmptyApp(api);
   api.post('/api/decisions', {
     json: {
       model: 'gpt-6-luna',
@@ -294,8 +283,6 @@ test('the decisions tab sends typed questions and renders the answers', async ({
 });
 
 test('the decisions tab refuses duplicate question names without sending', async ({ page, api }) => {
-  registerEmptyApp(api);
-
   await page.goto('/playground/decisions');
   await page.getByLabel('Input', { exact: true }).fill('Win a free cruise!');
   await page.getByRole('button', { name: 'Add question' }).click();

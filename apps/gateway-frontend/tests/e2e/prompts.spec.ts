@@ -1,8 +1,7 @@
 import { expect, test } from './api-mock';
-import { IDS, PAGE_META, PROMPT, PROMPT_VERSION, registerEmptyApp } from './fixtures';
+import { IDS, PAGE_META, PROMPT, PROMPT_VERSION } from './fixtures';
 
 test('a prompt can be created, versioned, and rendered with an input', async ({ page, api }) => {
-  registerEmptyApp(api);
   const promptRows: (typeof PROMPT)[] = [];
   api.get('/api/prompts', { json: { data: promptRows, meta: PAGE_META } });
   api.post('/api/prompts', () => {
@@ -67,7 +66,6 @@ for (const hasVersions of [true, false]) {
     page,
     api,
   }) => {
-    registerEmptyApp(api);
     api.get('/api/prompts', {
       json: { data: [{ ...PROMPT, active_version: hasVersions ? 1 : null }], meta: PAGE_META },
     });
@@ -88,13 +86,13 @@ for (const hasVersions of [true, false]) {
     const empty = page.getByText('This prompt has no versions, so the request would be refused.', { exact: true });
     await expect(error).toBeVisible();
     await expect(empty).toBeHidden();
-    await page.waitForTimeout(500);
+    await api.settle();
     expect(attempts).toBe(1);
     expect(api.matching('GET', `${path}/1`)).toHaveLength(0);
 
     await page.getByRole('button', { name: 'Retry versions', exact: true }).click();
     await expect(error).toBeVisible();
-    await page.waitForTimeout(500);
+    await api.settle();
     expect(attempts).toBe(2);
     await page.getByRole('button', { name: 'Retry versions', exact: true }).click();
     await expect(error).toBeHidden();

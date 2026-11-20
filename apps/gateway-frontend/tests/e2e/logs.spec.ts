@@ -1,9 +1,8 @@
 import { expect, test } from './api-mock';
-import { FAILED_LOG, IDS, LOG_META, registerEmptyApp, SUCCESS_LOG, TRACE_IDS } from './fixtures';
+import { EMPTY_COMPLETION_STREAM, FAILED_LOG, IDS, LOG_META, SUCCESS_LOG, TRACE_IDS } from './fixtures';
 
 test('auto-refresh updates counts and continues after a stats failure', async ({ page, api }) => {
   await page.clock.install();
-  registerEmptyApp(api);
   let count = 1;
   let failStats = false;
   api.get('/api/logs', () => ({
@@ -48,9 +47,8 @@ test('auto-refresh updates counts and continues after a stats failure', async ({
 });
 
 test('a stored request can be inspected and replayed in the playground', async ({ page, api }) => {
-  registerEmptyApp(api);
   api.get('/api/logs', (request) => {
-    const status = new URLSearchParams(request.search).get('status');
+    const status = request.query.get('status');
     return {
       json: { data: [SUCCESS_LOG, FAILED_LOG].filter((log) => !status || log.status === status), meta: LOG_META },
     };
@@ -104,10 +102,7 @@ test('a stored request can be inspected and replayed in the playground', async (
   await expect(page.getByLabel('Temperature', { exact: true })).toHaveValue('0.2');
   await expect(page.getByLabel('Top P', { exact: true })).toHaveValue('0.8');
   await expect(page.getByLabel('Max completion tokens', { exact: true })).toHaveValue('64');
-  api.post('/api/chat/completions', {
-    body: 'data: [DONE]\n\n',
-    headers: { 'content-type': 'text/event-stream' },
-  });
+  api.post('/api/chat/completions', EMPTY_COMPLETION_STREAM);
   await page.getByPlaceholder('Provider API key').fill('test-provider-key');
   const response = page.waitForResponse('**/api/chat/completions');
   await page.getByRole('button', { name: /^Run/ }).click();
@@ -130,7 +125,6 @@ for (const scenario of [
     page,
     api,
   }) => {
-    registerEmptyApp(api);
     api.get('/api/logs', {
       json: {
         data: [
@@ -179,7 +173,7 @@ for (const scenario of [
     await row.click();
     await row.click();
     // Detect an unintended reactive retry loop while the failed panel is open.
-    await page.waitForTimeout(500);
+    await api.settle();
     for (const kind of ['request', 'response'] as const) {
       expect(attempts[kind]).toBe(scenario.omitted.includes(kind) ? 0 : 1);
     }
@@ -195,9 +189,8 @@ for (const scenario of [
 }
 
 test('log status filters reach the backend and reset pagination', async ({ page, api }) => {
-  registerEmptyApp(api);
   api.get('/api/logs', (request) => {
-    const query = new URLSearchParams(request.search);
+    const { query } = request;
     return {
       json: {
         data: [{ ...SUCCESS_LOG, status: query.get('status') ?? 'complete' }],
@@ -217,8 +210,8 @@ test('log status filters reach the backend and reset pagination', async ({ page,
     await page.getByRole('button', { name: label, exact: true }).click();
     await expect
       .poll(() => {
-        const query = new URLSearchParams(api.matching('GET', '/api/logs').at(-1)?.search);
-        return { status: query.get('status'), cursor: query.get('after_id') };
+        const query = api.matching('GET', '/api/logs').at(-1)?.query;
+        return { status: query?.get('status'), cursor: query?.get('after_id') };
       })
       .toEqual({ status, cursor: null });
     await expect(page.getByText('Page 1', { exact: true })).toBeVisible();

@@ -1,21 +1,10 @@
 import type { Webhook } from '../../src/lib/api/types';
 import { expect, test } from './api-mock';
-import { PAGE_META, registerEmptyApp } from './fixtures';
+import { PAGE_META, WEBHOOK } from './fixtures';
 
 for (const description of ['', '   ', '  Updated description  ']) {
   test(`webhook description updates persist: ${JSON.stringify(description)}`, async ({ page, api }) => {
-    registerEmptyApp(api);
-    let webhook: Webhook = {
-      creator_id: null,
-      id: '0198f100-0000-7000-8000-000000000009',
-      name: 'Billing webhook',
-      description: 'Original description',
-      endpoint: 'https://example.com/webhook',
-      filter: {},
-      tags: {},
-      created_at: '2026-08-20T14:00:00.000Z',
-      updated_at: '2026-08-20T14:00:00.000Z',
-    };
+    let webhook = WEBHOOK;
     const path = `/api/webhooks/${webhook.id}`;
     api.get('/api/webhooks', () => ({ json: { data: [webhook], meta: PAGE_META } }));
     api.on('PATCH', path, (request) => {

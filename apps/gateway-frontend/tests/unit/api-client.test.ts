@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { ApiError, client } from '../../src/lib/api/client';
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
-const location = { href: '/playground' };
+const location = { href: '/playground', pathname: '/playground', search: '?from=log-1' };
 let fetchSpy: ReturnType<typeof spyOn<typeof globalThis, 'fetch'>>;
 
 beforeEach(() => {
@@ -34,10 +34,10 @@ test('upstream 401 preserves the provider error without navigating away', async 
   expect(fetchSpy).toHaveBeenCalledTimes(1);
 });
 
-test('gateway 401 still redirects to login', async () => {
+test('gateway 401 redirects to login and remembers the page', async () => {
   fetchSpy.mockResolvedValue(Response.json({ error: { message: 'Unauthorized' } }, { status: 401 }));
   await expect(client.models.providers.$get({ query: {} })).rejects.toEqual(new ApiError(401, 'Session expired.'));
-  expect(location.href).toBe('/auth/login');
+  expect(location.href).toBe('/auth/login?redirect_to=%2Fplayground%3Ffrom%3Dlog-1');
 });
 
 test('the catalog loader follows provider cursors and combines pages', async () => {

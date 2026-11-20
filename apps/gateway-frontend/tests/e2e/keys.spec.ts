@@ -1,14 +1,13 @@
 import { expect, test } from './api-mock';
-import { API_KEY, CREATED_API_KEY, IDS, registerEmptyApp } from './fixtures';
+import { API_KEY, CREATED_API_KEY, IDS, PAGE_META } from './fixtures';
 
 test('an API key can be created, revealed once, and revoked', async ({ page, api }) => {
-  registerEmptyApp(api);
   let created = false;
   let revoked = false;
   api.get('/api/api-keys', () => ({
     json: {
       data: created ? [{ ...API_KEY, revoked_at: revoked ? '2026-01-01T00:00:00Z' : null }] : [],
-      meta: { oldest_id: null, more_data: false },
+      meta: PAGE_META,
     },
   }));
   api.post('/api/api-keys', () => {
@@ -50,15 +49,11 @@ test('an API key can be created, revealed once, and revoked', async ({ page, api
     scopes: 'api-keys:read',
   });
   expect(api.matching('DELETE', `/api/api-keys/${IDS.apiKey}`)).toHaveLength(1);
-  expect(api.matching('GET', '/api/api-keys')[0]?.search).toContain('status=all');
+  expect(api.matching('GET', '/api/api-keys')[0]?.query.get('status')).toBe('all');
 });
 
 test('failed key usage stays idle until retry and successful usage is cached', async ({ page, api }) => {
-  registerEmptyApp(api);
-  api.post('/api/internal/actors/resolve', {
-    json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },
-  });
-  api.get('/api/api-keys', { json: { data: [API_KEY], meta: { oldest_id: null, more_data: false } } });
+  api.get('/api/api-keys', { json: { data: [API_KEY], meta: PAGE_META } });
   const statsPath = `/api/api-keys/${IDS.apiKey}/stats`;
   let attempts = 0;
   api.get(statsPath, () => {
@@ -75,18 +70,17 @@ test('failed key usage stays idle until retry and successful usage is cached', a
 
   const error = page.getByText('Usage temporarily unavailable', { exact: true });
   await expect(error).toBeVisible();
-  // Allow asynchronous effect reruns and network round trips to expose a retry loop.
-  await page.waitForTimeout(500);
+  await api.settle();
   expect(api.matching('GET', statsPath)).toHaveLength(1);
   await keyName.click();
   await keyName.click();
   await expect(error).toBeVisible();
-  await page.waitForTimeout(500);
+  await api.settle();
   expect(api.matching('GET', statsPath)).toHaveLength(1);
 
   await page.getByRole('button', { name: 'Retry usage', exact: true }).click();
   await expect(error).toBeVisible();
-  await page.waitForTimeout(500);
+  await api.settle();
   expect(api.matching('GET', statsPath)).toHaveLength(2);
 
   await page.getByRole('button', { name: 'Retry usage', exact: true }).click();
@@ -95,13 +89,12 @@ test('failed key usage stays idle until retry and successful usage is cached', a
   await keyName.click();
   await keyName.click();
   await expect(page.getByText('42', { exact: true })).toBeVisible();
-  await page.waitForTimeout(500);
+  await api.settle();
   expect(api.matching('GET', statsPath)).toHaveLength(3);
 });
 
 for (const outcome of ['success', 'rejected', 'unavailable'] as const) {
   test(`copying a generated key reports clipboard ${outcome}`, async ({ page, api }) => {
-    registerEmptyApp(api);
     api.post('/api/api-keys', { status: 201, json: CREATED_API_KEY });
     await page.addInitScript((outcome) => {
       Object.defineProperty(navigator, 'clipboard', {
@@ -155,7 +148,6 @@ for (const succeeds of [true, false]) {
     page,
     api,
   }) => {
-    registerEmptyApp(api);
     let finish!: () => void;
     const pending = new Promise<void>((resolve) => {
       finish = resolve;
@@ -193,7 +185,6 @@ for (const succeeds of [true, false]) {
 }
 
 test('key edits are saved through the modal while expanded details stay read-only', async ({ page, api }) => {
-  registerEmptyApp(api);
   const key = {
     ...API_KEY,
     creator_id: null,
@@ -201,7 +192,7 @@ test('key edits are saved through the modal while expanded details stay read-onl
     rate_limit_requests: 5,
     rate_limit_window: 60,
   };
-  api.get('/api/api-keys', { json: { data: [key], meta: { oldest_id: null, more_data: false } } });
+  api.get('/api/api-keys', { json: { data: [key], meta: PAGE_META } });
   api.get(`/api/api-keys/${IDS.apiKey}/stats`, {
     json: { id: IDS.apiKey, total_requests: 0, last_used_at: null, current_window: null },
   });
@@ -233,9 +224,8 @@ test('key edits are saved through the modal while expanded details stay read-onl
 });
 
 test('API key status filters reset pagination and only page through matching keys', async ({ page, api }) => {
-  registerEmptyApp(api);
   api.get('/api/api-keys', (request) => {
-    const query = new URLSearchParams(request.search);
+    const { query } = request;
     expect(query.get('limit')).toBe('20');
     if (query.get('status') === 'revoked') {
       expect(query.has('after_id')).toBe(false);
@@ -262,10 +252,10 @@ test('API key status filters reset pagination and only page through matching key
   await expect(page.getByText('Older key', { exact: true })).toBeVisible();
   await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
   expect(api.matching('GET', '/api/api-keys/count')).toHaveLength(4);
-  expect(new URLSearchParams(api.matching('GET', '/api/api-keys')[1]?.search).get('after_id')).toBe(IDS.apiKey);
+  expect(api.matching('GET', '/api/api-keys')[1]?.query.get('after_id')).toBe(IDS.apiKey);
   await page.getByRole('button', { name: 'Revoked', exact: true }).click();
   await expect(page.getByText('Revoked key', { exact: true })).toBeVisible();
   await expect.poll(() => api.matching('GET', '/api/api-keys/count').length).toBe(5);
   await expect(page.getByRole('button', { name: 'Older', exact: true })).not.toBeVisible();
-  expect(new URLSearchParams(api.matching('GET', '/api/api-keys')[2]?.search).has('after_id')).toBe(false);
+  expect(api.matching('GET', '/api/api-keys')[2]?.query.has('after_id')).toBe(false);
 });

@@ -1,16 +1,7 @@
 import { expect, test } from './api-mock';
-import {
-  FAILED_TRACE,
-  FAILED_TRACE_DETAIL,
-  LOG_META,
-  registerEmptyApp,
-  TRACE,
-  TRACE_DETAIL,
-  TRACE_IDS,
-} from './fixtures';
+import { FAILED_TRACE, FAILED_TRACE_DETAIL, LOG_META, TRACE, TRACE_DETAIL, TRACE_IDS } from './fixtures';
 
 test('a run is opened from the list and read down its waterfall', async ({ page, api }) => {
-  registerEmptyApp(api);
   api.get('/api/traces', { json: { data: [TRACE, FAILED_TRACE], meta: LOG_META } });
   api.get(`/api/traces/${TRACE_IDS.workflow}`, { json: TRACE_DETAIL });
   api.get(`/api/traces/${TRACE_IDS.failed}`, { json: FAILED_TRACE_DETAIL });
@@ -47,10 +38,6 @@ test('a run is opened from the list and read down its waterfall', async ({ page,
   // The waterfall is navigable without a mouse, and selection follows focus so
   // the detail panel and the map track the keyboard rather than needing a
   // second keystroke to commit.
-  await page
-    .getByRole('button', { name: /customer-support-escalation/ })
-    .first()
-    .click();
   await page
     .getByRole('button', { name: /checkout-recovery-agent/ })
     .first()
