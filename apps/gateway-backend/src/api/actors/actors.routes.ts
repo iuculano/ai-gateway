@@ -7,7 +7,7 @@ const resolveActors = createRoute({
   method: 'post',
   path: '/actors/resolve',
   security: bearerSecurity,
-  middleware: [authorize({ scopes: [SCOPES.actorsRead] })],
+  middleware: [authorize({ scopes: [SCOPES.actorsRead], actorTypes: ['user'] })], // Dashboard only. An API key has no reason to read the names of colleagues.
   request: {
     body: {
       required: true,
