@@ -33,6 +33,21 @@ test('missing actors have null displays', async () => {
   expect(result.data.map((actor) => actor.display)).toEqual([null, null]);
 });
 
+test('uppercase IDs resolve to the same actors as lowercase ones', async () => {
+  database.respondTo('select', 'users', rows({ id: USER_ID, name: 'Alex' }));
+  database.respondTo('select', 'api_keys', rows({ id: KEY_ID, name: 'Deployment' }));
+  const body = Schemas.resolveActors.body.parse({
+    actors: [
+      { actor_type: 'user', actor_id: USER_ID.toUpperCase() },
+      { actor_type: 'api_key', actor_id: KEY_ID.toUpperCase() },
+    ],
+  });
+  expect((await Services.resolveActors(body)).data).toEqual([
+    { actor_type: 'user', actor_id: USER_ID, display: { name: 'Alex' } },
+    { actor_type: 'api_key', actor_id: KEY_ID, display: { name: 'Deployment' } },
+  ]);
+});
+
 test('empty batches and system actors resolve without database results', async () => {
   expect(await Services.resolveActors({ actors: [] })).toEqual({ data: [] });
   expect(await Services.resolveActors({ actors: [{ actor_type: 'system', actor_id: null }] })).toEqual({

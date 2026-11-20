@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, expect, test } from 'bun:test';
-import { resolveUser } from '@repo/auth';
+import { resolveOrganization, resolveUser } from '@repo/auth';
 import { admin, prepareSuite, resetDatabase } from './setup';
 
 beforeAll(prepareSuite);
@@ -38,6 +38,40 @@ test('concurrent first logins converge on one user', async () => {
     from user_identities
     where external_idp = 'https://idp-a.example' and external_id = 'racing-subject'
   `;
+  expect(count?.value).toBe(1);
+});
+
+test('a changed profile replaces the stored one on the next resolution', async () => {
+  const id = await resolveUser('https://idp-a.example', 'subject-1', profile);
+  const renamed = { username: 'alexandra', email: 'alexandra@example.test', name: 'Alexandra' };
+
+  expect(await resolveUser('https://idp-a.example', 'subject-1', renamed)).toBe(id);
+
+  const [row] = await admin`select username, email, name from users where id = ${id}`;
+  expect(row).toEqual(renamed);
+});
+
+test('resolving an organization records its user as a member exactly once', async () => {
+  const userId = await resolveUser('https://idp-a.example', 'subject-1', profile);
+
+  const first = await resolveOrganization('https://idp-a.example', 'tenant-1', userId, 'Acme');
+  const second = await resolveOrganization('https://idp-a.example', 'tenant-1', userId, 'Acme');
+
+  expect(second.id).toBe(first.id);
+  const members = await admin`select organization_id, user_id from organization_members`;
+  expect(members).toEqual([{ organization_id: first.id, user_id: userId }]);
+});
+
+test('concurrent first logins to a new organization converge on one membership', async () => {
+  const userId = await resolveUser('https://idp-a.example', 'subject-1', profile);
+
+  const organizations = await Promise.all([
+    resolveOrganization('https://idp-a.example', 'racing-tenant', userId),
+    resolveOrganization('https://idp-a.example', 'racing-tenant', userId),
+  ]);
+
+  expect(new Set(organizations.map((organization) => organization.id)).size).toBe(1);
+  const [count] = await admin`select count(*)::int as value from organization_members`;
   expect(count?.value).toBe(1);
 });
 
