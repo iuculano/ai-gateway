@@ -1,10 +1,14 @@
 import { z } from '@hono/zod-openapi';
 import { createSchema } from '@repo/hono';
 
+// The database hands IDs back in lowercase, so an uppercase one has to be
+// normalized here or it would never match the row it resolved.
+const actorId = z.uuid().toLowerCase();
+
 const actorReference = z.discriminatedUnion('actor_type', [
-  z.object({ actor_type: z.literal('user'), actor_id: z.uuid() }),
-  z.object({ actor_type: z.literal('api_key'), actor_id: z.uuid() }),
-  z.object({ actor_type: z.literal('system'), actor_id: z.uuid().nullable() }),
+  z.object({ actor_type: z.literal('user'), actor_id: actorId }),
+  z.object({ actor_type: z.literal('api_key'), actor_id: actorId }),
+  z.object({ actor_type: z.literal('system'), actor_id: actorId.nullable() }),
 ]);
 
 const resolveActors = createSchema({
