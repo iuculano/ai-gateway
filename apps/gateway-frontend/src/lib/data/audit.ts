@@ -49,7 +49,7 @@ function toAuditChanges(value: unknown): Record<string, AuditChange> | undefined
 /**
  * Maps a backend audit log row to the view model the audit table renders.
  *
- * The API client resolves actor names through the batch actor endpoint.
+ * Actor names arrive with each row, already joined by the backend.
  */
 export function toAuditEvent(log: AuditLog): AuditEvent {
   const fallbackNames = {
@@ -58,7 +58,10 @@ export function toAuditEvent(log: AuditLog): AuditEvent {
     api_key: 'Unknown API key',
     system: 'System',
   };
-  const actorName = log.actor_name ?? fallbackNames[log.actor_type];
+
+  // An API key is labelled by its own name. actor_name is its owner there.
+  const resolvedName = log.actor_type === 'api_key' ? log.actor_api_key_name : log.actor_name;
+  const actorName = resolvedName ?? fallbackNames[log.actor_type];
 
   // The metadata JSON tab shows everything we know about the event; the
   // field-level diff arrives separately as `difference` and the row component
