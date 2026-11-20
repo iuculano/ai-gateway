@@ -95,11 +95,8 @@ export const cache = {
   /** Keyed by api key id: the fixed-window counter and its remaining ttl. */
   quota: {} as Record<string, { count: string | null; pttl: number }>,
 
-  /** Set to make every command reject, which is what a failing redis looks like. */
+  /** Set to make every command reject, which is what a redis outage looks like. */
   failure: null as Error | null,
-
-  /** False while the client has no connection, when the real one queues commands rather than failing them. */
-  connected: true,
 
   /** Redis keys deleted by the service, in call order. */
   deleted: [] as string[],
@@ -111,7 +108,6 @@ export const cache = {
     cache.usage = {};
     cache.quota = {};
     cache.failure = null;
-    cache.connected = true;
     cache.deleted = [];
   },
 };
@@ -133,10 +129,6 @@ function idFromKey(key: string): string {
 }
 
 const redis = {
-  get isReady() {
-    return cache.connected;
-  },
-
   async get(key: string) {
     if (cache.failure) throw cache.failure;
     cache.responseReads.push(key);

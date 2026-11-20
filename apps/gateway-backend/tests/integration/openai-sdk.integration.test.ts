@@ -9,7 +9,6 @@ import handlers from '../../src/api/chat-completions/chat-completions.handlers';
 import decisionHandlers from '../../src/api/decisions/decisions.handlers';
 import embeddingHandlers from '../../src/api/embeddings/embeddings.handlers';
 import LogServices from '../../src/api/logs/logs.services';
-import responseHandlers from '../../src/api/responses/responses.handlers';
 import { admin, callerFor, prepareSuite, resetDatabase, seedTenant, type Tenant } from './setup';
 
 /**
@@ -160,7 +159,6 @@ beforeEach(async () => {
   });
   app.use('*', callerContext());
   app.route('/v1', handlers);
-  app.route('/v1', responseHandlers);
   app.route('/v1', embeddingHandlers);
   app.route('/v1', decisionHandlers);
 
@@ -754,178 +752,6 @@ test('a stream the client abandons still runs to the end, and is logged incomple
   expect(await logRow(traceId)).toMatchObject({ status: 'incomplete', input_tokens: 12, output_tokens: 4 });
 });
 
-// The Responses API, as a translation over the same chat path.
-
-test('responses: create returns output text, usage and a completed status', async () => {
-  upstream.respond = () => completion({ content: 'Hello there' });
-
-  const response = await client.responses.create({
-    model: 'openai/test-model',
-    instructions: 'Be brief.',
-    input: 'Hi',
-  });
-
-  expect(response.status).toBe('completed');
-  expect(response.output_text).toBe('Hello there');
-  expect(response.usage).toMatchObject({ input_tokens: 12, output_tokens: 4, total_tokens: 16 });
-  expect(upstream.requests[0]?.messages).toMatchObject([
-    { role: 'system', content: 'Be brief.' },
-    { role: 'user', content: 'Hi' },
-  ]);
-});
-
-const lookupOrderTool = {
-  type: 'function' as const,
-  name: 'lookup_order',
-  description: 'Look up an order.',
-  parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-  strict: false,
-};
-
-test('responses: a function call comes back as an item, and its output goes back as history', async () => {
-  upstream.respond = () =>
-    completion(
-      {
-        content: null,
-        tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: '{"id":"A1"}' } }],
-      },
-      'tool_calls',
-    );
-
-  const first = await client.responses.create({
-    model: 'openai/test-model',
-    input: 'Where is A1?',
-    tools: [lookupOrderTool],
-  });
-  const call = first.output.find((item) => item.type === 'function_call');
-  expect(call).toMatchObject({
-    type: 'function_call',
-    call_id: 'call_1',
-    name: 'lookup_order',
-    arguments: '{"id":"A1"}',
-  });
-
-  upstream.respond = () => completion({ content: 'It ships tomorrow.' });
-  const second = await client.responses.create({
-    model: 'openai/test-model',
-    input: [
-      { role: 'user', content: 'Where is A1?' },
-      ...first.output,
-      { type: 'function_call_output', call_id: 'call_1', output: '{"status":"shipped"}' },
-    ] as OpenAI.Responses.ResponseInput,
-    tools: [lookupOrderTool],
-  });
-
-  expect(second.output_text).toBe('It ships tomorrow.');
-  expect(upstream.requests[1]?.messages).toMatchObject([
-    { role: 'user', content: 'Where is A1?' },
-    { role: 'assistant', tool_calls: [{ id: 'call_1', function: { name: 'lookup_order' } }] },
-    { role: 'tool', tool_call_id: 'call_1', content: '{"status":"shipped"}' },
-  ]);
-});
-
-test('responses: the SDK stream helper assembles text and reports usage', async () => {
-  upstream.respond = () =>
-    sse([
-      chunk({ role: 'assistant', content: '' }),
-      chunk({ content: 'Hel' }),
-      chunk({ content: 'lo' }),
-      chunk({}, 'stop', USAGE),
-    ]);
-
-  const stream = client.responses.stream({ model: 'openai/test-model', input: 'Hi' });
-  const deltas: string[] = [];
-  stream.on('response.output_text.delta', (event) => deltas.push(event.delta));
-  const final = await stream.finalResponse();
-
-  expect(deltas).toEqual(['Hel', 'lo']);
-  expect(final.output_text).toBe('Hello');
-  expect(final.usage?.total_tokens).toBe(16);
-});
-
-test('responses: a streamed function call is assembled by the SDK stream helper', async () => {
-  upstream.respond = () =>
-    sse([
-      chunk({ role: 'assistant', content: null }),
-      chunk({
-        tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'lookup_order', arguments: '' } }],
-      }),
-      chunk({ tool_calls: [{ index: 0, function: { arguments: '{"id":' } }] }),
-      chunk({ tool_calls: [{ index: 0, function: { arguments: '"A1"}' } }] }),
-      chunk({}, 'tool_calls', USAGE),
-    ]);
-
-  const final = await client.responses
-    .stream({ model: 'openai/test-model', input: 'Where is A1?', tools: [lookupOrderTool] })
-    .finalResponse();
-
-  expect(final.output).toMatchObject([
-    { type: 'function_call', call_id: 'call_1', name: 'lookup_order', arguments: '{"id":"A1"}' },
-  ]);
-});
-
-test('responses: text.format json_schema asks the provider for structured output', async () => {
-  upstream.respond = () => completion({ content: '{"city":"Paris"}' });
-
-  const response = await client.responses.create({
-    model: 'openai/test-model',
-    input: 'Capital of France?',
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'answer',
-        strict: true,
-        schema: {
-          type: 'object',
-          properties: { city: { type: 'string' } },
-          required: ['city'],
-          additionalProperties: false,
-        },
-      },
-    },
-  });
-
-  expect(JSON.parse(response.output_text)).toEqual({ city: 'Paris' });
-  expect(upstream.requests[0]?.response_format).toMatchObject({ type: 'json_schema', json_schema: { name: 'answer' } });
-});
-
-test('responses: an answer cut off by max_output_tokens is incomplete, and says why', async () => {
-  upstream.respond = () => completion({ content: 'Partial' }, 'length');
-
-  const response = await client.responses.create({ model: 'openai/test-model', input: 'Hi', max_output_tokens: 5 });
-
-  expect(response.status).toBe('incomplete');
-  expect(response.incomplete_details).toEqual({ reason: 'max_output_tokens' });
-});
-
-test('responses: previous_response_id is a clear 400, not silently dropped', async () => {
-  const error = await client.responses
-    .create({ model: 'openai/test-model', input: 'And then?', previous_response_id: 'resp_earlier' })
-    .catch((caught: unknown) => caught);
-
-  expect(error).toBeInstanceOf(OpenAI.BadRequestError);
-  expect(upstream.requests).toHaveLength(0);
-});
-
-test('responses: a provider failure after the stream opens raises in the SDK', async () => {
-  upstream.respond = () =>
-    sse(
-      [
-        chunk({ role: 'assistant', content: '' }),
-        chunk({ content: 'Partial' }),
-        { error: { message: 'Upstream overloaded', type: 'server_error' } },
-      ],
-      false,
-    );
-
-  const failure = await client.responses
-    .stream({ model: 'openai/test-model', input: 'Hi' })
-    .finalResponse()
-    .catch((caught: unknown) => caught);
-
-  expect(failure).toBeInstanceOf(OpenAI.APIError);
-});
-
 // Accounting: the tokens and cost stored must be what the provider billed, and
 // unknown must never be stored as zero.
 
@@ -1212,17 +1038,6 @@ test('timeout: before the first byte of a stream it is a 504, not an empty 200',
   expect(error.status).toBe(504);
 });
 
-test('timeout: a Responses stream raises instead of completing with a partial answer', async () => {
-  upstream.respond = stallingStream;
-
-  const failure = await client.responses
-    .stream({ model: 'openai/test-model', input: 'Hi' }, shortTimeout)
-    .finalResponse()
-    .catch((caught: unknown) => caught);
-
-  expect(failure).toBeInstanceOf(OpenAI.APIError);
-});
-
 // Settings that used to be dropped on the way to the provider.
 
 test('strict tools, image detail and the max reasoning effort reach the provider', async () => {
@@ -1327,7 +1142,6 @@ for (const [name, call] of [
         stream: true,
       }),
   ],
-  ['responses', () => client.responses.create({ model: 'openai/test-model', input: 'Hi' })],
   ['embeddings', () => client.embeddings.create({ model: 'openai/embed-model', input: 'Hi' })],
   [
     'decisions',
@@ -1514,19 +1328,6 @@ test('streamed Claude tool calls with no arguments still carry valid JSON', asyn
   expect(final.choices[0]?.message.tool_calls).toMatchObject([
     { id: 'toolu_1', function: { arguments: '{}' } },
     { id: 'toolu_2', function: { arguments: '{}' } },
-  ]);
-
-  // The same calls through the Responses API, where each one is its own item.
-  const response = await client.responses
-    .stream({
-      model: 'anthropic/claude-test',
-      input: 'What time is it?',
-      tools: [{ type: 'function', name: 'get_time', parameters: { type: 'object', properties: {} }, strict: false }],
-    })
-    .finalResponse();
-  expect(response.output).toMatchObject([
-    { call_id: 'toolu_1', arguments: '{}' },
-    { call_id: 'toolu_2', arguments: '{}' },
   ]);
 });
 
