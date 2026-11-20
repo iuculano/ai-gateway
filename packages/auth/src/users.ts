@@ -1,6 +1,7 @@
 import { generateActorId } from '@repo/core';
 import { and, db, eq } from '@repo/drizzle';
 import { type UserRow, userIdentities, users } from '@repo/drizzle/schemas';
+import { getLogger } from '@repo/hono';
 import { HTTPException } from 'hono/http-exception';
 
 type User = UserRow;
@@ -12,10 +13,10 @@ type UserProvisionProfile = Pick<UserRow, 'username' | 'email' | 'name'>;
  * This lookup deliberately is not authorization-cached. User suspension must
  * take effect on the next authentication attempt, not after an in-process TTL.
  */
-async function findUserByExternalIdentity(issuer: string, externalId: string): Promise<string | null> {
+async function findUserByExternalIdentity(issuer: string, externalId: string): Promise<User | null> {
   // biome-ignore format: looks nicer
   const [row] = await db
-    .select({ id: users.id, status: users.status })
+    .select({ user: users })
     .from(userIdentities)
     .innerJoin(users, eq(userIdentities.user_id, users.id))
     .where(and(
@@ -27,13 +28,13 @@ async function findUserByExternalIdentity(issuer: string, externalId: string): P
     return null;
   }
 
-  if (row.status !== 'active') {
+  if (row.user.status !== 'active') {
     throw new HTTPException(403, {
       cause: 'User is not active',
     });
   }
 
-  return row.id;
+  return row.user;
 }
 
 /**
@@ -51,12 +52,30 @@ export async function getUserById(id: string): Promise<User | null> {
 
 /**
  * Resolves an external identity to a stable local user, provisioning both the
- * human and its issuer-qualified credential mapping on first sight.
+ * human and its issuer-qualified credential mapping on first sight. The stored
+ * profile follows the identity provider afterwards.
  */
 export async function resolveUser(issuer: string, externalId: string, profile: UserProvisionProfile): Promise<string> {
   const existing = await findUserByExternalIdentity(issuer, externalId);
   if (existing) {
-    return existing;
+    const changed =
+      existing.username !== profile.username || existing.email !== profile.email || existing.name !== profile.name;
+
+    if (changed) {
+      // A rename is cosmetic, not really the end of the wworld if this fails.
+      // Just log it and continue for now.
+      try {
+        // biome-ignore format: looks nicer
+        await db
+          .update(users)
+          .set({ username: profile.username, email: profile.email, name: profile.name })
+          .where(eq(users.id, existing.id));
+      } catch (error) {
+        getLogger().error({ err: error }, 'Failed to refresh user profile');
+      }
+    }
+
+    return existing.id;
   }
 
   try {
@@ -88,7 +107,7 @@ export async function resolveUser(issuer: string, externalId: string, profile: U
     // rejects the loser - just re-read in this case.
     const retry = await findUserByExternalIdentity(issuer, externalId);
     if (retry) {
-      return retry;
+      return retry.id;
     }
 
     throw error;

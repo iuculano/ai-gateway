@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { users } from './users';
 
 /**
  * The tenant / user-pool.
@@ -33,6 +34,28 @@ export const organizations = pgTable(
   (t) => [
     // For organization lookups from an external provider.
     uniqueIndex('orgs_external_idx').on(t.external_idp, t.external_id),
+  ],
+);
+
+/**
+ * The users who have acted under an organization.
+ *
+ * A row is written the first time a user authenticates under an organization.
+ */
+export const organizationMembers = pgTable(
+  'organization_members',
+  {
+    organization_id: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Organization first, so one organization's lookups stay on the key.
+    primaryKey({ columns: [t.organization_id, t.user_id] }),
   ],
 );
 
