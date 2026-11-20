@@ -4,34 +4,38 @@ import { createAzure } from '@ai-sdk/azure';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { createCacheKey, parseTags } from '@repo/core';
+import { parseTags, publicFetch } from '@repo/core';
 import { getCaller } from '@repo/hono';
 import {
-  type CallSettings,
+  createDownload,
   type FinishReason,
   generateText,
   type JSONSchema7,
   type JSONValue,
   jsonSchema,
   type LanguageModel,
+  type LanguageModelCallOptions,
   type LanguageModelUsage,
   type ModelMessage,
+  Output,
+  type OutputInterface,
+  type RequestOptions,
   streamText,
   type ToolChoice,
   type ToolSet,
   tool,
   wrapLanguageModel,
 } from 'ai';
-import { LRUCache } from 'lru-cache';
 import { err, ok, type Result } from 'neverthrow';
 import {
   type ModelResolutionFailure,
   type ProviderFailure,
-  resolveModel as resolveCatalogModel,
+  shouldFallBack,
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
 import LogsService, { type PendingLog } from '../logs/logs.services';
 import type { GetModelResponse } from '../models/models.schemas';
+import ModelsService from '../models/models.services';
 import WebhookServices from '../webhooks/webhooks.services';
 import { createCacheMiddleware } from './chat-completions.cache';
 import type {
@@ -48,39 +52,15 @@ import type {
 // Exclude string model IDs - wrapLanguageModel requires a model instance.
 type LanguageModelInstance = Exclude<LanguageModel, string>;
 
-const providerCache = new LRUCache<string, LanguageModelInstance>({
-  max: 1000,
-  ttl: 1000 * 60 * 60, // 1 hour
-});
-
-const PROVIDERS = ['openai', 'azure', 'google', 'anthropic', 'openrouter'] as const;
-
-type Provider = (typeof PROVIDERS)[number];
-
-function isProvider(value: string): value is Provider {
-  return (PROVIDERS as readonly string[]).includes(value);
-}
-
-interface ResolvedModel {
-  provider: Provider;
-  modelId: string;
-  instance: LanguageModelInstance;
-  info: GetModelResponse;
+interface ProviderSettings {
+  apiKey: string;
+  baseURL?: string;
 }
 
 // The underlying error definitions.
 type UnknownToolCallFailure = {
   code: 'UNKNOWN_TOOL_CALL';
   tool_call_id: string;
-};
-
-type UnsupportedResponseFormatFailure = {
-  code: 'UNSUPPORTED_RESPONSE_FORMAT';
-  response_format: string;
-};
-
-type TopLogprobsRequiresLogprobsFailure = {
-  code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS';
 };
 
 type WebhookNotFoundFailure = {
@@ -92,75 +72,74 @@ type WebhookNotFoundFailure = {
 export type CreateChatCompletionFailure =
   | ModelResolutionFailure
   | UnknownToolCallFailure
-  | UnsupportedResponseFormatFailure
-  | TopLogprobsRequiresLogprobsFailure
   | WebhookNotFoundFailure
   | ProviderFailure;
 
 export type StreamChatCompletionFailure = CreateChatCompletionFailure;
 
-/** Selects a catalog model and creates or reuses its provider instance. */
-async function resolveModel(
-  requestedModels: string,
-  headers: ChatCompletionHeaders,
-): Promise<Result<ResolvedModel, ModelResolutionFailure>> {
-  const resolved = await resolveCatalogModel(requestedModels, 'chat', {
-    strategy: headers['ai-routing-strategy'],
-    weights: headers['ai-routing-weights'],
-  });
-  if (resolved.isErr()) {
-    return err(resolved.error);
-  }
+// How long a call may keep running once its caller has left.
+const ABANDONED_CALL_MS = 5 * 60_000;
 
-  const info = resolved.value;
-  if (!isProvider(info.provider)) {
-    return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
-  }
+/**
+ * Instantiates an AI SDK chat model based on the provider and model name.
+ *
+ * @param provider
+ * The name of the provider (e.g., 'openai', 'anthropic').
+ *
+ * @param model
+ * The name of the chat model.
+ *
+ * @param settings
+ * Provider specific configuration such as the API key and optional base URL.
+ *
+ * @returns
+ * The instantiated chat model or undefined if the provider is unsupported.
+ */
+function createSdkChatModel(
+  provider: string,
+  model: string,
+  settings: ProviderSettings,
+): LanguageModelInstance | undefined {
+  // If we're overriding the base URL, we need to provide a custom fetch that
+  // prevents you from calling something internal to the gateway's network.
+  const config = settings.baseURL ? { ...settings, fetch: publicFetch } : settings;
 
-  const apiKey = headers['ai-api-key'];
-  const baseUrl = headers['ai-base-url'];
-
-  const provider = info.provider;
-  const modelId = info.name;
-
-  const cacheKey = createCacheKey('chat-completions:', {
-    provider: provider,
-    modelId: modelId,
-    apiKey: apiKey,
-    baseUrl: baseUrl ?? null,
-  });
-
-  const cached = providerCache.get(cacheKey);
-  if (cached) {
-    return ok({ provider, modelId, instance: cached, info });
-  }
-
-  const config = { apiKey: apiKey, baseURL: baseUrl };
-  let instance: LanguageModelInstance;
   switch (provider) {
     case 'openai':
-      instance = createOpenAI(config).chat(modelId);
-      break;
+      return createOpenAI(config).chat(model);
+
     case 'azure':
-      instance = createAzure(config).chat(modelId);
-      break;
+      return createAzure(config).chat(model);
+
     case 'google':
-      instance = createGoogleGenerativeAI(config)(modelId);
-      break;
+      return createGoogleGenerativeAI(config)(model);
+
     case 'anthropic':
-      instance = createAnthropic(config)(modelId);
-      break;
+      return createAnthropic(config)(model);
+
     case 'openrouter':
-      instance = createOpenRouter(config)(modelId);
-      break;
+      // Only strict mode asks for usage on streams - without it a stream's
+      // tokens and cost are lost.
+      return createOpenRouter({ ...config, compatibility: 'strict' })(model, { usage: { include: true } });
+
+    default:
+      return undefined;
   }
-
-  providerCache.set(cacheKey, instance);
-
-  return ok({ provider, modelId, instance, info });
 }
 
-function flattenText(content: string | Array<{ type: 'text'; text: string }>): string {
+/**
+ * Flattens the content into a single string.
+ *
+ * It's possible to submit content as an array of objects. This function
+ * normalizes it into a single string.
+ *
+ * @param content
+ * The content to flatten, either a string or an array of text parts.
+ *
+ * @returns
+ * The flattened string content.
+ */
+function normalizeContent(content: string | Array<{ type: 'text'; text: string }>): string {
   return typeof content === 'string' ? content : content.map((part) => part.text).join('');
 }
 
@@ -182,8 +161,8 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
       case 'system':
       case 'developer':
         converted.push({
-          role: 'system',
-          content: flattenText(message.content),
+          role: 'system', // AI SDK treats both 'system' and 'developer' as 'system'
+          content: normalizeContent(message.content),
         });
         break;
 
@@ -196,7 +175,13 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
               : message.content.map((part) =>
                   part.type === 'text'
                     ? { type: 'text' as const, text: part.text }
-                    : { type: 'image' as const, image: part.image_url.url },
+                    : {
+                        type: 'image' as const,
+                        image: part.image_url.url,
+                        ...(part.image_url.detail // Forwwward image detail setting for OpenAI
+                          ? { providerOptions: { openai: { imageDetail: part.image_url.detail } } }
+                          : {}),
+                      },
                 ),
         });
         break;
@@ -206,7 +191,7 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
           toolNamesByCallId.set(call.id, call.function.name);
         }
 
-        const text = message.content == null ? '' : flattenText(message.content);
+        const text = message.content == null ? '' : normalizeContent(message.content);
 
         converted.push({
           role: 'assistant',
@@ -236,7 +221,7 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
               type: 'tool-result',
               toolCallId: message.tool_call_id,
               toolName: toolName,
-              output: { type: 'text', value: flattenText(message.content) },
+              output: { type: 'text', value: normalizeContent(message.content) },
             },
           ],
         });
@@ -248,45 +233,52 @@ function toSdkMessages(messages: ChatCompletionMessage[]): Result<ModelMessage[]
   return ok(converted);
 }
 
-/** Preserves malformed tool arguments as a string. */
+/**
+ * Try to fall back on a parse failure.
+ *
+ * Seems possible in some edge cases like a tool call getting cut off by
+ * `max_tokens`.
+ *
+ * This feels a bit hacky and I kind of hate it...
+ *
+ * @param value
+ * The JSON string to parse.
+ *
+ * @returns
+ * The parsed object, or an empty object if parsing fails.
+ */
 function safeParseJson(value: string): unknown {
   try {
     return JSON.parse(value);
   } catch {
-    return value;
+    return {};
   }
-}
-
-function checkSupported(
-  body: ChatCompletionBody,
-): Result<void, UnsupportedResponseFormatFailure | TopLogprobsRequiresLogprobsFailure> {
-  // Structured output needs the SDK's output option, which is not implemented here.
-  if (body.response_format && body.response_format.type !== 'text') {
-    return err({ code: 'UNSUPPORTED_RESPONSE_FORMAT', response_format: body.response_format.type });
-  }
-
-  if (body.top_logprobs != null && !body.logprobs) {
-    return err({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
-  }
-
-  return ok(undefined);
 }
 
 /**
- * The generation settings that map onto the SDK's own call options.
+ * Convert the request body and headers into the SDK's call settings.
+ *
+ * This is effectively a translation from OpenAI's request format to the AI
+ * SDK's call settings.
  *
  * @param body
  * The validated request body.
  *
  * @param headers
  * The gateway headers, which carry the retry and timeout overrides.
+ *
+ * @returns
+ * The SDK call settings.
  */
 function toSdkCallSettings(
   body: ChatCompletionBody,
   headers: ChatCompletionHeaders,
-): CallSettings & { timeout?: number } {
-  // max_completion_tokens supersedes max_tokens upstream, so it wins here too.
+): LanguageModelCallOptions & RequestOptions {
+  // `max_completion_tokens` supersedes `max_tokens`
   const maxOutputTokens = body.max_completion_tokens ?? body.max_tokens;
+
+  // Seems like this isn't guaranteed to return a string... it can actually wind
+  // up as a string array???
   const stopSequences = body.stop == null ? undefined : typeof body.stop === 'string' ? [body.stop] : body.stop;
 
   return {
@@ -297,24 +289,45 @@ function toSdkCallSettings(
     ...(body.frequency_penalty != null ? { frequencyPenalty: body.frequency_penalty } : {}),
     ...(body.seed != null ? { seed: body.seed } : {}),
     ...(stopSequences?.length ? { stopSequences: stopSequences } : {}),
-    ...(headers['ai-max-retries'] != null ? { maxRetries: headers['ai-max-retries'] } : {}),
+    ...(body.reasoning_effort != null ? { reasoning: body.reasoning_effort } : {}),
     ...(headers['ai-timeout-ms'] != null ? { timeout: headers['ai-timeout-ms'] } : {}),
+    maxRetries: headers['ai-max-retries'] ?? 0, // OpenAI SDK retries on its own, make this opt in
   };
 }
 
 /**
- * The settings that have no cross-provider equivalent and ride along in the
- * provider's own namespace.
+ * Convert the request body into AI SDK provider-specific options.
  *
  * @param body
  * The validated request body.
+ *
+ * @param provider
+ * The provider name.
+ *
+ * @returns
+ * The provider-specific options, or undefined if none are applicable.
  */
-function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<string, JSONValue>> | undefined {
+function toSdkProviderOptions(
+  body: ChatCompletionBody,
+  provider: string,
+): Record<string, Record<string, JSONValue>> | undefined {
+  // Normalize some provider-specific options...
+  if (provider === 'openrouter') {
+    const options: Record<string, JSONValue> = {
+      ...(body.user != null ? { user: body.user } : {}),
+      ...(body.parallel_tool_calls != null ? { parallel_tool_calls: body.parallel_tool_calls } : {}),
+      ...(body.reasoning_effort != null ? { reasoning: { effort: body.reasoning_effort } } : {}),
+    };
+
+    return Object.keys(options).length > 0 ? { openrouter: options } : undefined;
+  }
+
+  const strict = body.response_format?.type === 'json_schema' ? body.response_format.json_schema.strict : undefined;
+
   const options: Record<string, JSONValue> = {
     ...(body.logit_bias != null ? { logitBias: body.logit_bias } : {}),
     ...(body.parallel_tool_calls != null ? { parallelToolCalls: body.parallel_tool_calls } : {}),
     ...(body.user != null ? { user: body.user } : {}),
-    ...(body.reasoning_effort != null ? { reasoningEffort: body.reasoning_effort } : {}),
     ...(body.store != null ? { store: body.store } : {}),
     ...(body.metadata != null ? { metadata: body.metadata } : {}),
     ...(body.prediction != null ? { prediction: body.prediction as JSONValue } : {}),
@@ -322,6 +335,7 @@ function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<s
     ...(body.verbosity != null ? { textVerbosity: body.verbosity } : {}),
     ...(body.prompt_cache_key != null ? { promptCacheKey: body.prompt_cache_key } : {}),
     ...(body.safety_identifier != null ? { safetyIdentifier: body.safety_identifier } : {}),
+    ...(body.response_format?.type === 'json_schema' ? { strictJsonSchema: strict ?? false } : {}), // The AI SDK makes schemas strict unless told otherwise, and OpenAI doesn't.
 
     // The SDK uses in_memory; the request uses in-memory.
     ...(body.prompt_cache_retention != null
@@ -329,19 +343,19 @@ function toSdkProviderOptions(body: ChatCompletionBody): Record<string, Record<s
           promptCacheRetention: body.prompt_cache_retention === 'in-memory' ? 'in_memory' : body.prompt_cache_retention,
         }
       : {}),
-
-    // The SDK accepts true or the number of alternative tokens.
-    ...(body.logprobs ? { logprobs: body.top_logprobs ?? true } : {}),
   };
 
   return Object.keys(options).length > 0 ? { openai: options } : undefined;
 }
 
 /**
- * Translates OpenAI tool definitions into an SDK tool set.
+ * Converts OpenAI tool definitions into an AI SDK tool set.
  *
  * @param body
  * The validated request body.
+ *
+ * @returns
+ * The corresponding AI SDK tool set, or undefined if no tools are defined.
  */
 function toSdkTools(body: ChatCompletionBody): ToolSet | undefined {
   if (!body.tools?.length) {
@@ -352,6 +366,7 @@ function toSdkTools(body: ChatCompletionBody): ToolSet | undefined {
   for (const definition of body.tools) {
     tools[definition.function.name] = tool({
       ...(definition.function.description ? { description: definition.function.description } : {}),
+      ...(definition.function.strict != null ? { strict: definition.function.strict } : {}),
       inputSchema: jsonSchema((definition.function.parameters ?? { type: 'object', properties: {} }) as JSONSchema7),
     });
   }
@@ -371,7 +386,41 @@ function toSdkToolChoice(body: ChatCompletionBody): ToolChoice<ToolSet> | undefi
   return { type: 'tool' as const, toolName: body.tool_choice.function.name };
 }
 
-/** SDK finish reasons without an OpenAI equivalent map to stop. */
+/**
+ * The SDK's plain text output, asking the provider for JSON. The text passes
+ * through unparsed, where Output.json() would fail on anything that isn't valid.
+ *
+ * @param body
+ * The validated request body.
+ */
+function toSdkOutput(body: ChatCompletionBody): OutputInterface<string, string, never> | undefined {
+  const format = body.response_format;
+  if (!format || format.type === 'text') {
+    return undefined;
+  }
+
+  const responseFormat =
+    format.type === 'json_object'
+      ? { type: 'json' as const }
+      : {
+          type: 'json' as const,
+          name: format.json_schema.name,
+          ...(format.json_schema.description ? { description: format.json_schema.description } : {}),
+          ...(format.json_schema.schema ? { schema: format.json_schema.schema as JSONSchema7 } : {}),
+        };
+
+  return { ...Output.text(), responseFormat: Promise.resolve(responseFormat) };
+}
+
+/**
+ * Convert AI SDK finish reasons into OpenAI's shape.
+ *
+ * @param reason
+ * The finish reason from the SDK.
+ *
+ * @returns
+ * The corresponding OpenAI finish reason.
+ */
 function toOpenAIFinishReason(reason: FinishReason): ChatCompletionFinishReason {
   switch (reason) {
     case 'length':
@@ -388,232 +437,241 @@ function toOpenAIFinishReason(reason: FinishReason): ChatCompletionFinishReason 
   }
 }
 
-function toOpenAIUsage(usage: LanguageModelUsage): ChatCompletionUsage {
+/**
+ * Convert AI SDK usage into OpenAI's usage shape.
+ *
+ * @param usage
+ * The usage information from the AI SDK.
+ *
+ * @returns
+ * The usage information in OpenAI's shape, or undefined if not available.
+ */
+function toOpenAIUsage(usage: LanguageModelUsage): ChatCompletionUsage | undefined {
+  // Something probably went wrong, but some providers can also deliberately
+  // omit usage information (like OpenRouter, seemingly).
+  if (usage.inputTokens == null && usage.outputTokens == null) {
+    return undefined;
+  }
+
+  // OpenAI seems to always set a value for these.
   const promptTokens = usage.inputTokens ?? 0;
   const completionTokens = usage.outputTokens ?? 0;
 
+  // OpenAI ALSO seemingly always sets these, but we differentiate to make
+  // logging clearer / to give it a clear "unknown" marker.
   const cachedTokens = usage.inputTokenDetails?.cacheReadTokens;
+  const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens;
   const reasoningTokens = usage.outputTokenDetails?.reasoningTokens;
 
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: usage.totalTokens ?? promptTokens + completionTokens,
-    ...(cachedTokens != null ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
+    ...(cachedTokens != null || cacheWriteTokens != null
+      ? {
+          prompt_tokens_details: {
+            cached_tokens: cachedTokens ?? 0,
+            ...(cacheWriteTokens != null ? { cache_write_tokens: cacheWriteTokens } : {}),
+          },
+        }
+      : {}),
     ...(reasoningTokens != null ? { completion_tokens_details: { reasoning_tokens: reasoningTokens } } : {}),
   };
 }
 
-function closeLog(
-  log: PendingLog,
-  headers: ChatCompletionHeaders,
-  request: ChatCompletionBody,
-  response: ChatCompletion,
-  model: GetModelResponse,
-  responseTimeMs: number,
-  cacheHit: boolean,
-): void {
-  LogsService.completeLog(log, {
-    request: request,
-    response: response,
-    // Omit headers exclude payloads, not usage or costs.
-    omitRequest: headers['ai-log-omit-request'],
-    omitResponse: headers['ai-log-omit-response'],
-    gateway_cache_hit: cacheHit,
-    input_tokens: response.usage.prompt_tokens,
-    cached_input_tokens: response.usage.prompt_tokens_details?.cached_tokens ?? null,
-    output_tokens: response.usage.completion_tokens,
-    ...(cacheHit ? { input_cost: 0, output_cost: 0 } : calculateCosts(response.usage, model)),
-    response_time_ms: Math.round(responseTimeMs),
-  });
-}
-
-function calculateCosts(
-  usage: ChatCompletionUsage,
-  model: Pick<GetModelResponse, 'cost_input' | 'cost_output' | 'cost_cache_read'>,
-): { input_cost?: number; output_cost?: number } {
-  const costs: { input_cost?: number; output_cost?: number } = {};
-  const cachedTokens = Math.min(usage.prompt_tokens, usage.prompt_tokens_details?.cached_tokens ?? 0);
-
-  if (model.cost_input != null) {
-    const inputTokens = usage.prompt_tokens - cachedTokens;
-    const cachedInputCost = cachedTokens * (model.cost_cache_read ?? model.cost_input);
-    costs.input_cost = (inputTokens * model.cost_input + cachedInputCost) / 1_000_000;
-  }
-
-  if (model.cost_output != null) {
-    costs.output_cost = (usage.completion_tokens * model.cost_output) / 1_000_000;
-  }
-
-  return costs;
-}
-
-function abandonLog(
-  log: PendingLog,
-  headers: ChatCompletionHeaders,
-  request: ChatCompletionBody,
-  status: 'failed' | 'incomplete' = 'failed',
-): void {
-  LogsService.failLog(log, { request: request, omitRequest: headers['ai-log-omit-request'] }, status);
-}
-
-/** Validate the webhook before incurring provider usage. */
-async function queueWebhook(
-  headers: ChatCompletionHeaders,
-  log: PendingLog,
-): Promise<Result<void, WebhookNotFoundFailure>> {
-  const webhookId = headers['ai-webhook-id'];
-  if (!webhookId) {
-    return ok(undefined);
-  }
-
-  const queued = await WebhookServices.enqueueDelivery(webhookId, log.id);
-
-  if (queued.isErr()) {
-    return err({ code: 'WEBHOOK_NOT_FOUND', id: queued.error.id });
-  }
-
-  return ok(undefined);
-}
-
-function cacheModel(
-  model: ResolvedModel,
-  headers: ChatCompletionHeaders,
-  cache: { hit: boolean },
-): LanguageModelInstance {
-  if (!headers['ai-cache-enabled']) {
-    return model.instance;
-  }
-
-  const caller = getCaller();
-
-  const scope = createCacheKey('chat-completions:scope:', {
-    organizationId: caller.organization.id,
-    provider: model.provider,
-    modelId: model.modelId,
-    apiKey: headers['ai-api-key'],
-    baseUrl: headers['ai-base-url'] ?? null,
-  });
-
-  return wrapLanguageModel({
-    model: model.instance,
-    middleware: createCacheMiddleware(scope, cache, {
-      ttl: headers['ai-cache-ttl'] ?? 300,
-      refresh: headers['ai-cache-refresh'] ?? false,
-    }),
-  });
-}
-
 /**
- * Generate a non-streaming chat completion.
+ * Builds a chat.completion.
  *
+ * @param fields
+ * What goes into it.
  */
-async function createChatCompletion(
-  headers: ChatCompletionHeaders,
-  body: ChatCompletionBody,
-  onLog?: (logId: string) => void,
-): Promise<Result<ChatCompletion, CreateChatCompletionFailure>> {
-  const supported = checkSupported(body);
-  if (supported.isErr()) {
-    return err(supported.error);
-  }
-
-  const resolved = await resolveModel(body.model, headers);
-  if (resolved.isErr()) {
-    return err(resolved.error);
-  }
-
-  const messages = toSdkMessages(body.messages);
-  if (messages.isErr()) {
-    return err(messages.error);
-  }
-
-  const model = resolved.value;
-  const tools = toSdkTools(body);
-  const providerOptions = toSdkProviderOptions(body);
-
-  // The OpenAI-style user field fills the well-known user_id tag, unless the
-  // ai-log-tags header names one.
-  const tags = parseTags(headers['ai-log-tags']) ?? {};
-  if (body.user && tags.user_id === undefined) {
-    tags.user_id = body.user;
-  }
-
-  const log = LogsService.startLog({
-    operation: 'chat',
-    model: model.modelId,
-    provider: model.provider,
-    tags,
-  });
-  onLog?.(log.id);
-
-  const queued = await queueWebhook(headers, log);
-  if (queued.isErr()) {
-    abandonLog(log, headers, body);
-    return err(queued.error);
-  }
-
-  const cache = { hit: false };
-  const startedAt = performance.now();
-
-  let result: Awaited<ReturnType<typeof generateText>>;
-  try {
-    result = await generateText({
-      model: cacheModel(model, headers, cache),
-      messages: messages.value,
-
-      // Preserve caller message order instead of hoisting system messages into instructions.
-      allowSystemInMessages: true,
-
-      ...toSdkCallSettings(body, headers),
-      ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
-      ...(providerOptions ? { providerOptions } : {}),
-    });
-  } catch (error) {
-    abandonLog(log, headers, body);
-
-    return err(toProviderFailure(error));
-  }
-
-  const responseTimeMs = performance.now() - startedAt;
-
-  const toolCalls = result.toolCalls.map((call) => ({
-    id: call.toolCallId,
-    type: 'function' as const,
-    function: {
-      name: call.toolName,
-      arguments: JSON.stringify(call.input ?? {}),
-    },
-  }));
-
-  const completion: ChatCompletion = {
-    id: result.response.id,
+function toCompletion(fields: {
+  id: string;
+  created: number;
+  model: string;
+  text: string;
+  toolCalls: ChatCompletionToolCall[];
+  finishReason: ChatCompletionFinishReason;
+  usage: ChatCompletionUsage | undefined;
+}): ChatCompletion {
+  return {
+    id: fields.id,
     object: 'chat.completion',
-    created: Math.floor(result.response.timestamp.getTime() / 1000),
-    model: result.response.modelId,
+    created: fields.created,
+    model: fields.model,
     choices: [
       {
         index: 0,
         message: {
           role: 'assistant',
-          content: result.text.length > 0 ? result.text : null,
+          content: fields.text.length > 0 ? fields.text : null,
           refusal: null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          ...(fields.toolCalls.length > 0 ? { tool_calls: fields.toolCalls } : {}),
         },
         logprobs: null,
-        finish_reason: toOpenAIFinishReason(result.finishReason),
+        finish_reason: fields.finishReason,
       },
     ],
-    usage: toOpenAIUsage(result.totalUsage),
+    ...(fields.usage ? { usage: fields.usage } : {}),
   };
-
-  closeLog(log, headers, body, completion, model.info, responseTimeMs, cache.hit);
-
-  return ok(completion);
 }
 
 /**
- * Generates a a stream of chat completion chunks.
+ * Builds one chat.completion.chunk of a stream.
+ *
+ * @param frame
+ * The id, timestamp and model every chunk of the stream shares.
+ *
+ * @param delta
+ * What this chunk adds.
+ *
+ * @param finishReason
+ * Why the answer ended, on the last chunk only.
+ */
+function toChunk(
+  frame: { id: string; created: number; model: string },
+  delta: ChatCompletionChunk['choices'][number]['delta'],
+  finishReason: ChatCompletionFinishReason | null,
+): ChatCompletionChunk {
+  return {
+    id: frame.id,
+    object: 'chat.completion.chunk',
+    created: frame.created,
+    model: frame.model,
+    choices: [{ index: 0, delta: delta, finish_reason: finishReason }],
+  };
+}
+
+/**
+ * What a call cost, from the catalog's prices or from what the provider says it
+ * charged.
+ *
+ * @param usage
+ * The usage the provider reported, if any.
+ *
+ * @param model
+ * The catalog entry, with its per-million-token prices.
+ *
+ * @param reportedCost
+ * What the provider says it charged, when it says. It wins over the catalog.
+ */
+function calculateCosts(
+  usage: ChatCompletionUsage | undefined,
+  model: Pick<GetModelResponse, 'cost_input' | 'cost_output' | 'cost_cache_read' | 'config'>,
+  reportedCost?: number,
+): { input_cost: number | null; output_cost: number | null } {
+  let input: number | null = null;
+  let output: number | null = null;
+
+  // The catalog estimate. Cache reads and writes have their own prices, and
+  // fall back to the plain input price when the catalog has none.
+  if (usage && model.cost_input != null && model.cost_output != null) {
+    const details = usage.prompt_tokens_details;
+    const cachedTokens = Math.min(usage.prompt_tokens, details?.cached_tokens ?? 0);
+    const writtenTokens = Math.min(usage.prompt_tokens - cachedTokens, details?.cache_write_tokens ?? 0);
+
+    // The catalog keeps the write price in config, and null there means unknown.
+    const writePrice = model.config?.cost_cache_write;
+    const cacheCost =
+      cachedTokens * (model.cost_cache_read ?? model.cost_input) +
+      writtenTokens * (typeof writePrice === 'number' ? writePrice : model.cost_input);
+
+    input = ((usage.prompt_tokens - cachedTokens - writtenTokens) * model.cost_input + cacheCost) / 1_000_000;
+    output = (usage.completion_tokens * model.cost_output) / 1_000_000;
+  }
+
+  // If the provider didn't report a cost, use the catalog estimate.
+  // Null when there's no usage or no catalog price.
+  if (reportedCost == null) {
+    return { input_cost: input, output_cost: output };
+  }
+
+  // The provider reported one total, but the log keeps input and output apart.
+  // With no estimate to split it by, the whole charge goes on input, so the
+  // total is still exact.
+  if (input == null || output == null || input + output <= 0) {
+    return { input_cost: reportedCost, output_cost: 0 };
+  }
+
+  // Otherwise split it in the same proportions as the catalog estimate.
+  const estimated = input + output;
+  return {
+    input_cost: (reportedCost * input) / estimated,
+    output_cost: (reportedCost * output) / estimated,
+  };
+}
+
+/**
+ * What OpenRouter says it charged, which can differ from the catalog when it
+ * routes to a pricier upstream. Other providers report no cost.
+ *
+ * @param provider
+ * The provider that answered.
+ *
+ * @param usage
+ * The call's usage, with the provider's own usage object as `raw`.
+ */
+function reportedCostOf(provider: string, usage: LanguageModelUsage): number | undefined {
+  const raw = usage.raw as
+    | { cost?: number; is_byok?: boolean; cost_details?: { upstream_inference_cost?: number | null } }
+    | undefined;
+
+  if (provider !== 'openrouter' || typeof raw?.cost !== 'number') {
+    return undefined;
+  }
+
+  // With your own provider key, cost is only OpenRouter's fee and the
+  // upstream's charge comes separately.
+  return raw.cost + (raw.is_byok ? (raw.cost_details?.upstream_inference_cost ?? 0) : 0);
+}
+
+/** Everything a call needs once the request has been checked and its log opened. */
+interface Prepared {
+  log: PendingLog;
+  cache: { hit: boolean };
+  call: SdkCall;
+}
+
+/** The options both generateText and streamText get. */
+type SdkCall = LanguageModelCallOptions &
+  RequestOptions & {
+    model: LanguageModelInstance;
+    messages: ModelMessage[];
+    output?: OutputInterface<string, string, never>;
+    allowSystemInMessages: true;
+    tools?: ToolSet;
+    toolChoice?: ToolChoice<ToolSet>;
+    providerOptions?: Record<string, Record<string, JSONValue>>;
+    abortSignal: AbortSignal;
+    experimental_download: typeof downloadImages;
+  };
+
+// Images are downloaded here for models that can't fetch a URL.
+//
+// AI SDK feature.
+const downloadImages = createDownload({ maxBytes: 20 * 1024 * 1024, fetch: publicFetch });
+
+/**
+ * A signal that aborts some time after the caller has left, and never while
+ * they're still waiting.
+ *
+ * @param caller
+ * The caller's own signal, which aborts when they disconnect.
+ *
+ * @param ms
+ * How long the call gets after that.
+ */
+export function abandonedCallSignal(caller: AbortSignal | undefined, ms = ABANDONED_CALL_MS): AbortSignal {
+  const controller = new AbortController();
+  caller?.addEventListener('abort', () => setTimeout(() => controller.abort(), ms).unref(), { once: true });
+  return controller.signal;
+}
+
+/**
+ * Checks a request, instantiates the model and starts the log for one attempt.
+ *
+ * @param info
+ * The catalog model to call.
  *
  * @param headers
  * The gateway headers, including the upstream credential.
@@ -621,35 +679,29 @@ async function createChatCompletion(
  * @param body
  * The validated request body.
  *
- * @param onLog
- * Receives the log id before the handler commits the SSE response headers.
+ * @param signal
+ * Aborts when the caller disconnects.
  */
-async function* streamChatCompletion(
+async function prepareWithModel(
+  info: GetModelResponse,
   headers: ChatCompletionHeaders,
   body: ChatCompletionBody,
-  onLog?: (logId: string) => void,
-): AsyncGenerator<Result<ChatCompletionChunk, StreamChatCompletionFailure>> {
-  const supported = checkSupported(body);
-  if (supported.isErr()) {
-    yield err(supported.error);
-    return;
-  }
+  signal: AbortSignal | undefined,
+): Promise<Result<Prepared, CreateChatCompletionFailure>> {
+  const sdkModel = createSdkChatModel(info.provider, info.name, {
+    apiKey: headers['ai-api-key'],
+    baseURL: headers['ai-base-url'],
+  });
 
-  const resolved = await resolveModel(body.model, headers);
-  if (resolved.isErr()) {
-    yield err(resolved.error);
-    return;
+  // The model is in the catalog, but we can't instantiate the AI SDK model...
+  if (!sdkModel) {
+    return err({ code: 'MODEL_UNSUPPORTED_PROVIDER', model: `${info.provider}/${info.name}`, provider: info.provider });
   }
 
   const messages = toSdkMessages(body.messages);
   if (messages.isErr()) {
-    yield err(messages.error);
-    return;
+    return err(messages.error);
   }
-
-  const model = resolved.value;
-  const tools = toSdkTools(body);
-  const providerOptions = toSdkProviderOptions(body);
 
   // The OpenAI-style user field fills the well-known user_id tag, unless the
   // ai-log-tags header names one.
@@ -658,71 +710,244 @@ async function* streamChatCompletion(
     tags.user_id = body.user;
   }
 
+  // Start the request.
   const log = LogsService.startLog({
     operation: 'chat',
-    model: model.modelId,
-    provider: model.provider,
+    model: info.name,
+    provider: info.provider,
     tags,
   });
-  onLog?.(log.id);
 
-  const queued = await queueWebhook(headers, log);
-  if (queued.isErr()) {
-    abandonLog(log, headers, body);
-    yield err(queued.error);
+  // Checked before the provider is called, so a bad id costs nothing upstream.
+  const webhookId = headers['ai-webhook-id'];
+  if (webhookId) {
+    const queued = await WebhookServices.enqueueDelivery(webhookId, log.id);
+
+    if (queued.isErr()) {
+      LogsService.finishLog({ ...log, status: 'failed' }, { request: body, headers: headers });
+      return err({ code: 'WEBHOOK_NOT_FOUND', id: queued.error.id });
+    }
+  }
+
+  // The gateway cache, when the caller turned it on.
+  let model: LanguageModelInstance = sdkModel;
+  const cache = { hit: false };
+  if (headers['ai-cache-enabled']) {
+    const namespace = {
+      organizationId: getCaller().organization.id,
+      provider: info.provider,
+      modelId: info.name,
+      apiKey: headers['ai-api-key'],
+      baseUrl: headers['ai-base-url'] ?? null,
+    };
+
+    model = wrapLanguageModel({
+      model: sdkModel,
+      middleware: createCacheMiddleware(namespace, cache, {
+        ttl: headers['ai-cache-ttl'] ?? 300,
+        refresh: headers['ai-cache-refresh'] ?? false,
+      }),
+    });
+  }
+
+  const output = toSdkOutput(body);
+  const tools = toSdkTools(body);
+  const providerOptions = toSdkProviderOptions(body, info.provider);
+
+  return ok({
+    log,
+    cache,
+    call: {
+      model,
+      messages: messages.value,
+      ...(output ? { output } : {}),
+      // The SDK refuses system messages in `messages` unless told otherwise, and
+      // OpenAI callers put them there.
+      allowSystemInMessages: true,
+      ...toSdkCallSettings(body, headers),
+      ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
+      abortSignal: abandonedCallSignal(signal),
+      experimental_download: downloadImages,
+    },
+  });
+}
+
+/**
+ * One attempt at a whole completion, against one catalog model.
+ *
+ * @param info
+ * The catalog model to call.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ *
+ * @param signal
+ * Aborts when the caller disconnects.
+ *
+ * @returns
+ * The completion, or why the attempt failed.
+ */
+async function generateWithModel(
+  info: GetModelResponse,
+  headers: ChatCompletionHeaders,
+  body: ChatCompletionBody,
+  signal: AbortSignal | undefined,
+): Promise<Result<ChatCompletion, CreateChatCompletionFailure>> {
+  const prepared = await prepareWithModel(info, headers, body, signal);
+  if (prepared.isErr()) {
+    return err(prepared.error);
+  }
+
+  const { call, log, cache } = prepared.value;
+  const startedAt = performance.now();
+
+  let result: Awaited<ReturnType<typeof generateText>>;
+  try {
+    result = await generateText(call);
+  } catch (error) {
+    LogsService.finishLog(
+      { ...log, status: signal?.aborted ? 'incomplete' : 'failed' },
+      { request: body, headers: headers },
+    );
+    return err(toProviderFailure(error));
+  }
+
+  const completion = toCompletion({
+    id: result.finalStep.response.id,
+    created: Math.floor(result.finalStep.response.timestamp.getTime() / 1000),
+    model: result.finalStep.response.modelId,
+    text: result.text,
+    toolCalls: result.toolCalls.map((call) => ({
+      id: call.toolCallId,
+      type: 'function' as const,
+      function: {
+        name: call.toolName,
+        arguments: typeof call.input === 'string' ? call.input : JSON.stringify(call.input ?? {}),
+      },
+    })),
+    finishReason: toOpenAIFinishReason(result.finishReason),
+    usage: toOpenAIUsage(result.usage),
+  });
+
+  const usage = completion.usage;
+  LogsService.finishLog(
+    {
+      ...log,
+      status: signal?.aborted ? 'incomplete' : 'complete', // The caller dropped, but the provider finished and billed it.
+      gateway_cache_hit: cache.hit,
+      input_tokens: usage?.prompt_tokens ?? null,
+      cached_input_tokens: usage?.prompt_tokens_details?.cached_tokens ?? null,
+      output_tokens: usage?.completion_tokens ?? null,
+      ...(cache.hit // A cache hit never reached the provider.
+        ? { input_cost: 0, output_cost: 0 }
+        : calculateCosts(usage, info, reportedCostOf(info.provider, result.usage))),
+      response_time_ms: Math.round(performance.now() - startedAt),
+    },
+    { request: body, response: completion, headers: headers },
+  );
+
+  return ok(completion);
+}
+
+/**
+ * Generates a whole chat completion, trying each requested model in routing
+ * order until one answers.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ *
+ * @param signal
+ * Aborts when the caller disconnects.
+ */
+async function createChatCompletion(
+  headers: ChatCompletionHeaders,
+  body: ChatCompletionBody,
+  signal?: AbortSignal,
+): Promise<Result<ChatCompletion, CreateChatCompletionFailure>> {
+  // Order the models based on the routing strategy and weights.
+  const ordered = await ModelsService.validateAndOrderModels(body.model, 'chat', {
+    strategy: headers['ai-routing-strategy'],
+    weights: headers['ai-routing-weights'],
+  });
+
+  if (ordered.isErr()) {
+    return err(ordered.error);
+  }
+
+  // Each attempt is its own upstream call with its own log row. A caller who
+  // has left gets no further attempts.
+  let failure: CreateChatCompletionFailure | undefined;
+  for (const info of ordered.value) {
+    const result = await generateWithModel(info, headers, body, signal);
+    if (result.isOk() || !shouldFallBack(result.error) || signal?.aborted) {
+      return result;
+    }
+
+    failure = result.error;
+  }
+
+  // The list can't be empty, so the loop ran at least once and set failure.
+  return err(failure as CreateChatCompletionFailure);
+}
+
+/**
+ * One attempt at a streamed completion, against one catalog model.
+ *
+ * @param info
+ * The catalog model to call.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ *
+ * @param signal
+ * Aborts when the caller disconnects.
+ *
+ * @returns
+ * Chunks as they arrive, ending with a failure if the attempt fails.
+ */
+async function* streamWithModel(
+  info: GetModelResponse,
+  headers: ChatCompletionHeaders,
+  body: ChatCompletionBody,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<Result<ChatCompletionChunk, StreamChatCompletionFailure>> {
+  const prepared = await prepareWithModel(info, headers, body, signal);
+  if (prepared.isErr()) {
+    yield err(prepared.error);
     return;
   }
 
-  // A consumer that stops iterating early (the client disconnected) skips the
-  // settles below; the finally records that call as 'incomplete'.
-  let settled = false;
+  const { call, log, cache } = prepared.value;
 
   try {
-    const cache = { hit: false };
     const startedAt = performance.now();
-
     let streamError: ProviderFailure | undefined;
 
-    let result: ReturnType<typeof streamText>;
-    try {
-      result = streamText({
-        model: cacheModel(model, headers, cache),
-        messages: messages.value,
-
-        // Preserve caller message order instead of hoisting system messages into instructions.
-        allowSystemInMessages: true,
-
-        ...toSdkCallSettings(body, headers),
-        ...(tools ? { tools: tools, toolChoice: toSdkToolChoice(body) } : {}),
-        ...(providerOptions ? { providerOptions } : {}),
-
-        // Surface SDK stream failures instead of ending the response silently.
-        onError: ({ error }) => {
-          streamError = toProviderFailure(error);
-        },
-      });
-    } catch (error) {
-      settled = true;
-      abandonLog(log, headers, body);
-      yield err(toProviderFailure(error));
-      return;
-    }
-
-    // Generate metadata locally to avoid waiting for the provider to finish.
-    const id = `chatcmpl-${randomUUID().replaceAll('-', '')}`;
-    const created = Math.floor(Date.now() / 1000);
-    const modelId = model.modelId;
-
-    const frame = (
-      delta: ChatCompletionChunk['choices'][number]['delta'],
-      finishReason: ChatCompletionFinishReason | null,
-    ): ChatCompletionChunk => ({
-      id: id,
-      object: 'chat.completion.chunk',
-      created: created,
-      model: modelId,
-      choices: [{ index: 0, delta: delta, finish_reason: finishReason }],
+    // Provider failures arrive later, as error or abort parts in the stream.
+    const result = streamText({
+      ...call,
+      // Surface SDK stream failures instead of ending the response silently.
+      onError: ({ error }) => {
+        streamError = toProviderFailure(error);
+      },
     });
+
+    // Generated here so frames don't wait for the provider's metadata.
+    const frame = {
+      id: `chatcmpl-${randomUUID().replaceAll('-', '')}`,
+      created: Math.floor(Date.now() / 1000),
+      model: info.name,
+    };
 
     // OpenAI chunks identify tool calls by index; the SDK uses IDs.
     const toolCallIndexes = new Map<string, number>();
@@ -733,42 +958,42 @@ async function* streamChatCompletion(
 
     let finishReason: ChatCompletionFinishReason = 'stop';
     let usage: ChatCompletionUsage | undefined;
+    let reportedCost: number | undefined;
 
-    // Reassemble chunks so streaming and non-streaming logs share one response shape.
-    let assembledText = '';
-    const assembledToolCalls: ChatCompletionToolCall[] = [];
+    // A provider always says why it stopped. Apartial answer mustn't pass as a
+    // finished one.
+    let finished = false;
 
-    for await (const part of result.fullStream) {
+    // Reassembled so streamed and whole requests log the same response shape.
+    let text = '';
+    const toolCalls: ChatCompletionToolCall[] = [];
+
+    for await (const part of result.stream) {
       // `start` is local-only; wait for a provider part before committing the 200.
-      if (!opened && part.type !== 'start' && part.type !== 'error') {
+      if (!opened && part.type !== 'start' && part.type !== 'error' && part.type !== 'abort') {
         opened = true;
 
         // OpenAI's first frame announces the role and carries no content.
-        yield ok(frame({ role: 'assistant', content: '' }, null));
+        yield ok(toChunk(frame, { role: 'assistant', content: '' }, null));
       }
 
       switch (part.type) {
         case 'text-delta':
           if (part.text) {
-            assembledText += part.text;
-            yield ok(frame({ content: part.text }, null));
+            text += part.text;
+            yield ok(toChunk(frame, { content: part.text }, null));
           }
           break;
 
         case 'tool-input-start': {
           const index = toolCallIndexes.size;
           toolCallIndexes.set(part.id, index);
-          assembledToolCalls.push({
-            id: part.id,
-            type: 'function',
-            function: { name: part.toolName, arguments: '' },
-          });
+          toolCalls.push({ id: part.id, type: 'function', function: { name: part.toolName, arguments: '' } });
 
           yield ok(
-            frame(
-              {
-                tool_calls: [{ index: index, id: part.id, type: 'function', function: { name: part.toolName } }],
-              },
+            toChunk(
+              frame,
+              { tool_calls: [{ index: index, id: part.id, type: 'function', function: { name: part.toolName } }] },
               null,
             ),
           );
@@ -777,29 +1002,50 @@ async function* streamChatCompletion(
 
         case 'tool-input-delta': {
           const index = toolCallIndexes.get(part.id);
-          if (index != null && part.delta) {
-            const accumulating = assembledToolCalls[index];
-            if (accumulating) {
-              accumulating.function.arguments += part.delta;
-            }
-
-            yield ok(frame({ tool_calls: [{ index: index, function: { arguments: part.delta } }] }, null));
+          const call = index == null ? undefined : toolCalls[index];
+          if (index != null && call && part.delta) {
+            call.function.arguments += part.delta;
+            yield ok(toChunk(frame, { tool_calls: [{ index: index, function: { arguments: part.delta } }] }, null));
           }
           break;
         }
 
+        case 'tool-input-end': {
+          // Some providers send no argument fragments for a call that takes none, and
+          // clients parse the arguments as JSON, where an empty string isn't valid.
+          const index = toolCallIndexes.get(part.id);
+          const call = index == null ? undefined : toolCalls[index];
+          if (index != null && call?.function.arguments === '') {
+            call.function.arguments = '{}';
+            yield ok(toChunk(frame, { tool_calls: [{ index: index, function: { arguments: '{}' } }] }, null));
+          }
+          break;
+        }
+
+        case 'finish-step':
+          reportedCost = reportedCostOf(info.provider, part.usage);
+          break;
+
         case 'finish':
+          finished = part.rawFinishReason !== undefined;
           finishReason = toOpenAIFinishReason(part.finishReason);
           usage = toOpenAIUsage(part.totalUsage);
           break;
 
-        case 'error': {
-          settled = true;
-          abandonLog(log, headers, body);
+        // The ai-timeout-ms timeout, or the cap on a call whose caller has left.
+        // A failure either way, so a partial answer can't pass as a finished one.
+        case 'abort':
+          LogsService.finishLog(
+            { ...log, status: signal?.aborted ? 'incomplete' : 'failed' },
+            { request: body, headers: headers },
+          );
+          yield err({ code: 'PROVIDER_TIMEOUT', cause: undefined });
+          return;
 
+        case 'error':
+          LogsService.finishLog({ ...log, status: 'failed' }, { request: body, headers: headers });
           yield err(streamError ?? toProviderFailure(part.error));
           return;
-        }
 
         default:
           // Reasoning, sources, files, step boundaries and raw provider frames
@@ -808,57 +1054,99 @@ async function* streamChatCompletion(
       }
     }
 
-    if (streamError) {
-      settled = true;
-      abandonLog(log, headers, body);
-      yield err(streamError);
+    if (streamError || !finished) {
+      LogsService.finishLog({ ...log, status: 'failed' }, { request: body, headers: headers });
+      yield err(
+        streamError ?? {
+          code: 'PROVIDER_UNAVAILABLE',
+          message: 'The provider stream ended before it finished',
+          cause: undefined,
+        },
+      );
       return;
     }
 
     // Empty streams still need an opening role frame.
     if (!opened) {
-      yield ok(frame({ role: 'assistant', content: '' }, null));
+      yield ok(toChunk(frame, { role: 'assistant', content: '' }, null));
     }
 
-    yield ok(frame({}, finishReason));
+    yield ok(toChunk(frame, {}, finishReason));
 
     if (body.stream_options?.include_usage && usage) {
-      yield ok({
-        id: id,
-        object: 'chat.completion.chunk',
-        created: created,
-        model: modelId,
-        choices: [],
-        usage: usage,
-      });
+      yield ok({ ...toChunk(frame, {}, null), choices: [], usage: usage });
     }
 
-    const completion: ChatCompletion = {
-      id: id,
-      object: 'chat.completion',
-      created: created,
-      model: modelId,
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: assembledText.length > 0 ? assembledText : null,
-            refusal: null,
-            ...(assembledToolCalls.length > 0 ? { tool_calls: assembledToolCalls } : {}),
-          },
-          logprobs: null,
-          finish_reason: finishReason,
-        },
-      ],
-      usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    };
-
-    settled = true;
-    closeLog(log, headers, body, completion, model.info, performance.now() - startedAt, cache.hit);
+    LogsService.finishLog(
+      {
+        ...log,
+        status: signal?.aborted ? 'incomplete' : 'complete', // The caller left, but the provider finished and billed it.
+        gateway_cache_hit: cache.hit,
+        input_tokens: usage?.prompt_tokens ?? null,
+        cached_input_tokens: usage?.prompt_tokens_details?.cached_tokens ?? null,
+        output_tokens: usage?.completion_tokens ?? null,
+        ...(cache.hit ? { input_cost: 0, output_cost: 0 } : calculateCosts(usage, info, reportedCost)), // A cache hit never reached the provider.
+        response_time_ms: Math.round(performance.now() - startedAt),
+      },
+      { request: body, response: toCompletion({ ...frame, text, toolCalls, finishReason, usage }), headers: headers },
+    );
   } finally {
-    if (!settled) {
-      abandonLog(log, headers, body, 'incomplete');
+    // A consumer that stops reading early leaves the log open, and it closes
+    // here. A log that's already closed stays as it was.
+    LogsService.finishLog({ ...log, status: 'incomplete' }, { request: body, headers: headers });
+  }
+}
+
+/**
+ * Generates a chat completion as a stream of chunks, trying each requested
+ * model in routing order until one starts answering.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ *
+ * @param signal
+ * Aborts when the caller disconnects.
+ */
+async function* streamChatCompletion(
+  headers: ChatCompletionHeaders,
+  body: ChatCompletionBody,
+  signal?: AbortSignal,
+): AsyncGenerator<Result<ChatCompletionChunk, StreamChatCompletionFailure>> {
+  // Order the models based on the routing strategy and weights.
+  const ordered = await ModelsService.validateAndOrderModels(body.model, 'chat', {
+    strategy: headers['ai-routing-strategy'],
+    weights: headers['ai-routing-weights'],
+  });
+
+  if (ordered.isErr()) {
+    yield err(ordered.error);
+    return;
+  }
+
+  const models = ordered.value;
+  for (const [index, info] of models.entries()) {
+    const hasNext = index < models.length - 1;
+
+    // Falls back only before anything has gone out. Once the caller has part of
+    // an answer, another model can't continue it.
+    let started = false;
+    let fellBack = false;
+
+    for await (const result of streamWithModel(info, headers, body, signal)) {
+      if (!started && hasNext && result.isErr() && shouldFallBack(result.error) && !signal?.aborted) {
+        fellBack = true;
+        break;
+      }
+
+      started = true;
+      yield result;
+    }
+
+    if (!fellBack) {
+      return;
     }
   }
 }

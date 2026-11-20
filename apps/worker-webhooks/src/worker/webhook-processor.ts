@@ -1,4 +1,4 @@
-import { logger } from '@repo/core';
+import { logger, publicFetch } from '@repo/core';
 import { db, eq, inArray } from '@repo/drizzle';
 import { webhookDeliveries, webhookOutbox, webhooks } from '@repo/drizzle/schemas';
 import { environment } from '../environment';
@@ -66,7 +66,7 @@ async function deliver(item: ClaimedDelivery): Promise<void> {
   let statusCode = NO_RESPONSE;
 
   try {
-    const response = await fetch(item.endpoint, {
+    const response = await publicFetch(item.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ webhook_id: item.webhookId, log_id: item.logId }),

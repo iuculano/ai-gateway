@@ -2,16 +2,18 @@ import { createAzure } from '@ai-sdk/azure';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { parseTags } from '@repo/core';
+import { parseTags, publicFetch } from '@repo/core';
 import { type Embedding, type EmbeddingModel, embedMany } from 'ai';
 import { err, ok, type Result } from 'neverthrow';
 import {
   type ModelResolutionFailure,
   type ProviderFailure,
-  resolveModel,
+  shouldFallBack,
   toProviderFailure,
 } from '../../lib/ai-sdk-providers';
 import LogsService from '../logs/logs.services';
+import type { GetModelResponse } from '../models/models.schemas';
+import ModelsService from '../models/models.services';
 import type { EmbeddingBody, EmbeddingHeaders, EmbeddingResponse } from './embeddings.schemas';
 
 // The public service failure union.
@@ -25,12 +27,14 @@ interface ProviderSettings {
 /**
  * Instantiates an AI SDK embedding model based on the provider and model name.
  *
- * @param provider The name of the provider (e.g., 'openai', 'azure').
+ * @param provider
+ * The name of the provider (e.g., 'openai', 'azure').
  *
- * @param model The name of the embedding model.
+ * @param model
+ * The name of the embedding model.
  *
- * @param settings Provider specific configuration such as the API key and
- * optional base URL.
+ * @param settings
+ * Provider specific configuration such as the API key and optional base URL.
  *
  * @returns
  * The instantiated embedding model or undefined if the provider is unsupported.
@@ -40,18 +44,22 @@ function createSdkEmbeddingModel(
   model: string,
   settings: ProviderSettings,
 ): EmbeddingModel | undefined {
+  // If we're overriding the base URL, we need to provide a custom fetch that
+  // prevents you from calling something internal to the gateway's network.
+  const config = settings.baseURL ? { ...settings, fetch: publicFetch } : settings;
+
   switch (provider) {
     case 'openai':
-      return createOpenAI(settings).embedding(model);
+      return createOpenAI(config).embedding(model);
 
     case 'azure':
-      return createAzure(settings).embedding(model);
+      return createAzure(config).embedding(model);
 
     case 'google':
-      return createGoogleGenerativeAI(settings).embedding(model);
+      return createGoogleGenerativeAI(config).embedding(model);
 
     case 'openrouter':
-      return createOpenRouter(settings).textEmbeddingModel(model);
+      return createOpenRouter(config).textEmbeddingModel(model);
 
     default:
       return undefined;
@@ -72,30 +80,25 @@ function toBase64(embedding: Embedding): string {
 }
 
 /**
- * Creates embeddings for one or more inputs.
+ * One attempt at creating embeddings, against one catalog model.
+ *
+ * @param info
+ * The catalog model information.
  *
  * @param headers
  * The gateway headers, including the upstream credential.
  *
  * @param body
  * The validated request body.
+ *
+ * @returns
+ * The result of the embedding attempt.
  */
-async function createEmbedding(
+async function embedWithModel(
+  info: GetModelResponse,
   headers: EmbeddingHeaders,
   body: EmbeddingBody,
 ): Promise<Result<EmbeddingResponse, CreateEmbeddingFailure>> {
-  // Resolve the model based on the routing strategy and weights.
-  const resolved = await resolveModel(body.model, 'embedding', {
-    strategy: headers['ai-routing-strategy'],
-    weights: headers['ai-routing-weights'],
-  });
-
-  if (resolved.isErr()) {
-    return err(resolved.error);
-  }
-
-  // Should have a valid model...
-  const info = resolved.value;
   const sdkModel = createSdkEmbeddingModel(info.provider, info.name, {
     apiKey: headers['ai-api-key'],
     baseURL: headers['ai-base-url'],
@@ -113,12 +116,14 @@ async function createEmbedding(
     tags.user_id = body.user;
   }
 
+  // Start the request.
   const log = LogsService.startLog({
     operation: 'embedding',
     model: info.name,
     provider: info.provider,
     tags,
   });
+
   const startedAt = performance.now();
 
   //
@@ -127,7 +132,7 @@ async function createEmbedding(
     result = await embedMany({
       model: sdkModel,
       values: typeof body.input === 'string' ? [body.input] : body.input,
-      maxRetries: headers['ai-max-retries'],
+      maxRetries: headers['ai-max-retries'] ?? 0,
       abortSignal: headers['ai-timeout-ms'] ? AbortSignal.timeout(headers['ai-timeout-ms']) : undefined,
 
       // Each provider reads only its own namespace.
@@ -137,14 +142,17 @@ async function createEmbedding(
       },
     });
   } catch (error) {
-    LogsService.failLog(log, { request: body, omitRequest: headers['ai-log-omit-request'] });
+    LogsService.finishLog({ ...log, status: 'failed' }, { request: body, headers: headers });
 
     const failure = toProviderFailure(error);
     return err(failure);
   }
 
   const responseTimeMs = performance.now() - startedAt;
-  const tokens = result.usage.tokens;
+
+  // The AI SDK returns NaN when the provider sent no usage. Need to turn this
+  // into a null or it'll fail the log insertion.
+  const tokens = Number.isFinite(result.usage.tokens) ? result.usage.tokens : null;
 
   const response: EmbeddingResponse = {
     object: 'list',
@@ -154,23 +162,69 @@ async function createEmbedding(
       embedding: body.encoding_format === 'base64' ? toBase64(embedding) : embedding,
     })),
     model: info.name,
+
+    // Note that this is what we return to the user, not what we store.
+    //
+    // OpenAI expects a number for usage - it has no way to say "no usage."
+    // 0 will skew analytic results, so we store it as NULL instead and skip it.
     usage: {
-      prompt_tokens: tokens,
-      total_tokens: tokens,
+      prompt_tokens: tokens ?? 0,
+      total_tokens: tokens ?? 0,
     },
   };
 
-  LogsService.completeLog(log, {
-    request: body,
-    response: response,
-    omitRequest: headers['ai-log-omit-request'],
-    omitResponse: headers['ai-log-omit-response'],
-    input_tokens: tokens,
-    ...(info.cost_input != null ? { input_cost: (tokens * info.cost_input) / 1_000_000 } : {}),
-    response_time_ms: Math.round(responseTimeMs),
-  });
+  LogsService.finishLog(
+    {
+      ...log,
+      status: 'complete',
+      input_tokens: tokens,
+      input_cost: tokens == null || info.cost_input == null ? null : (tokens * info.cost_input) / 1_000_000,
+      output_cost: 0, // Embeddings have no output cost.
+      response_time_ms: Math.round(responseTimeMs),
+    },
+    { request: body, response: response, headers: headers },
+  );
 
   return ok(response);
+}
+
+/**
+ * Creates embeddings for one or more inputs, trying each requested model in
+ * routing order until one answers.
+ *
+ * @param headers
+ * The gateway headers, including the upstream credential.
+ *
+ * @param body
+ * The validated request body.
+ */
+async function createEmbedding(
+  headers: EmbeddingHeaders,
+  body: EmbeddingBody,
+): Promise<Result<EmbeddingResponse, CreateEmbeddingFailure>> {
+  // Order the models based on the routing strategy and weights.
+  const ordered = await ModelsService.validateAndOrderModels(body.model, 'embedding', {
+    strategy: headers['ai-routing-strategy'],
+    weights: headers['ai-routing-weights'],
+  });
+
+  if (ordered.isErr()) {
+    return err(ordered.error);
+  }
+
+  // Each attempt is its own upstream call with its own log row.
+  let failure: CreateEmbeddingFailure | undefined;
+  for (const info of ordered.value) {
+    const result = await embedWithModel(info, headers, body);
+    if (result.isOk() || !shouldFallBack(result.error)) {
+      return result;
+    }
+
+    failure = result.error;
+  }
+
+  // The list is never empty, so the loop ran at least once and set failure.
+  return err(failure as CreateEmbeddingFailure);
 }
 
 export default {

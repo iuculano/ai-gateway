@@ -13,7 +13,15 @@ import Schemas, {
   type ListLogsQuery,
   type ListLogsResponse,
 } from './logs.schemas';
-import { flushLogs, type PendingLog, payloadKey, settleLog } from './logs.writer';
+import {
+  type FinishedLog,
+  markRunning,
+  type PendingLog,
+  payloadKey,
+  shutdownLogs,
+  submitLog,
+  waitForLogWrites,
+} from './logs.writer';
 
 export type { PendingLog };
 
@@ -315,7 +323,7 @@ async function deleteLog(id: string): Promise<Result<DeleteLogResponse, DeleteLo
  * The log's tags, already parsed, if any.
  *
  * @returns
- * The log, to pass to completeLog or failLog.
+ * The log, to pass to finishLog.
  */
 function startLog(entry: {
   operation: LogRow['operation'];
@@ -333,7 +341,7 @@ function startLog(entry: {
   // Should be available on every request in practice.
   const trace = getTraceContext();
 
-  return {
+  const log: PendingLog = {
     id: id,
     organization_id: caller.organization.id,
     operation: entry.operation,
@@ -346,70 +354,42 @@ function startLog(entry: {
     tags: entry.tags,
     created_at: createdAt,
   };
+
+  markRunning(log);
+  return log;
 }
 
 /**
- * Writes a finished inference's log in the background: payloads, then the row.
+ * Records how an inference ended, writing its payloads and row in the background.
  *
  * @param log
- * From startLog.
+ * The log from startLog, with its status, usage and cost filled in.
  *
- * @param entry
- * The payloads, which to omit, and the usage to record.
+ * @param payloads
+ * The request and response to store, and the headers that can leave them out.
  */
-function completeLog(
-  log: PendingLog,
-  entry: {
+function finishLog(
+  log: FinishedLog,
+  payloads: {
     request: unknown;
-    response: unknown;
-    omitRequest?: boolean;
-    omitResponse?: boolean;
-    gateway_cache_hit?: boolean;
-    cached_input_tokens?: number | null;
-    input_tokens?: number;
-    output_tokens?: number;
-    input_cost?: number;
-    output_cost?: number;
-    response_time_ms?: number;
+    response?: unknown;
+    headers?: { 'ai-log-omit-request'?: boolean; 'ai-log-omit-response'?: boolean };
   },
 ): void {
-  settleLog(
-    {
-      ...log,
-      status: 'complete',
-      gateway_cache_hit: entry.gateway_cache_hit ?? false,
-      cached_input_tokens: entry.cached_input_tokens ?? null,
-      ...(entry.input_tokens != null ? { input_tokens: entry.input_tokens } : {}),
-      ...(entry.output_tokens != null ? { output_tokens: entry.output_tokens } : {}),
-      ...(entry.input_cost != null ? { input_cost: entry.input_cost } : {}),
-      ...(entry.output_cost != null ? { output_cost: entry.output_cost } : {}),
-      ...(entry.response_time_ms != null ? { response_time_ms: entry.response_time_ms } : {}),
-    },
-    {
-      ...(entry.omitRequest ? {} : { request: entry.request }),
-      ...(entry.omitResponse ? {} : { response: entry.response }),
-    },
-  );
-}
+  const payloadsToStore: { request?: unknown; response?: unknown } = {};
 
-/**
- * Writes the log of an inference that did not finish, with its request.
- *
- * @param log
- * From startLog.
- *
- * @param entry
- * The request payload, and whether to omit it.
- *
- * @param status
- * 'failed', or 'incomplete' when the caller left mid-stream.
- */
-function failLog(
-  log: PendingLog,
-  entry: { request: unknown; omitRequest?: boolean },
-  status: 'failed' | 'incomplete' = 'failed',
-): void {
-  settleLog({ ...log, status }, entry.omitRequest ? {} : { request: entry.request });
+  if (!payloads.headers?.['ai-log-omit-request']) {
+    payloadsToStore.request = payloads.request;
+  }
+
+  if (payloads.response !== undefined && !payloads.headers?.['ai-log-omit-response']) {
+    payloadsToStore.response = payloads.response;
+  }
+
+  // A cost is recorded whole or not at all.
+  const costKnown = log.input_cost != null && log.output_cost != null;
+  const logToSubmit = costKnown ? log : { ...log, input_cost: null, output_cost: null };
+  submitLog(logToSubmit, payloadsToStore);
 }
 
 export default {
@@ -421,7 +401,7 @@ export default {
   deleteLog,
 
   startLog,
-  completeLog,
-  failLog,
-  flushLogs,
+  finishLog,
+  waitForLogWrites,
+  shutdownLogs,
 };

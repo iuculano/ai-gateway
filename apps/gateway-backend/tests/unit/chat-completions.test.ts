@@ -1,5 +1,13 @@
 import { beforeEach, expect, mock, spyOn, test } from 'bun:test';
-import { APICallError, InvalidArgumentError, InvalidMessageRoleError, InvalidPromptError, RetryError } from 'ai';
+import {
+  APICallError,
+  InvalidArgumentError,
+  InvalidMessageRoleError,
+  InvalidPromptError,
+  NoContentGeneratedError,
+  RetryError,
+  UnsupportedFunctionalityError,
+} from 'ai';
 import type {
   ChatCompletionBody,
   ChatCompletionChunk,
@@ -10,7 +18,6 @@ import {
   afterLogWrites,
   callerFixture,
   database,
-  fixedWindow,
   flushLogWrites,
   installModuleMocks,
   LOG_ID,
@@ -99,24 +106,40 @@ const aiState = {
    * Handed to the onError callback the service registers, at streamText() time.
    *
    * The SDK reports a mid-generation failure through that callback rather than
-   * by rejecting or by ending the iteration, so nothing a fullStream can yield
+   * by rejecting or by ending the iteration, so nothing the stream can yield
    * reaches the branch that reads it.
    */
   streamOnError: null as unknown,
+
+  /** Fails only the next generateText or streamText call, so a fallback can succeed. */
+  firstCallError: null as unknown,
+
+  /** Thrown by the stream itself once its parts have gone out, which no part can stand in for. */
+  streamCrash: null as unknown,
 
   reset() {
     aiState.generateCalls = [];
     aiState.streamCalls = [];
     aiState.generateError = null;
     aiState.streamResponseError = null;
-    aiState.streamParts = [];
+    // A real provider stream always ends by saying why it stopped.
+    aiState.streamParts = [
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        rawFinishReason: 'stop',
+        totalUsage: { inputTokens: 3, outputTokens: 2 },
+      },
+    ];
     aiState.streamOnError = null;
+    aiState.firstCallError = null;
+    aiState.streamCrash = null;
     aiState.generateResult = {
-      response: responseMetadata,
+      finalStep: { response: responseMetadata },
       text: 'Hello from the provider',
       toolCalls: [],
       finishReason: 'stop',
-      totalUsage: {
+      usage: {
         inputTokens: 7,
         outputTokens: 4,
         totalTokens: 11,
@@ -133,6 +156,12 @@ mock.module('ai', () => ({
 
   async generateText(options: unknown) {
     aiState.generateCalls.push(options);
+    if (aiState.firstCallError) {
+      const error = aiState.firstCallError;
+      aiState.firstCallError = null;
+      throw error;
+    }
+
     if (aiState.generateError) {
       throw aiState.generateError;
     }
@@ -147,13 +176,29 @@ mock.module('ai', () => ({
       options.onError?.({ error: aiState.streamOnError });
     }
 
+    // The provider failed before sending anything.
+    if (aiState.firstCallError) {
+      const parts = [{ type: 'error', error: aiState.firstCallError }];
+      aiState.firstCallError = null;
+      return {
+        response: Promise.resolve(responseMetadata),
+        stream: (async function* () {
+          yield* parts;
+        })(),
+      };
+    }
+
     return {
       response: aiState.streamResponseError
         ? Promise.reject(aiState.streamResponseError)
         : Promise.resolve(responseMetadata),
-      fullStream: (async function* () {
+      stream: (async function* () {
         for (const part of aiState.streamParts) {
           yield part;
+        }
+
+        if (aiState.streamCrash) {
+          throw aiState.streamCrash;
         }
       })(),
     };
@@ -182,6 +227,15 @@ const Services = {
     }
   },
 };
+
+function apiError(statusCode: number) {
+  return new APICallError({
+    message: 'upstream said no',
+    url: 'https://api.openai.test/v1/chat/completions',
+    requestBodyValues: {},
+    statusCode: statusCode,
+  });
+}
 
 async function completionFailure(...args: Parameters<typeof ResultServices.createChatCompletion>) {
   return expectErr(await ResultServices.createChatCompletion(...args));
@@ -271,23 +325,16 @@ beforeEach(() => {
   providerFactory.reset();
   httpCaller.permissions = { scopes: ['chat-completions:write', 'prompts:read'] };
   callerFixture.permissions = { scopes: ['chat-completions:write', 'prompts:read'] };
-  fixedWindow.result = [1, 1, 60_000];
 });
 
 test('a non-streaming completion maps provider output and closes its inference log', async () => {
-  let echoedLogId: string | undefined;
-
   const completion = await withCaller(() =>
     Services.createChatCompletion(
       headers({ 'ai-max-retries': 0 }),
       body({ temperature: 0, top_p: 0, seed: 0, stop: 'END' }),
-      (id) => {
-        echoedLogId = id;
-      },
     ),
   );
 
-  expect(echoedLogId).toBe(LOG_ID);
   expect(completion).toMatchObject({
     id: responseMetadata.id,
     object: 'chat.completion',
@@ -431,17 +478,6 @@ test('a provider timeout returns a typed failure and marks the open log failed',
   });
 });
 
-test('an unsupported response format is rejected before provider or logging work starts', async () => {
-  const failure = await withCaller(() =>
-    completionFailure(headers(), body({ response_format: { type: 'json_object' } })),
-  );
-
-  expect(failure).toMatchObject({ code: 'UNSUPPORTED_RESPONSE_FORMAT' });
-
-  expect(aiState.generateCalls).toHaveLength(0);
-  expect(logWrites.started).toHaveLength(0);
-});
-
 test('a stream emits OpenAI chunks and stores the assembled completion after it drains', async () => {
   database.respondTo(
     'select',
@@ -455,6 +491,7 @@ test('a stream emits OpenAI chunks and stores the assembled completion after it 
     {
       type: 'finish',
       finishReason: 'length',
+      rawFinishReason: 'length',
       totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
     },
   ];
@@ -489,7 +526,12 @@ test('a stream the client leaves mid-way is logged incomplete, with its request'
   aiState.streamParts = [
     { type: 'text-delta', text: 'Hello ' },
     { type: 'text-delta', text: 'stream' },
-    { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } },
+    {
+      type: 'finish',
+      rawFinishReason: 'stop',
+      finishReason: 'stop',
+      totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+    },
   ];
 
   await withCaller(async () => {
@@ -504,51 +546,18 @@ test('a stream the client leaves mid-way is logged incomplete, with its request'
   expect(logWrites.incomplete[0]?.entry).toMatchObject({ request: { model: 'openai/test-model' } });
 });
 
-test('the HTTP handler exposes successful fixed-window quota headers', async () => {
-  const response = await app.request('/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'ai-api-key': 'upstream-secret',
-      'ai-rate-limit-policy': '2;w=60',
-    },
-    body: JSON.stringify(body()),
-  });
-
-  expect(response.status).toBe(200);
-  expect(response.headers.get('RateLimit-Limit')).toBe('2');
-  expect(response.headers.get('RateLimit-Remaining')).toBe('1');
-  expect(response.headers.get('X-RateLimit-Limit')).toBe('2');
-  expect(aiState.generateCalls).toHaveLength(1);
-});
-
-test('the HTTP handler returns quota and retry headers on its own 429 response', async () => {
-  fixedWindow.result = [3, 0, 47_000];
-
-  const response = await app.request('/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'ai-api-key': 'upstream-secret',
-      'ai-rate-limit-policy': '2;w=60',
-    },
-    body: JSON.stringify(body()),
-  });
-
-  expect(response.status).toBe(429);
-  expect(response.headers.get('Retry-After')).toBe('47');
-  expect(response.headers.get('RateLimit-Limit')).toBe('2');
-  expect(response.headers.get('RateLimit-Remaining')).toBe('0');
-  expect(response.headers.get('RateLimit-Reset')).toBe('47');
-  expect(aiState.generateCalls).toHaveLength(0);
-});
-
 // Model resolution
 
 test('a provider-prefixed model resolves to that provider and forwards the bare id', async () => {
   database.respondTo('select', 'models', rows(catalogRow({ provider: 'azure', name: 'my-deployment' })));
 
-  await withCaller(() => Services.createChatCompletion(headers(), body({ model: 'azure/my-deployment' })));
+  // Azure has no default address, so the caller always names their resource.
+  await withCaller(() =>
+    Services.createChatCompletion(
+      headers({ 'ai-base-url': 'https://my-resource.openai.azure.com/openai' }),
+      body({ model: 'azure/my-deployment' }),
+    ),
+  );
 
   expect(providerFactory.azure).toHaveLength(1);
   expect(providerFactory.openai).toHaveLength(0);
@@ -563,20 +572,25 @@ test.each([
   ['openrouter', 'anthropic/claude-sonnet-4'],
 ] as const)('%s instantiates its SDK model with credentials and a base URL override', async (provider, name) => {
   database.defaultResponse('select', 'models', rows(catalogRow({ provider, name })));
-  const request = () =>
-    withCaller(() =>
-      Services.createChatCompletion(
-        headers({ 'ai-base-url': 'https://proxy.test/v1' }),
-        body({ model: `${provider}/${name}` }),
-      ),
-    );
+  await withCaller(() =>
+    Services.createChatCompletion(
+      headers({ 'ai-base-url': 'https://proxy.test/v1' }),
+      body({ model: `${provider}/${name}` }),
+    ),
+  );
 
-  await request();
-  await request();
-
-  expect(providerFactory[provider]).toEqual([{ apiKey: 'upstream-secret', baseURL: 'https://proxy.test/v1' }]);
+  // OpenRouter is built in strict mode, the only one where streams ask for usage.
+  expect(providerFactory[provider] as unknown[]).toEqual([
+    {
+      apiKey: 'upstream-secret',
+      baseURL: 'https://proxy.test/v1',
+      // A caller-chosen base URL goes through the guarded fetch.
+      fetch: expect.any(Function),
+      ...(provider === 'openrouter' ? { compatibility: 'strict' } : {}),
+    },
+  ]);
   expect(providerFactory.modelIds).toEqual([name]);
-  expect(aiState.generateCalls).toHaveLength(2);
+  expect(aiState.generateCalls).toHaveLength(1);
   expect(logWrites.started[0]).toMatchObject({ entry: { provider, model: name } });
 
   await withCaller(async () => {
@@ -588,13 +602,13 @@ test.each([
     }
   });
   expect(aiState.streamCalls).toHaveLength(1);
-  expect(providerFactory[provider]).toHaveLength(1);
+  expect(providerFactory[provider]).toHaveLength(2);
 });
 
 test('a bare model id is rejected because it is not a catalog slug', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'gpt-bare' })));
 
-  expect(failure).toEqual({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
+  expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'gpt-bare' });
   expect(providerFactory.openai).toHaveLength(0);
   expect(logWrites.started).toHaveLength(0);
 });
@@ -604,7 +618,7 @@ test('an unregistered model is rejected before provider or logging work starts',
 
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/gpt-unknown' })));
 
-  expect(failure).toEqual({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
+  expect(failure).toEqual({ code: 'MODEL_NOT_FOUND', model: 'openai/gpt-unknown' });
   expect(providerFactory.openai).toHaveLength(0);
   expect(logWrites.started).toHaveLength(0);
 });
@@ -627,7 +641,7 @@ test('a registered but unsupported provider is rejected before provider or loggi
 test('a model identifier with a provider and no model is a typed refusal', async () => {
   const failure = await withCaller(() => completionFailure(headers(), body({ model: 'openai/' })));
 
-  expect(failure).toMatchObject({ code: 'MODEL_INVALID_ROUTING', message: 'No valid models available' });
+  expect(failure).toMatchObject({ code: 'MODEL_NOT_FOUND', model: 'openai/' });
 
   expect(logWrites.started).toHaveLength(0);
 });
@@ -647,31 +661,6 @@ test('the base url override reaches the provider client', async () => {
     baseURL: 'https://proxy.test/v1',
   });
 });
-
-test('a second call on the same credential reuses the cached provider client', async () => {
-  database.defaultResponse('select', 'models', rows(catalogRow({ name: 'gpt-cached' })));
-
-  const request = () =>
-    withCaller(() => Services.createChatCompletion(headers(), body({ model: 'openai/gpt-cached' })));
-
-  await request();
-  await request();
-
-  // The credential is part of the cache key, so this also proves the cache is
-  // not what would hand one caller's client to another.
-  expect(providerFactory.openai).toHaveLength(1);
-
-  await withCaller(() =>
-    Services.createChatCompletion(
-      headers({ 'ai-api-key': 'someone-elses-secret' }),
-      body({ model: 'openai/gpt-cached' }),
-    ),
-  );
-
-  expect(providerFactory.openai).toHaveLength(2);
-});
-
-// Message translation
 
 test('every OpenAI message role is translated into the SDK message model', async () => {
   await withCaller(() =>
@@ -764,9 +753,9 @@ test('a tool-calls-only assistant turn carries no empty text part', async () => 
   expect(messages[1]).toEqual({
     role: 'assistant',
     content: [
-      // Arguments that will not parse fall back to the raw string rather than
-      // failing the request - a model is free to emit invalid JSON.
-      { type: 'tool-call', toolCallId: 'call_2', toolName: 'lookup', input: 'not json' },
+      // Arguments that won't parse become {} rather than failing the request,
+      // since a model is free to emit invalid JSON.
+      { type: 'tool-call', toolCallId: 'call_2', toolName: 'lookup', input: {} },
     ],
   });
 });
@@ -790,15 +779,6 @@ test('a tool result no assistant turn asked for is a typed refusal', async () =>
 });
 
 // Request parameters
-
-test('top_logprobs without logprobs is refused rather than quietly dropped', async () => {
-  const failure = await withCaller(() => completionFailure(headers(), body({ top_logprobs: 3 })));
-
-  expect(failure).toMatchObject({ code: 'TOP_LOGPROBS_REQUIRES_LOGPROBS' });
-
-  expect(aiState.generateCalls).toHaveLength(0);
-  expect(logWrites.started).toHaveLength(0);
-});
 
 test('response_format text is accepted, since it is what the gateway already does', async () => {
   await withCaller(() => Services.createChatCompletion(headers(), body({ response_format: { type: 'text' } })));
@@ -835,8 +815,6 @@ test('settings with no cross-provider equivalent ride in the openai namespace', 
       headers(),
       body({
         logit_bias: { '1234': -50 },
-        logprobs: true,
-        top_logprobs: 5,
         metadata: { run: 'nightly' },
         parallel_tool_calls: false,
         prediction: { type: 'content', content: 'draft' },
@@ -855,15 +833,12 @@ test('settings with no cross-provider equivalent ride in the openai namespace', 
   expect((aiState.generateCalls[0] as { providerOptions: unknown }).providerOptions).toEqual({
     openai: {
       logitBias: { '1234': -50 },
-      // One field upstream: the number of alternatives when asked for.
-      logprobs: 5,
       metadata: { run: 'nightly' },
       parallelToolCalls: false,
       prediction: { type: 'content', content: 'draft' },
       promptCacheKey: 'cache-me',
       // Underscored on the way out; the wire spelling is hyphenated.
       promptCacheRetention: 'in_memory',
-      reasoningEffort: 'high',
       safetyIdentifier: 'user-7',
       serviceTier: 'flex',
       store: true,
@@ -873,13 +848,11 @@ test('settings with no cross-provider equivalent ride in the openai namespace', 
   });
 });
 
-test('logprobs without a count asks for the chosen token, and 24h retention passes through', async () => {
-  await withCaller(() =>
-    Services.createChatCompletion(headers(), body({ logprobs: true, prompt_cache_retention: '24h' })),
-  );
+test('24h prompt cache retention passes through', async () => {
+  await withCaller(() => Services.createChatCompletion(headers(), body({ prompt_cache_retention: '24h' })));
 
   expect((aiState.generateCalls[0] as { providerOptions: unknown }).providerOptions).toEqual({
-    openai: { logprobs: true, promptCacheRetention: '24h' },
+    openai: { promptCacheRetention: '24h' },
   });
 });
 
@@ -1003,7 +976,7 @@ test('a finish reason outside the OpenAI enum lands on stop', async () => {
 test('usage the provider left incomplete becomes zeroes and a computed total', async () => {
   aiState.generateResult = {
     ...aiState.generateResult,
-    totalUsage: { inputTokens: 9, outputTokens: undefined, totalTokens: undefined },
+    usage: { inputTokens: 9, outputTokens: undefined, totalTokens: undefined },
   };
 
   const completion = await withCaller(() => Services.createChatCompletion(headers(), body()));
@@ -1018,14 +991,6 @@ test('usage the provider left incomplete becomes zeroes and a computed total', a
 // Provider failures
 
 test('provider 4xx and 5xx failures retain enough detail for the handler to map them', async () => {
-  const apiError = (statusCode: number) =>
-    new APICallError({
-      message: 'upstream said no',
-      url: 'https://api.openai.test/v1/chat/completions',
-      requestBodyValues: {},
-      statusCode: statusCode,
-    });
-
   aiState.generateError = apiError(401);
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
     code: 'PROVIDER_REJECTED_REQUEST',
@@ -1034,7 +999,7 @@ test('provider 4xx and 5xx failures retain enough detail for the handler to map 
 
   aiState.generateError = apiError(503);
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
-    code: 'PROVIDER_FAILED',
+    code: 'PROVIDER_UNAVAILABLE',
   });
 });
 
@@ -1095,16 +1060,104 @@ test('a request the provider considers malformed is a 400, not an upstream failu
   }
 });
 
-test('an abort surfaces as a 504 and anything unrecognised as a 502', async () => {
+test('an abort surfaces as a timeout', async () => {
   aiState.generateError = Object.assign(new Error('aborted'), { name: 'AbortError' });
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
     code: 'PROVIDER_TIMEOUT',
   });
+});
 
-  aiState.generateError = new Error('socket hang up');
+test('SDK errors about the response and unwrapped network failures mean the provider is unavailable', async () => {
+  aiState.generateError = new NoContentGeneratedError();
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
-    code: 'PROVIDER_FAILED',
+    code: 'PROVIDER_UNAVAILABLE',
   });
+
+  // What Bun's fetch throws for a host that doesn't resolve. The SDK passes it through as is.
+  aiState.generateError = Object.assign(new TypeError('getaddrinfo ENOTFOUND api.openai.test'), {
+    code: 'ENOTFOUND',
+  });
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_UNAVAILABLE',
+  });
+});
+
+test('a feature the provider does not support is an invalid request', async () => {
+  aiState.generateError = new UnsupportedFunctionalityError({ functionality: 'audio input' });
+  expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
+    code: 'PROVIDER_INVALID_REQUEST',
+  });
+});
+
+test('an error from the gateway itself is internal and does not fall back', async () => {
+  aiState.firstCallError = new TypeError("Cannot read properties of undefined (reading 'id')");
+
+  const failure = await withCaller(() =>
+    completionFailure(headers(), body({ model: 'openai/internal-a,openai/internal-b' })),
+  );
+
+  expect(failure).toMatchObject({ code: 'INTERNAL_ERROR' });
+  expect(aiState.generateCalls).toHaveLength(1);
+});
+
+// Fallback
+
+test.each([429, 500, 503])('a %i moves on to the next model, and both attempts are logged', async (status) => {
+  aiState.firstCallError = apiError(status);
+
+  const completion = await withCaller(() =>
+    Services.createChatCompletion(
+      headers(),
+      body({ model: `openai/fallback-${status}-a,openai/fallback-${status}-b` }),
+    ),
+  );
+
+  expect(completion.choices[0]?.message.content).toBe('Hello from the provider');
+  expect(aiState.generateCalls).toHaveLength(2);
+  expect(logWrites.failed).toHaveLength(1);
+  expect(logWrites.completed).toHaveLength(1);
+});
+
+test.each([400, 401, 404])('a %i is returned without trying the next model', async (status) => {
+  aiState.firstCallError = apiError(status);
+
+  const failure = await withCaller(() =>
+    completionFailure(headers(), body({ model: `openai/no-fallback-${status}-a,openai/no-fallback-${status}-b` })),
+  );
+
+  expect(failure).toMatchObject({ code: 'PROVIDER_REJECTED_REQUEST', status });
+  expect(aiState.generateCalls).toHaveLength(1);
+});
+
+test('when every model fails, the last failure is returned', async () => {
+  aiState.generateError = apiError(503);
+
+  const failure = await withCaller(() =>
+    completionFailure(headers(), body({ model: 'openai/all-down-a,openai/all-down-b' })),
+  );
+
+  expect(failure).toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+  expect(aiState.generateCalls).toHaveLength(2);
+  expect(logWrites.failed).toHaveLength(2);
+});
+
+test('a stream that fails before its first chunk moves on to the next model', async () => {
+  aiState.firstCallError = apiError(503);
+
+  const chunks: ChatCompletionChunk[] = [];
+  await withCaller(async () => {
+    for await (const chunk of Services.streamChatCompletion(
+      headers(),
+      body({ model: 'openai/stream-fallback-a,openai/stream-fallback-b', stream: true }),
+    )) {
+      chunks.push(chunk);
+    }
+  });
+
+  expect(aiState.streamCalls).toHaveLength(2);
+  expect(chunks.at(-1)?.choices[0]?.finish_reason).toBe('stop');
+  expect(logWrites.failed).toHaveLength(1);
+  expect(logWrites.completed).toHaveLength(1);
 });
 
 // Log lifecycle
@@ -1121,11 +1174,11 @@ test('a log store that fails on the way out still returns the completion', async
 });
 
 test('a failure to mark the log failed does not replace the error the caller needs', async () => {
-  aiState.generateError = new Error('socket hang up');
+  aiState.generateError = apiError(503);
   logWrites.failNextWrite(new Error('logs unreachable'));
 
   expect(await withCaller(() => completionFailure(headers(), body()))).toMatchObject({
-    code: 'PROVIDER_FAILED',
+    code: 'PROVIDER_UNAVAILABLE',
   });
 
   // Attempted twice: as part of its batch, then on its own.
@@ -1143,8 +1196,8 @@ test('log tags are parsed onto the row', async () => {
 // Webhooks
 
 test('ai-webhook-id queues a delivery before the provider is called', async () => {
-  // The named lookup consumes this one-shot response; the default empty
-  // webhooks response handles closeLog's later fan-out.
+  // The named lookup consumes this one-shot response. The default empty
+  // webhooks response handles the fan-out when the log is finished.
   database.respondTo('select', 'webhooks', rows({ id: WEBHOOK_ID }));
   database.respondTo('insert', 'webhook_outbox', rows());
 
@@ -1180,7 +1233,12 @@ test('a streamed tool call is framed by index and reassembled for the log', asyn
     // in the chunk shape. Neither reaches the wire.
     { type: 'tool-input-delta', id: 'call_unknown', delta: 'dropped' },
     { type: 'reasoning-delta', text: 'thinking' },
-    { type: 'finish', finishReason: 'tool-calls', totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } },
+    {
+      type: 'finish',
+      rawFinishReason: 'stop',
+      finishReason: 'tool-calls',
+      totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+    },
   ];
 
   const chunks: ChatCompletionChunk[] = [];
@@ -1225,35 +1283,30 @@ test('a streamed tool call is framed by index and reassembled for the log', asyn
   });
 });
 
-test('a provider that streams nothing still produces a well-formed pair of frames', async () => {
+test('a provider stream that ends without finishing is a failure, not an empty answer', async () => {
   aiState.streamParts = [];
 
-  const chunks: ChatCompletionChunk[] = [];
-  await withCaller(async () => {
-    for await (const chunk of Services.streamChatCompletion(
-      headers(),
-      body({ stream: true, stream_options: { include_usage: true } }),
-    )) {
-      chunks.push(chunk);
+  const results = await withCaller(async () => {
+    const collected = [];
+    for await (const result of ResultServices.streamChatCompletion(headers(), body({ stream: true }))) {
+      collected.push(result);
     }
+    return collected;
   });
 
-  // The opening frame the caller is owed, then the terminator. No usage frame:
-  // it was asked for, but the provider never sent one.
-  expect(chunks).toHaveLength(2);
-  expect(chunks[0]).toMatchObject({ choices: [{ delta: { role: 'assistant', content: '' } }] });
-  expect(chunks[1]).toMatchObject({ choices: [{ delta: {}, finish_reason: 'stop' }] });
-
-  // Zeroes rather than a missing block, so the stored shape is the same either way.
-  expect(logWrites.completed[0]?.entry.response).toMatchObject({
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  });
+  expect(results.at(-1)?.isErr()).toBe(true);
+  expect(results.at(-1)?._unsafeUnwrapErr()).toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+  await flushLogWrites();
+  // Logged failed, with nothing made up for the tokens it never reported.
+  expect(logWrites.failed).toHaveLength(1);
+  expect(logWrites.completed).toHaveLength(0);
 });
 
 test('an empty text delta opens the stream without emitting a content frame', async () => {
   aiState.streamParts = [
     { type: 'text-delta', text: '' },
     { type: 'text-delta', text: 'Hi' },
+    { type: 'finish', finishReason: 'stop', rawFinishReason: 'stop', totalUsage: {} },
   ];
 
   const chunks: ChatCompletionChunk[] = [];
@@ -1310,7 +1363,7 @@ test('a failure reported only through onError is returned once the stream drains
     requestBodyValues: {},
     statusCode: 401,
   });
-  aiState.streamParts = [{ type: 'finish', finishReason: 'error', totalUsage: {} }];
+  aiState.streamParts = [{ type: 'finish', rawFinishReason: 'stop', finishReason: 'error', totalUsage: {} }];
 
   let failure: unknown;
   await withCaller(async () => {
@@ -1327,27 +1380,8 @@ test('a failure reported only through onError is returned once the stream drains
   expect(logWrites.completed).toHaveLength(0);
 });
 
-test('the streaming path refuses an unsupported parameter before opening a log', async () => {
-  let failure: unknown;
-  await withCaller(async () => {
-    for await (const result of ResultServices.streamChatCompletion(
-      headers(),
-      body({ stream: true, response_format: { type: 'json_object' } }),
-    )) {
-      if (result.isErr()) {
-        failure = result.error;
-      }
-    }
-  });
-
-  expect(failure).toMatchObject({ code: 'UNSUPPORTED_RESPONSE_FORMAT' });
-
-  expect(aiState.streamCalls).toHaveLength(0);
-  expect(logWrites.started).toHaveLength(0);
-});
-
 test('the streaming path forwards the same settings the whole request does', async () => {
-  aiState.streamParts = [{ type: 'finish', finishReason: 'stop', totalUsage: {} }];
+  aiState.streamParts = [{ type: 'finish', rawFinishReason: 'stop', finishReason: 'stop', totalUsage: {} }];
 
   await withCaller(async () => {
     for await (const _chunk of Services.streamChatCompletion(
@@ -1388,31 +1422,32 @@ async function post(requestBody: unknown, extraHeaders: Record<string, string> =
   );
 }
 
-test('a named prompt is expanded into a leading system message and the version is echoed', async () => {
+test('a named prompt is expanded into a leading system message', async () => {
   database.respondTo('select', 'prompts', rows(promptRow()));
   database.respondTo('select', 'prompt_versions', rows({ template: 'You are {{ tone }}.' }));
 
   const response = await post(body({ prompt: { name: 'support', variables: { tone: 'warm' } } }));
 
   expect(response.status).toBe(200);
-  // Without this, "what did we actually send" is unanswerable once the active
-  // version moves.
-  expect(response.headers.get('ai-prompt-version')).toBe('3');
 
   const { messages } = aiState.generateCalls[0] as { messages: { role: string; content: string }[] };
   expect(messages[0]).toEqual({ role: 'system', content: 'You are warm.' });
   expect(messages[1]).toMatchObject({ role: 'user' });
 
-  // `prompt` is the gateway's own field and is dropped on the way through, so
-  // the log records the request that was actually sent.
-  expect(logWrites.completed[0]?.entry.request).not.toHaveProperty('prompt');
+  // The stored request keeps the reference, with the version that was used.
+  // Without it, "what did we actually send" is unanswerable once the active
+  // version moves.
+  expect(logWrites.completed[0]?.entry.request).toMatchObject({
+    prompt: { name: 'support', version: 3, variables: { tone: 'warm' } },
+  });
 });
 
-test('a request that names no prompt sets no version header and never asks', async () => {
+test('a request that names no prompt gets no system message added', async () => {
   const response = await post(body());
 
   expect(response.status).toBe(200);
-  expect(response.headers.get('ai-prompt-version')).toBeNull();
+  const { messages } = aiState.generateCalls[0] as { messages: { role: string }[] };
+  expect(messages[0]?.role).toBe('user');
 });
 
 /**
@@ -1490,16 +1525,18 @@ test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', as
   aiState.streamParts = [
     { type: 'text-delta', text: 'Hello ' },
     { type: 'text-delta', text: 'stream' },
-    { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } },
+    {
+      type: 'finish',
+      rawFinishReason: 'stop',
+      finishReason: 'stop',
+      totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+    },
   ];
 
   const response = await post(body({ stream: true }));
 
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('text/event-stream');
-  // Set from the first chunk, which the handler pulls before the stream opens -
-  // once it does, the 200 and its headers are on the wire for good.
-  expect(response.headers.get('ai-log-id')).toBe(LOG_ID);
 
   const frames = (await response.text())
     .split('\n\n')
@@ -1513,6 +1550,28 @@ test('the HTTP handler frames a stream as SSE and terminates it with [DONE]', as
   expect(logWrites.completed[0]?.entry.response).toMatchObject({
     choices: [{ message: { content: 'Hello stream' } }],
   });
+});
+
+test('a stream that throws after it opened ends with an error frame, not a silent close', async () => {
+  aiState.streamParts = [{ type: 'text-delta', text: 'Hello ' }];
+  aiState.streamCrash = new Error('the stream broke in a way nothing reports');
+
+  const response = await post(body({ stream: true }));
+
+  expect(response.status).toBe(200);
+
+  const frames = (await response.text())
+    .split('\n\n')
+    .filter((frame) => frame.startsWith('data: '))
+    .map((frame) => frame.slice('data: '.length));
+
+  // OpenAI's SDKs raise on the error frame. With neither it nor [DONE], they
+  // read the cut-off answer as a finished one.
+  expect(JSON.parse(frames[1] ?? '')).toMatchObject({ choices: [{ delta: { content: 'Hello ' } }] });
+  expect(JSON.parse(frames.at(-1) ?? '')).toEqual({
+    error: { message: 'Internal server error', type: 'server_error', param: null, code: null },
+  });
+  expect(frames).toHaveLength(3);
 });
 
 test('a failure before the first chunk is still a normal error response, not a broken stream', async () => {
@@ -1541,7 +1600,6 @@ test('the non-streaming handler echoes the log id it opened', async () => {
   const response = await post(body(), { traceparent: `00-${traceId}-${parentSpanId}-01` });
 
   expect(response.status).toBe(200);
-  expect(response.headers.get('ai-log-id')).toBe(LOG_ID);
   expect(response.headers.get('ai-trace-id')).toBe(traceId);
   expect(logWrites.started[0]).toMatchObject({
     entry: {
@@ -1559,7 +1617,7 @@ test('the non-streaming handler echoes the log id it opened', async () => {
 test('an explicit zero provider cache count is stored as zero', async () => {
   aiState.generateResult = {
     ...aiState.generateResult,
-    totalUsage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, inputTokenDetails: { cacheReadTokens: 0 } },
+    usage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, inputTokenDetails: { cacheReadTokens: 0 } },
   };
   await withCaller(() => Services.createChatCompletion(headers(), body()));
   expect(logWrites.completed[0]?.entry.cached_input_tokens).toBe(0);
@@ -1599,9 +1657,9 @@ test('weighted model requests select the same candidate in generation and stream
   } finally {
     random.mockRestore();
   }
-  expect(providerFactory.anthropic).toHaveLength(1);
+  expect(providerFactory.anthropic).toHaveLength(2);
   expect(providerFactory.openai).toHaveLength(0);
-  expect(providerFactory.modelIds).toEqual(['routed-claude']);
+  expect(providerFactory.modelIds).toEqual(['routed-claude', 'routed-claude']);
   expect(logWrites.started).toHaveLength(2);
   for (const log of logWrites.started) {
     expect(log).toMatchObject({ entry: { provider: 'anthropic', model: 'routed-claude' } });

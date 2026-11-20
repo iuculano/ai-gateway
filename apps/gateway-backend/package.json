@@ -37,7 +37,7 @@
     "@repo/hono": "workspace:*",
     "@repo/object-storage": "workspace:*",
     "@repo/redis": "workspace:*",
-    "ai": "7.0.130",
+    "ai": "7.0.177",
     "drizzle-orm": "^1.0.0-rc.5-5935859",
     "hono": "^4.13.8",
     "lru-cache": "^11.5.3",
@@ -48,6 +48,7 @@
     "@clickhouse/client": "1.24.1",
     "@repo/test-helpers": "workspace:*",
     "@types/bun": "^1.4.2",
+    "openai": "7.55.0",
     "typescript": "^6.0.3"
   }
 }

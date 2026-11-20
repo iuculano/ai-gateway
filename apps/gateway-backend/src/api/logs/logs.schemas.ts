@@ -17,8 +17,8 @@ const logShape = createSelectSchema(logs)
     organization_id: true,
   })
   .extend({
-    input_cost: z.coerce.number().nonnegative(),
-    output_cost: z.coerce.number().nonnegative(),
+    input_cost: z.coerce.number().nonnegative().nullable(),
+    output_cost: z.coerce.number().nonnegative().nullable(),
     actor_type: z.enum(ACTOR_TYPES),
   });
 

@@ -35,6 +35,7 @@ const environmentSchema = z.object({
 
   AUTH_TOKEN_ISSUER: z.url(),
   AUTH_TOKEN_AUDIENCE: z.string().min(1),
+  SHUTDOWN_GRACE_MS: z.coerce.number().int().nonnegative().default(8_000),
 });
 
 export const environment = environmentSchema.parse(process.env);

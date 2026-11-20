@@ -202,7 +202,17 @@ test('only input tokens are billed', async () => {
   const entry = logWrites.completed[0]?.entry;
   expect(entry).toMatchObject({ input_tokens: 60, output_tokens: 12 });
   expect(entry?.input_cost).toBeCloseTo(0.000006, 15);
-  expect(entry).not.toHaveProperty('output_cost');
+  // Output is free for a decision, so its cost is a known zero, not unknown.
+  expect(entry?.output_cost).toBe(0);
+});
+
+test('usage the provider left out is zero in the response but unknown in the log', async () => {
+  decisionState.result.usage = undefined;
+
+  const decision = expectOk(await withCaller(() => Services.createDecision(headers(), body())));
+
+  expect(decision.usage).toEqual({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
+  expect(logWrites.completed[0]?.entry).toMatchObject({ input_tokens: null, output_tokens: null, input_cost: null });
 });
 
 test('a refused question comes back as a refusal alongside the other answers', async () => {
@@ -280,6 +290,15 @@ test('the HTTP handler returns the decision', async () => {
 
 test('the schema rejects message-array input', async () => {
   expect((await post({ ...body(), input: [{ role: 'user', content: 'hi' }] })).status).toBe(400);
+  expect(decisionState.calls).toHaveLength(0);
+});
+
+test('the schema rejects two questions with the same name', async () => {
+  const [spam] = body().questions;
+  const response = await post({ ...body(), questions: [spam, { ...spam, instructions: 'Is this a scam?' }] });
+
+  expect(response.status).toBe(400);
+  expect(JSON.stringify(await response.json())).toContain('Question names must be unique');
   expect(decisionState.calls).toHaveLength(0);
 });
 

@@ -27,9 +27,20 @@ type ModelNotFoundBySlugFailure = {
   slug: string;
 };
 
+type ModelInvalidRoutingFailure = {
+  code: 'MODEL_INVALID_ROUTING';
+  message: string;
+};
+
+type RoutedModelNotFoundFailure = {
+  code: 'MODEL_NOT_FOUND';
+  model: string;
+};
+
 // The public service failure unions.
 export type GetModelFailure = ModelNotFoundFailure;
 export type GetModelBySlugFailure = ModelNotFoundBySlugFailure;
+export type ValidateAndOrderModelsFailure = ModelInvalidRoutingFailure | RoutedModelNotFoundFailure;
 
 /**
  * Retrieves a single model by its ID.
@@ -183,12 +194,16 @@ async function listProviders(query: ListProvidersQuery): Promise<ListProvidersRe
  *
  * @param options
  * The routing options to use for ordering the models.
+ *
+ * @returns
+ * The catalog models in the order to try them. MODEL_NOT_FOUND when none of
+ * them is in the catalog, MODEL_INVALID_ROUTING when the routing headers are wrong.
  */
 async function validateAndOrderModels(
   models: string,
   type: ModelType,
   options: ModelRoutingOptions,
-): Promise<string[] | undefined> {
+): Promise<Result<GetModelResponse[], ValidateAndOrderModelsFailure>> {
   // So you can't do something like "openai/a,,google/b" and get an empty
   // string as a candidate.
   const candidates = models.split(',').map((model) => model.trim());
@@ -197,17 +212,17 @@ async function validateAndOrderModels(
   // as-is.
   const strategy = options.strategy;
   if (!strategy) {
-    const output: string[] = [];
+    const output: GetModelResponse[] = [];
     for (const slug of candidates) {
       const model = await getModelBySlug(slug, type);
       if (model.isErr()) {
         continue;
       }
 
-      output.push(slug);
+      output.push(model.value);
     }
 
-    return output.length > 0 ? output : undefined;
+    return output.length > 0 ? ok(output) : err({ code: 'MODEL_NOT_FOUND', model: models });
   }
 
   if (strategy === 'weighted') {
@@ -217,19 +232,19 @@ async function validateAndOrderModels(
 
     // Make sure we have sane numbers as weights.
     if (weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) {
-      return undefined;
+      return err({ code: 'MODEL_INVALID_ROUTING', message: 'ai-routing-weights must all be positive numbers' });
     }
 
     // Probably likely to cause weird/unexpected results? I don't think this
     // would work?
     if (weights.length !== candidates.length) {
-      return undefined;
+      return err({ code: 'MODEL_INVALID_ROUTING', message: 'ai-routing-weights needs one weight per model' });
     }
 
     // Requested models and their weights together.
     const remaining = candidates.map((slug, index) => ({ slug, weight: weights[index] as number }));
 
-    const output: string[] = [];
+    const output: GetModelResponse[] = [];
 
     // For example:
     // Weights: [70, 20, 10], roll: 85
@@ -255,7 +270,7 @@ async function validateAndOrderModels(
 
           const model = await getModelBySlug(candidate.slug, type);
           if (model.isOk()) {
-            output.push(candidate.slug);
+            output.push(model.value);
           }
 
           break;
@@ -263,7 +278,7 @@ async function validateAndOrderModels(
       }
     }
 
-    return output.length > 0 ? output : undefined;
+    return output.length > 0 ? ok(output) : err({ code: 'MODEL_NOT_FOUND', model: models });
   }
 
   if (strategy === 'random') {
@@ -274,22 +289,22 @@ async function validateAndOrderModels(
       candidates[j] = temp;
     }
 
-    const output: string[] = [];
+    const output: GetModelResponse[] = [];
     for (const slug of candidates) {
       const model = await getModelBySlug(slug, type);
       if (model.isErr()) {
         continue;
       }
 
-      output.push(slug);
+      output.push(model.value);
     }
 
-    return output.length > 0 ? output : undefined;
+    return output.length > 0 ? ok(output) : err({ code: 'MODEL_NOT_FOUND', model: models });
   }
 
   if (strategy === 'cost') {
-    // Grab the slug and cost so we can sort.
-    const models = await Promise.all(
+    // Grab the model and cost so we can sort.
+    const priced = await Promise.all(
       candidates.map(async (slug) => {
         const model = await getModelBySlug(slug, type);
         if (model.isErr()) {
@@ -299,21 +314,21 @@ async function validateAndOrderModels(
         const { cost_input, cost_output } = model.value;
         const cost = cost_input != null && cost_output != null ? cost_input + cost_output : Number.POSITIVE_INFINITY; // Unknown prices sort last.
 
-        return { slug, cost };
+        return { model: model.value, cost };
       }),
     );
 
     // Filter any models we failed to retrieve.
-    const valid = models.filter((model) => model !== undefined);
+    const valid = priced.filter((model) => model !== undefined);
     if (valid.length === 0) {
-      return undefined;
+      return err({ code: 'MODEL_NOT_FOUND', model: models });
     }
 
     const sorted = valid.sort((x, y) => x.cost - y.cost);
-    return sorted.map(({ slug }) => slug);
+    return ok(sorted.map(({ model }) => model));
   }
 
-  return undefined;
+  return err({ code: 'MODEL_INVALID_ROUTING', message: `Unknown routing strategy '${strategy}'` });
 }
 
 export default {

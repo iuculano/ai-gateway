@@ -41,13 +41,11 @@ test('request and response payloads round-trip through MinIO and are deleted wit
     LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' }),
   );
   const id = pending.id;
-  await LogServices.completeLog(pending, {
-    request,
-    response,
-    input_tokens: 12,
-    output_tokens: 4,
-  });
-  await LogServices.flushLogs();
+  await LogServices.finishLog(
+    { ...pending, status: 'complete', input_tokens: 12, output_tokens: 4 },
+    { request, response },
+  );
+  await LogServices.waitForLogWrites();
 
   const log = await asTenant(() => LogServices.getLog(id));
   expect(log._unsafeUnwrap()).toMatchObject({ has_request: true, has_response: true, status: 'complete' });
@@ -75,12 +73,11 @@ test('payload omission leaves the skipped side undiscoverable and unstored', asy
     LogServices.startLog({ operation: 'chat', model: 'integration-model', provider: 'test-provider' }),
   );
   const id = pending.id;
-  await LogServices.completeLog(pending, {
-    request: { secret: 'do not retain' },
-    response: { retained: true },
-    omitRequest: true,
-  });
-  await LogServices.flushLogs();
+  await LogServices.finishLog(
+    { ...pending, status: 'complete' },
+    { request: { secret: 'do not retain' }, response: { retained: true }, headers: { 'ai-log-omit-request': true } },
+  );
+  await LogServices.waitForLogWrites();
 
   const log = (await asTenant(() => LogServices.getLog(id)))._unsafeUnwrap();
   expect(log).toMatchObject({ status: 'complete', has_request: false, has_response: true });
@@ -99,9 +96,9 @@ test('a failed inference retains its request but never advertises a response', a
   );
   const id = pending.id;
 
-  await LogServices.failLog(pending, { request });
+  await LogServices.finishLog({ ...pending, status: 'failed' }, { request });
 
-  await LogServices.flushLogs();
+  await LogServices.waitForLogWrites();
 
   const log = (await asTenant(() => LogServices.getLog(id)))._unsafeUnwrap();
   expect(log).toMatchObject({ status: 'failed', has_request: true, has_response: false });
@@ -122,17 +119,15 @@ test('a batch returns healthy payloads when another referenced object is missing
     LogServices.startLog({ operation: 'chat', model: 'two', provider: 'test-provider' }),
   );
   const second = secondLog.id;
-  await LogServices.completeLog(firstLog, {
-    request: { value: 'one' },
-    response: {},
-    omitResponse: true,
-  });
-  await LogServices.completeLog(secondLog, {
-    request: { value: 'two' },
-    response: {},
-    omitResponse: true,
-  });
-  await LogServices.flushLogs();
+  await LogServices.finishLog(
+    { ...firstLog, status: 'complete' },
+    { request: { value: 'one' }, response: {}, headers: { 'ai-log-omit-response': true } },
+  );
+  await LogServices.finishLog(
+    { ...secondLog, status: 'complete' },
+    { request: { value: 'two' }, response: {}, headers: { 'ai-log-omit-response': true } },
+  );
+  await LogServices.waitForLogWrites();
 
   await objectStorage.delete(payloadKey(acme.organizationId, second));
 

@@ -30,9 +30,6 @@ export type ChatCompletionRole = ChatCompletionMessage['role'];
  */
 export type { ChatCompletionChunk };
 
-/** Echoed by the gateway so a caller can find its own row on the logs page. */
-const LOG_ID_HEADER = 'ai-log-id';
-
 /** Echoed by the gateway so a caller can correlate every log in one trace. */
 const TRACE_ID_HEADER = 'ai-trace-id';
 
@@ -127,7 +124,7 @@ export interface StreamedChunk {
   raw: string;
 }
 
-async function* readChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamedChunk> {
+export async function* readChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamedChunk> {
   let terminated = false;
 
   for await (const frame of readFrames(body)) {
@@ -139,7 +136,15 @@ async function* readChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<Str
       break;
     }
 
-    yield { chunk: JSON.parse(data) as ChatCompletionChunk, raw: data };
+    const parsed = JSON.parse(data) as ChatCompletionChunk | { error: { message: string } };
+
+    // A failure after the 200 was committed arrives as an error frame, in
+    // place of the rest of the answer.
+    if ('error' in parsed) {
+      throw new Error(parsed.error.message);
+    }
+
+    yield { chunk: parsed, raw: data };
   }
 
   // [DONE] is the last thing the gateway writes. Reaching the end of the body
@@ -186,7 +191,6 @@ export async function createChatCompletion(headers: GatewayHeaders, body: ChatCo
   }
 
   return {
-    logId: response.headers.get(LOG_ID_HEADER),
     traceId: response.headers.get(TRACE_ID_HEADER),
     completion: payload,
   };
@@ -209,7 +213,7 @@ export async function createChatCompletion(headers: GatewayHeaders, body: ChatCo
  * Aborts the request, and the stream with it.
  *
  * @returns
- * The log id, and the frames as they arrive.
+ * The trace id, and the frames as they arrive.
  */
 export async function streamChatCompletion(headers: GatewayHeaders, body: ChatCompletionRequest, signal?: AbortSignal) {
   const response = await client.chat.completions.$post(
@@ -228,7 +232,6 @@ export async function streamChatCompletion(headers: GatewayHeaders, body: ChatCo
   }
 
   return {
-    logId: response.headers.get(LOG_ID_HEADER),
     traceId: response.headers.get(TRACE_ID_HEADER),
     chunks: readChunks(response.body),
   };

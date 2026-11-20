@@ -1,5 +1,5 @@
 import { expect, test } from './api-mock';
-import { IDS, registerEmptyApp } from './fixtures';
+import { registerEmptyApp, TRACE_IDS } from './fixtures';
 
 test('the playground streams a completion and sends the intended request', async ({ page, api }) => {
   registerEmptyApp(api);
@@ -36,7 +36,7 @@ test('the playground streams a completion and sends the intended request', async
     body: sse,
     headers: {
       'content-type': 'text/event-stream',
-      'ai-log-id': IDS.successLog,
+      'ai-trace-id': TRACE_IDS.workflow,
     },
   });
 
@@ -50,7 +50,7 @@ test('the playground streams a completion and sends the intended request', async
 
   await expect(page.getByText('Hello from Relay', { exact: true })).toBeVisible();
   await expect(page.getByText('9 tok', { exact: true })).toBeVisible();
-  await expect(page.getByText(IDS.successLog, { exact: true })).toBeVisible();
+  await expect(page.getByText(TRACE_IDS.workflow, { exact: true })).toBeVisible();
 
   const calls = api.matching('POST', '/api/chat/completions');
   expect(calls).toHaveLength(1);

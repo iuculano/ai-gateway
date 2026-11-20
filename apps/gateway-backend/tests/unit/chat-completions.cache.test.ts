@@ -98,8 +98,8 @@ beforeEach(() => {
   calls.stream = 0;
 });
 
-function cachedModel(model: Model = providerModel, scope = 'test') {
-  return wrapLanguageModel({ model, middleware: createCacheMiddleware(scope, { hit: false }) });
+function cachedModel(model: Model = providerModel, namespace = { name: 'test' }) {
+  return wrapLanguageModel({ model, middleware: createCacheMiddleware(namespace, { hit: false }) });
 }
 
 test('generated results replay with restored timestamps', async () => {
@@ -116,10 +116,10 @@ test('stream chunks are stored after consumption and replayed with restored time
   expect(calls.stream).toBe(1);
 });
 
-test('generate, stream, and separate scopes use separate entries', async () => {
+test('generate, stream, and separate namespaces use separate entries', async () => {
   await cachedModel().doGenerate(params);
   await collect((await cachedModel().doStream(params)).stream);
-  await collect((await cachedModel(providerModel, 'other').doStream(params)).stream);
+  await collect((await cachedModel(providerModel, { name: 'other' }).doStream(params)).stream);
   expect(calls).toEqual({ generate: 1, stream: 2 });
 });
 
@@ -128,7 +128,7 @@ test('the SDK consumes live and replayed streams with the same text and usage', 
     const result = streamText({ model: cachedModel(), prompt: 'Hello' });
     await result.consumeStream();
     expect(await result.text).toBe('Hello from the provider');
-    expect((await result.totalUsage).totalTokens).toBe(7);
+    expect((await result.usage).totalTokens).toBe(7);
   }
   expect(calls.stream).toBe(1);
 });
@@ -195,7 +195,7 @@ for (const streaming of [false, true]) {
     await invoke(
       wrapLanguageModel({
         model: providerModel,
-        middleware: createCacheMiddleware('test', state, { ttl: 60, refresh: true }),
+        middleware: createCacheMiddleware({ name: 'test' }, state, { ttl: 60, refresh: true }),
       }),
     );
     expect(state.hit).toBe(false);

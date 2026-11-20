@@ -435,7 +435,8 @@ async function queryAnalyticsSessionPositions(
       toFloat64(sum(cost)) AS cost_total,
       sum(input) AS input_tokens
     FROM (
-      SELECT arraySort(groupArray((logs.created_at, logs.id, toFloat64(input_cost + output_cost), logs.input_tokens))) AS steps
+      -- A cache hit still counts as a request, but its tokens never reached the provider.
+      SELECT arraySort(groupArray((logs.created_at, logs.id, toFloat64(input_cost + output_cost), if(gateway_cache_hit, 0, logs.input_tokens)))) AS steps
       FROM logs FINAL WHERE ${where} AND session_id != ''
       GROUP BY session_id
     )

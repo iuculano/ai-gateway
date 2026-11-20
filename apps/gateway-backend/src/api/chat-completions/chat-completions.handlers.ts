@@ -1,89 +1,17 @@
 import { defineOpenAPIRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { assertNever } from '@repo/core';
-import { type Caller, getActorId, getCaller, zodExceptionHook } from '@repo/hono';
-import { consumeFixedWindowCounter } from '@repo/redis';
+import { getLogger, keepAlive, writeFrame, zodExceptionHook } from '@repo/hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
-import type { Result } from 'neverthrow';
 import { toProviderHttpException } from '../../lib/ai-sdk-providers';
+import { openAIErrorHandler, toOpenAIError } from '../../lib/openai-errors';
 import PromptServices, { type ResolvePromptFailure } from '../prompts/prompts.services';
 import Routes from './chat-completions.routes';
-import type { ChatCompletionBody, ChatCompletionChunk, RateLimitPolicy } from './chat-completions.schemas';
+import type { ChatCompletionBody } from './chat-completions.schemas';
 import Services, {
   type CreateChatCompletionFailure,
   type StreamChatCompletionFailure,
 } from './chat-completions.services';
-
-/**
- * Returns a Redis key for rate limiting.
- *
- * @param id
- * The ID of the API key.
- *
- * @returns
- * The Redis key for the API key's quota counter.
- */
-function rateLimitKey(caller: Caller): string {
-  return `chat-completions:${caller.organization.id}:${getActorId(caller)}`;
-}
-
-/**
- * Acts on the caller's requested rate limit policy.
- *
- * @param caller
- * The authenticated caller for the current request.
- *
- * @param policy
- * The parsed policy from the ai-rate-limit-policy header.
- *
- * @returns
- * The headers to set on a successful response.
- *
- * @throws {HTTPException}
- * 429 when the caller is over quota, carrying the same headers plus Retry-After.
- */
-async function enforceRateLimit(caller: Caller, policy: RateLimitPolicy): Promise<Headers> {
-  const result = await consumeFixedWindowCounter(rateLimitKey(caller), {
-    limit: policy.quota,
-    windowSeconds: policy.windowSeconds,
-  });
-
-  const headers = new Headers();
-
-  // Both spellings. The IETF draft names are the standard ones; the X- forms
-  // are what most clients in the wild actually read.
-  //
-  // RateLimit-Limit is the LIMIT. It previously carried the consumed count,
-  // which made every response advertise a ceiling that climbed as quota was
-  // spent.
-  for (const [name, value] of [
-    ['RateLimit-Limit', result.limit],
-    ['RateLimit-Remaining', result.remainingQuota],
-  ] as const) {
-    headers.set(name, value.toString());
-    headers.set(`X-${name}`, value.toString());
-  }
-
-  // Only known once the window is actually being enforced - the limiter
-  // reports the reset as a retry-after, which is null while the caller is
-  // still under quota. Omitted rather than guessed.
-  if (result.retryAfterSeconds != null) {
-    headers.set('RateLimit-Reset', result.retryAfterSeconds.toString());
-    headers.set('X-RateLimit-Reset', result.retryAfterSeconds.toString());
-  }
-
-  if (result.isLimited) {
-    const retryAfter = result.retryAfterSeconds ?? policy.windowSeconds;
-    headers.set('Retry-After', retryAfter.toString());
-
-    throw new HTTPException(429, {
-      message: `Rate limit exceeded. Try again in ${retryAfter} seconds.`,
-      res: new Response(null, { headers: headers }),
-    });
-  }
-
-  return headers;
-}
 
 // The HTTP translations, one per service failure union.
 function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPException {
@@ -123,7 +51,7 @@ function toResolvePromptHttpException(failure: ResolvePromptFailure): HTTPExcept
   }
 }
 
-function toChatCompletionHttpException(
+export function toChatCompletionHttpException(
   failure: CreateChatCompletionFailure | StreamChatCompletionFailure,
 ): HTTPException {
   const { code } = failure;
@@ -136,16 +64,6 @@ function toChatCompletionHttpException(
           'preceding assistant message issued',
       });
 
-    case 'UNSUPPORTED_RESPONSE_FORMAT':
-      return new HTTPException(400, {
-        message: `response_format '${failure.response_format}' is not supported by this gateway`,
-      });
-
-    case 'TOP_LOGPROBS_REQUIRES_LOGPROBS':
-      return new HTTPException(400, {
-        message: 'top_logprobs requires logprobs to be true',
-      });
-
     case 'WEBHOOK_NOT_FOUND':
       return new HTTPException(404, {
         message: `No webhook with id '${failure.id}'`,
@@ -156,8 +74,9 @@ function toChatCompletionHttpException(
     case 'MODEL_UNSUPPORTED_PROVIDER':
     case 'PROVIDER_INVALID_REQUEST':
     case 'PROVIDER_REJECTED_REQUEST':
-    case 'PROVIDER_FAILED':
+    case 'PROVIDER_UNAVAILABLE':
     case 'PROVIDER_TIMEOUT':
+    case 'INTERNAL_ERROR':
       return toProviderHttpException(failure);
 
     default:
@@ -175,23 +94,22 @@ function toChatCompletionHttpException(
  * The body to send upstream, and the version that was expanded when one was.
  */
 async function expandPrompt(body: ChatCompletionBody): Promise<{ body: ChatCompletionBody; version: number | null }> {
+  // Return as is if no prompt is specified.
   if (!body.prompt) {
     return { body, version: null };
   }
 
   const resolved = await PromptServices.resolvePrompt(body.prompt);
-
   if (resolved.isErr()) {
     throw toResolvePromptHttpException(resolved.error);
   }
 
-  // `prompt` is dropped on the way through - it is this gateway's field, and
-  // the provider has no idea what it means.
-  const { prompt: _reference, ...rest } = body;
-
+  // Add a reference to the resolved prompt, and inject it innto the system
+  // message.
   return {
     body: {
-      ...rest,
+      ...body,
+      prompt: { ...body.prompt, version: resolved.value.version },
       messages: [{ role: 'system', content: resolved.value.prompt }, ...body.messages],
     },
     version: resolved.value.version,
@@ -208,33 +126,11 @@ const createChatCompletion = defineOpenAPIRoute({
     const headers = c.req.valid('header');
     const body = c.req.valid('json');
 
-    const policy = headers['ai-rate-limit-policy'];
-    if (policy) {
-      const rateLimitHeaders = await enforceRateLimit(getCaller(), policy);
-      rateLimitHeaders.forEach((value, name) => {
-        c.res.headers.set(name, value);
-      });
-    }
-
-    // Before anything reaches the provider, and before the stream commits the
-    // 200 - a prompt that will not expand has to be a normal error response.
+    // If a prompt is specified, expand it into the system message.
     const expanded = await expandPrompt(body);
 
-    // Which version actually produced this, echoed for the same reason as
-    // ai-log-id. Without it, "what did we send" is unanswerable once the
-    // active version moves.
-    if (expanded.version !== null) {
-      c.res.headers.set('ai-prompt-version', String(expanded.version));
-    }
-
-    // Echoed so a caller can fetch the stored payloads afterwards without
-    // having to guess which log row was theirs.
-    const echoLogId = (logId: string) => {
-      c.res.headers.set('ai-log-id', logId);
-    };
-
     if (!expanded.body.stream) {
-      const result = await Services.createChatCompletion(headers, expanded.body, echoLogId);
+      const result = await Services.createChatCompletion(headers, expanded.body, c.req.raw.signal);
 
       return result.match(
         (completion) => c.json(completion, 200),
@@ -244,37 +140,48 @@ const createChatCompletion = defineOpenAPIRoute({
       );
     }
 
-    // The first chunk is pulled before streamSSE() takes over so that a
-    // failure to even reach the provider is still a normal error response.
-    // Once the stream opens, the 200 is committed and nothing can change it -
-    // including the ai-log-id header, which is why the log has to be opened
-    // before this point rather than when the stream finishes.
-    const chunks = Services.streamChatCompletion(headers, expanded.body, echoLogId);
+    // Need to read at least one chunk to infer a status. Otherwise, once
+    // the SSE stream starts, we've already committed to a 200 status.
+    const chunks = Services.streamChatCompletion(headers, expanded.body, c.req.raw.signal);
     const first = await chunks.next();
 
-    const unwrap = (result: Result<ChatCompletionChunk, StreamChatCompletionFailure>) =>
-      result.match(
-        (chunk) => chunk,
-        (failure) => {
-          throw toChatCompletionHttpException(failure);
-        },
-      );
-
-    // Unwrap before streamSSE commits a 200. Once the response begins, an Err
-    // can only terminate the stream; before it begins, it remains a normal
-    // JSON error response with the status chosen above.
-    const firstChunk = first.done ? undefined : unwrap(first.value);
+    if (!first.done && first.value.isErr()) {
+      throw toChatCompletionHttpException(first.value.error);
+    }
 
     return streamSSE(c, async (sse) => {
-      if (firstChunk) {
-        await sse.writeSSE({ data: JSON.stringify(firstChunk) });
-      }
+      const pings = keepAlive(sse);
+      try {
+        // Already taken from above, so the loop below starts at the second.
+        if (!first.done && first.value.isOk()) {
+          await writeFrame(sse, { data: JSON.stringify(first.value.value) });
+        }
 
-      for await (const result of chunks) {
-        await sse.writeSSE({ data: JSON.stringify(unwrap(result)) });
-      }
+        for await (const result of chunks) {
+          if (result.isErr()) {
+            // OpenAI's SDKs raise on an error frame, rather than treating the
+            // cut-off answer as complete.
+            const exception = toChatCompletionHttpException(result.error);
+            const error = toOpenAIError(exception.status, exception.message, exception.cause);
+            await writeFrame(sse, { data: JSON.stringify(error) });
+            return;
+          }
 
-      await sse.writeSSE({ data: '[DONE]' });
+          await writeFrame(sse, { data: JSON.stringify(result.value) });
+        }
+
+        await writeFrame(sse, { data: '[DONE]' });
+      } catch (error) {
+        // We've sent 200, now an error frame is the only way left to say
+        // something has gone wrong.
+        //
+        // Without one the stream just ends, and OpenAI's SDKs read that as a
+        // finished answer.
+        getLogger().error({ err: error }, 'Chat completion stream failed after it opened');
+        await writeFrame(sse, { data: JSON.stringify(toOpenAIError(500, 'Internal server error', undefined)) });
+      } finally {
+        clearInterval(pings);
+      }
     });
   },
 });
@@ -282,5 +189,8 @@ const createChatCompletion = defineOpenAPIRoute({
 const app = new OpenAPIHono({
   defaultHook: zodExceptionHook,
 }).openapiRoutes([createChatCompletion] as const);
+
+// Adapter our error handling to OpenAI's expected format.
+app.onError(openAIErrorHandler());
 
 export default app;

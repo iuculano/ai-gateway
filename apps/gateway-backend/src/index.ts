@@ -32,9 +32,10 @@ createObjectStorage({
 
 await connectRedis();
 
-// Finish inference logs and API key usage writes before exiting.
+// Let model calls in flight finish, record the ones that don't, and finish
+// inference log and API key usage writes before exiting.
 process.on('SIGTERM', async () => {
-  await Promise.all([LogsService.flushLogs(), flushApiKeyUsage()]);
+  await Promise.all([LogsService.shutdownLogs(environment.SHUTDOWN_GRACE_MS), flushApiKeyUsage()]);
   process.exit(0);
 });
 

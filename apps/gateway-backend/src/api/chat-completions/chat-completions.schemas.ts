@@ -1,19 +1,6 @@
 import { z } from '@hono/zod-openapi';
 import { createSchema } from '@repo/hono';
 
-const rateLimitPolicy = z
-  .string()
-  .regex(/^[1-9]\d*;w=[1-9]\d*$/, 'Expected "<quota>;w=<window>" with positive integers, for example "1000;w=3600"')
-  .transform((value) => {
-    // The regex above already proved both halves are positive integers, so
-    // neither Number() can produce NaN here.
-    const [quota, window] = value.split(';w=');
-    return {
-      quota: Number(quota),
-      windowSeconds: Number(window),
-    };
-  });
-
 const headers = z.object({
   traceparent: z.string().optional(),
   tracestate: z.string().optional(),
@@ -24,9 +11,8 @@ const headers = z.object({
   'ai-routing-strategy': z.enum(['random', 'weighted', 'cost']).optional(),
   'ai-routing-weights': z.string().optional(),
   'ai-cache-enabled': z.stringbool().optional(),
-  'ai-cache-ttl': z.coerce.number().int().positive().optional(),
+  'ai-cache-ttl': z.coerce.number().int().positive().max(86_400).optional(),
   'ai-cache-refresh': z.stringbool().optional(),
-  'ai-rate-limit-policy': rateLimitPolicy.optional(),
   'ai-log-tags': z.string().optional(),
   'ai-log-omit-request': z.stringbool().optional(),
   'ai-log-omit-response': z.stringbool().optional(),
@@ -36,7 +22,6 @@ const headers = z.object({
 });
 
 const responseHeaders = z.object({
-  'ai-log-id': z.uuid(),
   'ai-trace-id': z.string().regex(/^[0-9a-f]{32}$/),
 });
 
@@ -165,14 +150,9 @@ const body = z.object({
   logit_bias: z.record(z.string(), z.number().min(-100).max(100)).nullish(),
   logprobs: z.boolean().nullish(),
   max_completion_tokens: z.number().int().positive().nullish(),
-  // Superseded by max_completion_tokens upstream, still accepted because
-  // plenty of clients emit it. max_completion_tokens wins when both are set.
   max_tokens: z.number().int().positive().nullish(),
   metadata: z.record(z.string().max(64), z.string().max(512)).nullish(),
 
-  // Only one choice per request. The generation path produces exactly one
-  // candidate, so accepting n > 1 and returning a single choice would be a
-  // silent lie - a 400 that names the field is the honest answer.
   n: z.literal(1).nullish(),
 
   parallel_tool_calls: z.boolean().nullish(),
@@ -180,7 +160,7 @@ const body = z.object({
   presence_penalty: z.number().min(-2).max(2).nullish(),
   prompt_cache_key: z.string().nullish(),
   prompt_cache_retention: z.enum(['in-memory', '24h']).nullish(),
-  reasoning_effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).nullish(),
+  reasoning_effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).nullish(),
   response_format: responseFormat.nullish(),
   safety_identifier: z.string().max(64).nullish(),
   seed: z.number().int().nullish(),
@@ -217,6 +197,7 @@ const usage = z.object({
   prompt_tokens_details: z
     .object({
       cached_tokens: z.number().int().nonnegative(),
+      cache_write_tokens: z.number().int().nonnegative().optional(), // Extension for other providers
     })
     .optional(),
   completion_tokens_details: z
@@ -244,7 +225,7 @@ const completion = z.object({
       finish_reason: finishReason,
     }),
   ),
-  usage: usage,
+  usage: usage.optional(), // Absent when the provider didn't report usage.
   service_tier: z.string().optional(),
   system_fingerprint: z.string().optional(),
 });
@@ -306,7 +287,6 @@ export type ChatCompletionMessage = z.infer<typeof message>;
 export type ChatCompletionUsage = z.infer<typeof usage>;
 export type ChatCompletionFinishReason = z.infer<typeof finishReason>;
 export type ChatCompletionToolCall = z.infer<typeof toolCall>;
-export type RateLimitPolicy = z.infer<typeof rateLimitPolicy>;
 
 export default {
   createChatCompletion,
