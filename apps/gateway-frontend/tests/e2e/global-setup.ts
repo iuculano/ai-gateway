@@ -35,7 +35,9 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       }),
     ]);
   } finally {
-    if (connectionTimeout) clearTimeout(connectionTimeout);
+    if (connectionTimeout) {
+      clearTimeout(connectionTimeout);
+    }
   }
 
   await redis.set(`relay:session:${SESSION_ID}`, JSON.stringify(session), { EX: SESSION_SECONDS });

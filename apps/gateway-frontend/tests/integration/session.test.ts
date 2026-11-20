@@ -33,6 +33,7 @@ mock.module(OIDC_PATH, () => ({
     }
 
     issued += 1;
+
     return {
       accessToken: `access-${issued}`,
       expiresIn: 3600,
@@ -48,7 +49,9 @@ mock.module(OIDC_PATH, () => ({
 const { createSession, getValidSession, refreshSession, destroySession } = await import('../../src/lib/server/session');
 const { redis, connectRedis } = await import('@repo/redis');
 
-/** Enough of SvelteKit's Cookies for the session module, backed by a map. */
+/**
+ * Enough of SvelteKit's Cookies for the session module, backed by a map.
+ */
 function fakeCookies(): Cookies & { jar: Map<string, string> } {
   const jar = new Map<string, string>();
 
@@ -68,8 +71,14 @@ function fakeCookies(): Cookies & { jar: Map<string, string> } {
 
 const baseUser = { name: 'Test', email: 'test@example.com', username: 'test' };
 
-/** Writes a session whose access token expires at a chosen offset from now. */
-async function seed(cookies: Cookies, expiresInMs: number, options: { refreshToken?: string; ageMs?: number } = {}) {
+/**
+ * Writes a session whose access token expires at a chosen offset from now.
+ */
+async function seed(
+  cookies: Cookies,
+  expiresInMs: number,
+  options: { refreshToken?: string; ageMs?: number } = {},
+): Promise<void> {
   await createSession(cookies, {
     accessToken: 'access-0',
     expiresAt: Date.now() + expiresInMs,
@@ -78,6 +87,18 @@ async function seed(cookies: Cookies, expiresInMs: number, options: { refreshTok
     createdAt: Date.now() - (options.ageMs ?? 0),
     user: baseUser,
   });
+}
+
+/**
+ * Stores a session in the shape this app wrote before refresh tokens existed,
+ * with no createdAt or refreshToken.
+ */
+async function seedLegacy(cookies: Cookies, id: string, expiresInMs: number): Promise<void> {
+  const session = { accessToken: 'legacy', expiresAt: Date.now() + expiresInMs, user: baseUser };
+
+  await connectRedis();
+  await redis.set(`relay:session:${id}`, JSON.stringify(session), { EX: 3600 });
+  cookies.set('relay_session', id, { path: '/' });
 }
 
 beforeEach(() => {
@@ -131,8 +152,8 @@ describe('getValidSession', () => {
 
     expect(session?.refreshToken).toBe('refresh-1');
 
-    // And it survives a re-read: a rotated token held only in memory is a
-    // session that dies on the next process.
+    // It has to survive a re-read too, because a rotated token held only in
+    // memory is a session that dies with the process.
     const reread = await getValidSession(cookies);
     expect(reread?.refreshToken).toBe('refresh-1');
   });
@@ -198,18 +219,10 @@ describe('getValidSession', () => {
 describe('sessions written before the refresh fields existed', () => {
   test('are usable, and are not mistaken for having outlived the cap', async () => {
     const cookies = fakeCookies();
-    await connectRedis();
 
-    // Exactly the shape this app stored before refresh tokens: no createdAt, no
-    // refreshToken. A NaN cap calculation here would reject a live session, and
-    // a NaN TTL would fail the write outright rather than merely be wrong.
-    const id = 'legacy-session-id';
-    cookies.set('relay_session', id, { path: '/' });
-    await redis.set(
-      `relay:session:${id}`,
-      JSON.stringify({ accessToken: 'legacy', expiresAt: Date.now() + 60 * 60 * 1000, user: baseUser }),
-      { EX: 3600 },
-    );
+    // A NaN cap calculation here would reject a live session, and a NaN TTL
+    // would fail the write outright rather than merely be wrong.
+    await seedLegacy(cookies, 'legacy-session-id', 60 * 60 * 1000);
 
     const session = await getValidSession(cookies);
 
@@ -219,15 +232,7 @@ describe('sessions written before the refresh fields existed', () => {
 
   test('end when their access token does, having nothing to renew with', async () => {
     const cookies = fakeCookies();
-    await connectRedis();
-
-    const id = 'legacy-expired-id';
-    cookies.set('relay_session', id, { path: '/' });
-    await redis.set(
-      `relay:session:${id}`,
-      JSON.stringify({ accessToken: 'legacy', expiresAt: Date.now() - 1000, user: baseUser }),
-      { EX: 3600 },
-    );
+    await seedLegacy(cookies, 'legacy-expired-id', -1000);
 
     expect(await getValidSession(cookies)).toBeNull();
     expect(refreshCalls).toBe(0);
@@ -238,8 +243,8 @@ describe('refreshSession', () => {
   test('renews regardless of what the stored expiry claims', async () => {
     const cookies = fakeCookies();
 
-    // The reactive path: the backend rejected a token this process believes is
-    // healthy, so the stored expiry is not the thing to consult.
+    // The backend rejected a token this process believes is healthy, so the
+    // stored expiry is not the thing to consult.
     await seed(cookies, 60 * 60 * 1000);
 
     const session = await refreshSession(cookies);

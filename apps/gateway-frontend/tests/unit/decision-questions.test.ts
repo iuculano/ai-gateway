@@ -29,7 +29,7 @@ test.each(questions)('a $type question survives the trip through the form', (que
 });
 
 test('a question type the form does not know is refused', () => {
-  expect(() => toDraft({ type: 'ranking', name: 'x', instructions: 'y' } as unknown as DecisionQuestion)).toThrow(
-    'Unknown question type ranking',
-  );
+  const ranking = { type: 'ranking', name: 'x', instructions: 'y' } as unknown as DecisionQuestion;
+
+  expect(() => toDraft(ranking)).toThrow('Unknown question type ranking');
 });

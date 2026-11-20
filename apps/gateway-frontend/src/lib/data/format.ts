@@ -154,9 +154,10 @@ export function fmtSpend(dollars: number): string {
 export function fmtBucket(iso: string | null, interval: 'hour' | 'day'): string {
   if (!iso) return '';
   const date = new Date(iso);
+
   return interval === 'hour'
     ? `${String(date.getHours()).padStart(2, '0')}:00`
-    : `${MONTHS[date.getMonth()]} ${date.getDate()}`;
+    : `${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}`;
 }
 
 /**
