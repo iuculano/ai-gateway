@@ -10,10 +10,10 @@ export interface ScopeOption {
 // granting scopes it doesn't know. Kept in the same order the backend declares
 // them so the two lists can be diffed by eye.
 //
-// Note that api-keys:write is additionally gated on actorTypes: ['user'], so
-// granting it to a key buys that key nothing - every route it guards rejects
-// api-key actors. It stays listed because the same options drive the UI for
-// user-held permissions.
+// Note that actors:read and api-keys:write are additionally gated on
+// actorTypes: ['user'], so granting them to a key buys that key nothing - every
+// route they guard rejects api-key actors. They stay listed because the same
+// options drive the UI for user-held permissions.
 export const SCOPE_OPTIONS: ScopeOption[] = [
   { id: 'actors:read', label: 'Actors · Read', desc: 'Resolve user and API key names' },
   { id: 'api-keys:read', label: 'API keys · Read', desc: 'List and inspect API keys' },

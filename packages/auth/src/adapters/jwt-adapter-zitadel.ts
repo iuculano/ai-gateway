@@ -152,7 +152,7 @@ export async function createZitadelAdapter(options: ZitadelAdapterOptions): Prom
 
     const { externalOrganizationId, externalUserId, organizationName } = tokenIdentity(payload);
     const { user, roles } = await resolveTokenUser(token, options.issuer, provider.userinfoUri, externalUserId);
-    const organization = await resolveOrganization(options.issuer, externalOrganizationId, organizationName);
+    const organization = await resolveOrganization(options.issuer, externalOrganizationId, user.id, organizationName);
     const scopes = resolveScopes(payload, roles, options.roleScopesMap);
 
     return {

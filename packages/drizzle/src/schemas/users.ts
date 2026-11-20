@@ -6,8 +6,9 @@ export const userStatus = pgEnum('user_status', ['active', 'deleted']);
 /**
  * Representation of a human.
  *
- * This table will be populated just-in-time when a user logs in - it does not
- * sync. One row per human.
+ * This table will be populated just-in-time when a user logs in, and the
+ * profile is refreshed whenever a later login shows it changed - it does not
+ * sync in the background. One row per human.
  *
  * This is intended to give a stable database-local identity to a user, so that
  * rows elsewhere can point at one - api_keys.creator_id, api_keys.revoked_by and

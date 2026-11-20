@@ -25,8 +25,15 @@ export async function fetchSeries(request: SeriesRequest): Promise<SeriesPoint[]
 
     // Only the top six in either view need display names. Keep all aggregates
     // for accurate spend ranking and shares without resolving every caller.
-    const actorName = await resolveActorNames(topCallerReferences(grouping.points));
-    groupings.push(grouping.points.map((point) => ({ ...point, actor_label: actorName(point) })));
+    //
+    // Names are decoration. A failed lookup leaves the callers unlabelled
+    // rather than failing every chart that arrived alongside them.
+    try {
+      const actorName = await resolveActorNames(topCallerReferences(grouping.points));
+      groupings.push(grouping.points.map((point) => ({ ...point, actor_label: actorName(point) })));
+    } catch {
+      groupings.push(grouping.points);
+    }
   }
 
   return groupings;

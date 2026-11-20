@@ -68,6 +68,18 @@ test('getAuditLog returns Ok with the actor resolved', async () => {
   expect(result._unsafeUnwrap().actor_name).toBe('Alex');
 });
 
+test('an API key actor carries its own name next to its owner', async () => {
+  const row = { ...auditRow({ actor_id: KEY_ID }), actor_api_key_name: 'Deployment' };
+  database.respondTo('select', 'audit_logs', rows(row), rows(row));
+
+  const single = (await Services.getAuditLog(AUDIT_ID))._unsafeUnwrap();
+  const page = await Services.listAuditLogs({ limit: 50 });
+
+  for (const log of [single, page.data[0]]) {
+    expect(log).toMatchObject({ actor_type: 'api_key', actor_name: 'Alex', actor_api_key_name: 'Deployment' });
+  }
+});
+
 test('getAuditLog rejects when the query fails', async () => {
   database.respondTo('select', 'audit_logs', failsWith(new Error('connection terminated')));
 

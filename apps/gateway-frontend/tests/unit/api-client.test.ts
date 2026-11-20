@@ -60,3 +60,29 @@ test('the catalog loader follows provider cursors and combines pages', async () 
   expect(fetchSpy).toHaveBeenCalledTimes(2);
   expect(String(fetchSpy.mock.calls[1]?.[0])).toContain('after_id=anthropic');
 });
+
+test('a failed name lookup leaves callers unlabelled instead of failing the series', async () => {
+  const { fetchSeries } = await import('../../src/lib/api/analytics');
+  const caller = { actor_type: 'user', actor_id: '01912d3f-9b4a-7c3d-8e2f-000000000021', requests: 3, cost_total: 1 };
+  const series = { interval: 'day', groupings: [{ group_by: ['actor'], points: [caller] }] };
+  const request = {
+    start_date: '2026-01-01T00:00:00.000Z',
+    end_date: '2026-01-02T00:00:00.000Z',
+    groupings: [['actor' as const]],
+  };
+
+  // Each fetchSeries call asks for the series first, then for the names.
+  fetchSpy
+    .mockResolvedValueOnce(Response.json(series))
+    .mockResolvedValueOnce(Response.json({ error: { message: 'Forbidden' } }, { status: 403 }))
+    .mockResolvedValueOnce(Response.json(series))
+    .mockResolvedValueOnce(Response.json({ data: [{ ...caller, display: { name: 'Alex' } }] }));
+
+  const [unlabelled] = await fetchSeries(request);
+  const [labelled] = await fetchSeries(request);
+
+  expect(unlabelled?.[0]?.requests).toBe(3);
+  expect(unlabelled?.[0]?.actor_label).toBeUndefined();
+  expect(labelled?.[0]?.actor_label).toBe('Alex');
+  expect(fetchSpy).toHaveBeenCalledTimes(4);
+});

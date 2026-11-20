@@ -12,11 +12,10 @@ const auditLogShape = createSelectSchema(auditLogs)
     actor_type: z.enum(ACTOR_TYPES),
   });
 
-// Read endpoints resolve the actor_id to the user's display identity at
-// query time. Null for system actors and for actors that no longer exist.
 const auditLogWithActorShape = auditLogShape.extend({
   actor_name: z.string().nullable(),
   actor_email: z.string().nullable(),
+  actor_api_key_name: z.string().nullable(),
 });
 
 const getAuditLog = createSchema({

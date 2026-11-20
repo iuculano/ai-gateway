@@ -13,7 +13,7 @@ beforeEach(async () => {
   globex = await seedTenant('globex');
 });
 
-test('users resolve directly without organization activity and include tombstones', async () => {
+test('users resolve for their own organization, tombstones included, but never across tenants', async () => {
   const resolve = () =>
     runWithCaller(callerFor(acme), () =>
       Services.resolveActors({
@@ -23,12 +23,19 @@ test('users resolve directly without organization activity and include tombstone
         ],
       }),
     );
-  expect((await resolve()).data.map((actor) => actor.display)).toEqual([
-    { name: 'acme-user' },
-    { name: 'globex-user' },
-  ]);
-  await admin`update users set status = 'deleted' where id = ${globex.userId}`;
-  expect((await resolve()).data[1]?.display).toEqual({ name: 'globex-user' });
+  expect((await resolve()).data.map((actor) => actor.display)).toEqual([{ name: 'acme-user' }, null]);
+  await admin`update users set status = 'deleted' where id = ${acme.userId}`;
+  expect((await resolve()).data[0]?.display).toEqual({ name: 'acme-user' });
+});
+
+test('a user who belongs to two organizations resolves in both', async () => {
+  await admin`insert into organization_members (organization_id, user_id)
+    values (${globex.organizationId}, ${acme.userId})`;
+  const actors = [{ actor_type: 'user' as const, actor_id: acme.userId }];
+  for (const tenant of [acme, globex]) {
+    const result = await runWithCaller(callerFor(tenant), () => Services.resolveActors({ actors }));
+    expect(result.data[0]?.display).toEqual({ name: 'acme-user' });
+  }
 });
 
 test('API key names remain available after revocation but never across tenants', async () => {

@@ -1,7 +1,16 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { HTTPException } from 'hono/http-exception';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { database, installAuthMocks, ORGANIZATION_ID, organizationRow, resetDoubles, rows, USER_ID } from './doubles';
+import {
+  database,
+  installAuthMocks,
+  ORGANIZATION_ID,
+  organizationRow,
+  resetDoubles,
+  rows,
+  USER_ID,
+  userRow,
+} from './doubles';
 
 await installAuthMocks();
 
@@ -83,8 +92,10 @@ async function adapter(
 }
 
 function arrangeActiveIdentity(): void {
-  database.respondTo('select', 'user_identities', rows({ id: USER_ID, status: 'active' }));
-  database.respondTo('select', 'organizations', rows(organizationRow()));
+  database.respondTo('select', 'user_identities', rows({ user: userRow() }));
+  // Userinfo that differs from the stored profile refreshes it.
+  database.defaultResponse('update', 'users', rows());
+  database.respondTo('select', 'organizations', rows(organizationRow({ member_id: USER_ID })));
 }
 
 async function rejectedHttpException(promise: Promise<unknown>): Promise<HTTPException> {

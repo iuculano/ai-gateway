@@ -127,6 +127,7 @@ const TABLES = [
   'logs',
   'webhooks',
   'models',
+  'organization_members',
   'user_identities',
   'users',
   'organizations',
@@ -264,6 +265,11 @@ export async function seedTenant(label: string): Promise<Tenant> {
   await admin`
     insert into user_identities (user_id, external_idp, external_id)
     values (${user.id}, 'test-idp', ${`ext-${label}-user`})
+  `;
+
+  await admin`
+    insert into organization_members (organization_id, user_id)
+    values (${organization.id}, ${user.id})
   `;
 
   return { label, organizationId: organization.id, userId: user.id };

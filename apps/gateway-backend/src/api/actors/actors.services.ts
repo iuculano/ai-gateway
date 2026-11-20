@@ -1,14 +1,20 @@
 import { and, db, eq, inArray, sql } from '@repo/drizzle';
-import { apiKeys, users } from '@repo/drizzle/schemas';
+import { apiKeys, organizationMembers, users } from '@repo/drizzle/schemas';
 import { getCaller } from '@repo/hono';
 import Schemas, { type ResolveActorsBody, type ResolveActorsResponse } from './actors.schemas';
 
 async function resolveUsers(ids: string[]): Promise<{ id: string; name: string }[]> {
+  const caller = getCaller();
+
   // biome-ignore format: looks nicer
   const rows = await db
     .select({ id: users.id, name: sql<string>`coalesce(${users.name}, ${users.username})` })
     .from(users)
-    .where(inArray(users.id, ids));
+    .innerJoin(organizationMembers, eq(organizationMembers.user_id, users.id))
+    .where(and(
+      eq(organizationMembers.organization_id, caller.organization.id),
+      inArray(users.id, ids)
+    ));
 
   return rows;
 }
