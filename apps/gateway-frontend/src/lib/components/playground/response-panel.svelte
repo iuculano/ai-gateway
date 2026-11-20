@@ -1,15 +1,15 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 import { toast } from 'svelte-sonner';
-import { copyToClipboard } from '$lib/clipboard';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import JsonView from '$lib/components/logs/json-view.svelte';
-import MessageList from '$lib/components/logs/message-list.svelte';
-import type { Turn } from '$lib/data/conversation';
-import { turnsToText } from '$lib/data/conversation';
-import { fmtLatency, fmtTokens } from '$lib/data/format';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import JsonView from '#lib/components/logs/json-view.svelte';
+import MessageList from '#lib/components/logs/message-list.svelte';
+import type { Turn } from '#lib/data/conversation.ts';
+import { turnsToText } from '#lib/data/conversation.ts';
+import { fmtLatency, fmtTokens } from '#lib/data/format.ts';
 
 /**
  * What came back, in the same two renderings the logs page offers - so the

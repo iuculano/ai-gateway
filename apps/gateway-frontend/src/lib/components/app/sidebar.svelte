@@ -1,9 +1,9 @@
 <script lang="ts">
+import { initialsOf } from '#lib/data/format.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
+import { webhooks } from '#lib/state/webhooks.svelte.ts';
 import { page } from '$app/state';
-import { initialsOf } from '$lib/data/format';
-import { dashboard } from '$lib/state/dashboard.svelte';
-import { prompts } from '$lib/state/prompts.svelte';
-import { webhooks } from '$lib/state/webhooks.svelte';
 
 let { user }: { user?: { name?: string; email?: string; username?: string } } = $props();
 

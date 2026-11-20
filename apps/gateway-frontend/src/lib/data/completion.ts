@@ -1,5 +1,5 @@
-import type { ChatCompletionChunk } from '$lib/api/chat-completions';
-import type { ChatCompletion, ChatCompletionFinishReason, ChatCompletionUsage } from '$lib/api/types';
+import type { ChatCompletionChunk } from '#lib/api/chat-completions.ts';
+import type { ChatCompletion, ChatCompletionFinishReason, ChatCompletionUsage } from '#lib/api/types.ts';
 
 /**
  * A completion being rebuilt from whatever the gateway sent.

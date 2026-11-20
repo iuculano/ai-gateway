@@ -1,21 +1,21 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
-import { resolveActorNames } from '$lib/api/actors';
-import { getLogRequest, getLogResponse } from '$lib/api/logs';
-import type { Log, LogPayload } from '$lib/api/types';
-import { copyToClipboard } from '$lib/clipboard';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import JsonView from '$lib/components/logs/json-view.svelte';
-import MessageList from '$lib/components/logs/message-list.svelte';
-import OperationPayload from '$lib/components/logs/operation-payload.svelte';
-import type { Turn } from '$lib/data/conversation';
-import { requestTurns, responseTurns, turnsToText } from '$lib/data/conversation';
-import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone, traceTone } from '$lib/data/format';
+import { resolveActorNames } from '#lib/api/actors.ts';
+import { getLogRequest, getLogResponse } from '#lib/api/logs.ts';
+import type { Log, LogPayload } from '#lib/api/types.ts';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import JsonView from '#lib/components/logs/json-view.svelte';
+import MessageList from '#lib/components/logs/message-list.svelte';
+import OperationPayload from '#lib/components/logs/operation-payload.svelte';
+import type { Turn } from '#lib/data/conversation.ts';
+import { requestTurns, responseTurns, turnsToText } from '#lib/data/conversation.ts';
+import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone, traceTone } from '#lib/data/format.ts';
 
 export type PayloadView = 'simple' | 'json';
 

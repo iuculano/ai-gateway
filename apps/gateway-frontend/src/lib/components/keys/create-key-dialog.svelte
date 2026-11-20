@@ -1,17 +1,17 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
-import type { UpdateApiKeyInput } from '$lib/api/api-keys';
-import type { ApiKey } from '$lib/api/types';
-import { copyToClipboard } from '$lib/clipboard';
-import Panel from '$lib/components/app/panel.svelte';
-import * as Dialog from '$lib/components/ui/dialog';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import * as Select from '$lib/components/ui/select';
-import { Switch } from '$lib/components/ui/switch';
-import { SCOPE_OPTIONS } from '$lib/data/scopes';
-import { dashboard } from '$lib/state/dashboard.svelte';
+import type { UpdateApiKeyInput } from '#lib/api/api-keys.ts';
+import type { ApiKey } from '#lib/api/types.ts';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import Panel from '#lib/components/app/panel.svelte';
+import * as Dialog from '#lib/components/ui/dialog/index.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { Switch } from '#lib/components/ui/switch/index.ts';
+import { SCOPE_OPTIONS } from '#lib/data/scopes.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
 let {
   open = $bindable(false),

@@ -1,35 +1,35 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
 import { toast } from 'svelte-sonner';
-import { page } from '$app/state';
-import type { ChatCompletionMessage, ChatCompletionRequest, GatewayHeaders } from '$lib/api/chat-completions';
-import { getLogRequest } from '$lib/api/logs';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import ExamplePicker from '$lib/components/playground/example-picker.svelte';
-import JsonEditor from '$lib/components/playground/json-editor.svelte';
-import type { DraftMessage } from '$lib/components/playground/message-editor.svelte';
+import type { ChatCompletionMessage, ChatCompletionRequest, GatewayHeaders } from '#lib/api/chat-completions.ts';
+import { getLogRequest } from '#lib/api/logs.ts';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import ExamplePicker from '#lib/components/playground/example-picker.svelte';
+import JsonEditor from '#lib/components/playground/json-editor.svelte';
+import type { DraftMessage } from '#lib/components/playground/message-editor.svelte';
 import MessageEditor, {
   COMPOSER_ROLES,
   type ComposerRole,
   emptyDraft,
-} from '$lib/components/playground/message-editor.svelte';
-import ModelPicker from '$lib/components/playground/model-picker.svelte';
-import PlaygroundTabs from '$lib/components/playground/playground-tabs.svelte';
-import type { PromptSelection } from '$lib/components/playground/prompt-picker.svelte';
-import PromptPicker from '$lib/components/playground/prompt-picker.svelte';
-import ResponsePanel from '$lib/components/playground/response-panel.svelte';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import * as Select from '$lib/components/ui/select';
-import { Switch } from '$lib/components/ui/switch';
-import { toResponsePayload } from '$lib/data/completion';
-import { responseTurns } from '$lib/data/conversation';
-import { CHAT_EXAMPLES } from '$lib/data/playground-examples';
-import { PlaygroundRun } from '$lib/state/playground-run.svelte';
-import { webhooks } from '$lib/state/webhooks.svelte';
+} from '#lib/components/playground/message-editor.svelte';
+import ModelPicker from '#lib/components/playground/model-picker.svelte';
+import PlaygroundTabs from '#lib/components/playground/playground-tabs.svelte';
+import type { PromptSelection } from '#lib/components/playground/prompt-picker.svelte';
+import PromptPicker from '#lib/components/playground/prompt-picker.svelte';
+import ResponsePanel from '#lib/components/playground/response-panel.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { Switch } from '#lib/components/ui/switch/index.ts';
+import { toResponsePayload } from '#lib/data/completion.ts';
+import { responseTurns } from '#lib/data/conversation.ts';
+import { CHAT_EXAMPLES } from '#lib/data/playground-examples.ts';
+import { PlaygroundRun } from '#lib/state/playground-run.svelte.ts';
+import { webhooks } from '#lib/state/webhooks.svelte.ts';
+import { page } from '$app/state';
 
 /**
  * The one field style this page uses, matching the create-key dialog's.

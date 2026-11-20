@@ -1,7 +1,5 @@
 <script lang="ts">
 import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
-import { goto } from '$app/navigation';
-import { page } from '$app/state';
 import {
   fetchSeries,
   fetchSessionDistribution,
@@ -11,16 +9,18 @@ import {
   type SessionDistributionResponse,
   type SessionPositionsResponse,
   type SessionsResponse,
-} from '$lib/api/analytics';
-import { listLogs } from '$lib/api/logs';
-import { alignedNow, getAnalyticsFilters } from '$lib/components/analytics/analytics-filters.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { Input } from '$lib/components/ui/input';
-import { fmt, fmtCost, fmtSpend, providerTone } from '$lib/data/format';
+} from '#lib/api/analytics.ts';
+import { listLogs } from '#lib/api/logs.ts';
+import { alignedNow, getAnalyticsFilters } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { fmt, fmtCost, fmtSpend, providerTone } from '#lib/data/format.ts';
+import { goto } from '$app/navigation';
+import { page } from '$app/state';
 
 /**
  * Sessions from the session_id tag, laid out like the Users tab. The list is on
@@ -144,7 +144,7 @@ let lookup = $state('');
 function openSession(event: SubmitEvent) {
   event.preventDefault();
   const id = lookup.trim();
-  if (id) void goto(sessionsHref(id), { noScroll: true });
+  if (id) void goto(sessionsHref(id), { reset: false });
 }
 
 // Everyone's spread, also what one session is compared against ---------------------
@@ -423,7 +423,7 @@ let hoveredBar = $state<number | null>(null);
 			     back to everyone. flex-none, or the scrolling list squeezes it. -->
 			<a
 				href={sessionsHref(null)}
-				data-sveltekit-noscroll
+				data-sveltekit-reset="false"
 				aria-current={sessionId === undefined ? 'page' : undefined}
 				class="flex h-9 flex-none items-center justify-between gap-3 rounded-lg border px-3 {sessionId === undefined
 					? 'border-line-strong bg-seg text-zinc-50 shadow-[0_1px_2px_rgba(0,0,0,.3)]'
@@ -436,7 +436,7 @@ let hoveredBar = $state<number | null>(null);
 			{#if unlisted && sessionId}
 				<a
 					href={sessionsHref(sessionId)}
-					data-sveltekit-noscroll
+					data-sveltekit-reset="false"
 					aria-current="page"
 					class="mt-1 flex items-center justify-between gap-3 rounded-md bg-surface-6 px-2.5 py-2"
 				>
@@ -459,7 +459,7 @@ let hoveredBar = $state<number | null>(null);
 					{@const on = session.session_id === sessionId}
 					<a
 						href={sessionsHref(session.session_id)}
-						data-sveltekit-noscroll
+						data-sveltekit-reset="false"
 						aria-current={on ? 'page' : undefined}
 						class="flex flex-col gap-1 rounded-md px-2.5 py-1.5 {on ? 'bg-surface-6' : 'hover:bg-surface-4'}"
 					>

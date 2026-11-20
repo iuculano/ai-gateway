@@ -1,4 +1,4 @@
-import type { DecisionQuestion } from '$lib/api/decisions';
+import type { DecisionQuestion } from '#lib/api/decisions.ts';
 
 export type QuestionType = DecisionQuestion['type'];
 

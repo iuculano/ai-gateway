@@ -1,11 +1,11 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import { getPromptVersion } from '$lib/api/prompts';
-import * as Dialog from '$lib/components/ui/dialog';
-import { Label } from '$lib/components/ui/label';
-import { Textarea } from '$lib/components/ui/textarea';
-import { extractVariables } from '$lib/data/prompts';
-import { prompts } from '$lib/state/prompts.svelte';
+import { getPromptVersion } from '#lib/api/prompts.ts';
+import * as Dialog from '#lib/components/ui/dialog/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import { Textarea } from '#lib/components/ui/textarea/index.ts';
+import { extractVariables } from '#lib/data/prompts.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
 
 /**
  * The template editor, for a new version or an existing one.

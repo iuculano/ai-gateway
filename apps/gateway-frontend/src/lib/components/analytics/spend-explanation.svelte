@@ -1,7 +1,7 @@
 <script lang="ts">
-import type { SeriesPoint } from '$lib/api/analytics';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { spendDrivers } from '$lib/data/spend-drivers';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { spendDrivers } from '#lib/data/spend-drivers.ts';
 
 let {
   current,

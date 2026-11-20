@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { env } from '$env/dynamic/private';
+import { OIDC_REFRESH_ENABLED, POST_LOGOUT_REDIRECT_URI, ZITADEL_CLIENT_ID, ZITADEL_ISSUER } from '$app/env/private';
 
 // The BFF side of auth: this app performs the OIDC authorization-code flow
 // (with PKCE, no client secret) against the IDP and keeps the tokens in a
@@ -42,7 +42,7 @@ const BASE_SCOPES = [
  * failing.
  */
 function refreshRequested(): boolean {
-  return env.OIDC_REFRESH_ENABLED === 'true';
+  return OIDC_REFRESH_ENABLED === 'true';
 }
 
 function scopeParameter(): string {
@@ -52,7 +52,7 @@ function scopeParameter(): string {
 let cachedConfig: OpenIDConfig | null = null;
 
 function requiredEnv(name: 'ZITADEL_ISSUER' | 'ZITADEL_CLIENT_ID'): string {
-  const value = env[name];
+  const value = name === 'ZITADEL_ISSUER' ? ZITADEL_ISSUER : ZITADEL_CLIENT_ID;
   if (!value) {
     throw new Error(`Missing ${name} - set it in apps/frontend/.env.`);
   }
@@ -233,7 +233,7 @@ export async function buildEndSessionUrl(idToken: string): Promise<string | null
   url.searchParams.set('id_token_hint', idToken);
   url.searchParams.set('client_id', requiredEnv('ZITADEL_CLIENT_ID'));
 
-  const postLogout = env.POST_LOGOUT_REDIRECT_URI;
+  const postLogout = POST_LOGOUT_REDIRECT_URI;
   if (postLogout) {
     url.searchParams.set('post_logout_redirect_uri', postLogout);
   }

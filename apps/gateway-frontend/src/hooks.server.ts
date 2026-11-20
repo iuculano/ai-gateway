@@ -1,5 +1,6 @@
-import { type Handle, json, redirect } from '@sveltejs/kit';
-import { getValidSession } from '$lib/server/session';
+import { redirect } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
+import { getValidSession } from '#lib/server/session.ts';
 
 /**
  * Routes reachable without a session.
@@ -28,7 +29,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   if (isRoute && !isPublic(event.url.pathname) && !event.locals.session) {
     if (event.url.pathname.startsWith('/api/')) {
-      return json({ error: { code: 401, message: 'Not authenticated.' } }, { status: 401 });
+      return Response.json({ error: { code: 401, message: 'Not authenticated.' } }, { status: 401 });
     }
 
     // Where they were headed, so the callback can put them back there rather

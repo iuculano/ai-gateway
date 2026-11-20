@@ -1,19 +1,19 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
-import { resolveActorNames } from '$lib/api/actors';
-import { getApiKeyStats } from '$lib/api/api-keys';
-import type { ApiKey, ApiKeyStats } from '$lib/api/types';
-import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import CreateKeyDialog from '$lib/components/keys/create-key-dialog.svelte';
-import { fmtTs, formatDate, timeUntil } from '$lib/data/format';
-import { SCOPE_OPTIONS } from '$lib/data/scopes';
-import { dashboard } from '$lib/state/dashboard.svelte';
+import { resolveActorNames } from '#lib/api/actors.ts';
+import { getApiKeyStats } from '#lib/api/api-keys.ts';
+import type { ApiKey, ApiKeyStats } from '#lib/api/types.ts';
+import ConfirmDialog from '#lib/components/app/confirm-dialog.svelte';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import CreateKeyDialog from '#lib/components/keys/create-key-dialog.svelte';
+import { fmtTs, formatDate, timeUntil } from '#lib/data/format.ts';
+import { SCOPE_OPTIONS } from '#lib/data/scopes.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
 let {
   apiKey,

@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { connectRedis, redis } from '@repo/redis';
 import type { Cookies } from '@sveltejs/kit';
-import { dev } from '$app/environment';
-import { env } from '$env/dynamic/private';
+import { dev } from '$app/env';
+import { SESSION_ABSOLUTE_SECONDS, SESSION_IDLE_SECONDS } from '$app/env/private';
 import { refreshTokens } from './oidc';
 
 // The Bun adapter stops HTTP on shutdown; close the session connection too
@@ -50,7 +50,7 @@ const LOCK_POLL_MS = 50;
  * rather than fixed.
  */
 function idleSeconds(): number {
-  return Number(env.SESSION_IDLE_SECONDS ?? 60 * 60 * 8);
+  return Number(SESSION_IDLE_SECONDS ?? 60 * 60 * 8);
 }
 
 /**
@@ -61,7 +61,7 @@ function idleSeconds(): number {
  * forever.
  */
 function absoluteSeconds(): number {
-  return Number(env.SESSION_ABSOLUTE_SECONDS ?? 60 * 60 * 24 * 7);
+  return Number(SESSION_ABSOLUTE_SECONDS ?? 60 * 60 * 24 * 7);
 }
 
 export interface Session {

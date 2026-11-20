@@ -1,13 +1,13 @@
 <script lang="ts">
-import { copyToClipboard } from '$lib/clipboard';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmtChangeValue, fmtTs, humanize, parseUA } from '$lib/data/format';
-import type { AuditEvent } from '$lib/data/types';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { fmtChangeValue, fmtTs, humanize, parseUA } from '#lib/data/format.ts';
+import type { AuditEvent } from '#lib/data/types.ts';
 
 let {
   event,

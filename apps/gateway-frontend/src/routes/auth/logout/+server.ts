@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { buildEndSessionUrl, revokeRefreshToken } from '$lib/server/oidc';
-import { destroySession } from '$lib/server/session';
+import { buildEndSessionUrl, revokeRefreshToken } from '#lib/server/oidc.ts';
+import { destroySession } from '#lib/server/session.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -34,7 +34,7 @@ export const GET: RequestHandler = async ({ cookies }) => {
   if (session?.idToken) {
     const endSession = await buildEndSessionUrl(session.idToken);
     if (endSession) {
-      redirect(302, endSession);
+      redirect(302, endSession, { external: true });
     }
   }
 

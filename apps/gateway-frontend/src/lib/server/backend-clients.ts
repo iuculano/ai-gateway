@@ -1,12 +1,12 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import type { ApiType, HealthApiType, InternalApiType } from 'gateway-backend/routes';
 import { hc } from 'hono/client';
-import { env } from '$env/dynamic/private';
+import { BACKEND_URL } from '$app/env/private';
 import { refreshSession, type Session } from './session';
 
 /** Create per-request clients. Never share a user's session across requests. */
 export function createBackendClients(event: Pick<RequestEvent, 'locals' | 'cookies'>) {
-  const backend = (env.BACKEND_URL ?? 'http://localhost:8080').replace(/\/+$/, '');
+  const backend = (BACKEND_URL ?? 'http://localhost:8080').replace(/\/+$/, '');
   let session = event.locals.session;
   let refreshing: Promise<Session | null> | undefined;
 

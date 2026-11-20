@@ -1,21 +1,21 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import type { Prompt } from '$lib/api/types';
-import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import PreviewDialog from '$lib/components/prompts/preview-dialog.svelte';
-import PromptDialog from '$lib/components/prompts/prompt-dialog.svelte';
-import PromptRow from '$lib/components/prompts/prompt-row.svelte';
-import VersionDialog from '$lib/components/prompts/version-dialog.svelte';
-import { pairSummary } from '$lib/data/format';
-import { tagKeys } from '$lib/data/prompts';
-import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
-import { dashboard } from '$lib/state/dashboard.svelte';
-import type { PromptStatus } from '$lib/state/prompt-list.svelte';
-import { prompts } from '$lib/state/prompts.svelte';
+import type { Prompt } from '#lib/api/types.ts';
+import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import PreviewDialog from '#lib/components/prompts/preview-dialog.svelte';
+import PromptDialog from '#lib/components/prompts/prompt-dialog.svelte';
+import PromptRow from '#lib/components/prompts/prompt-row.svelte';
+import VersionDialog from '#lib/components/prompts/version-dialog.svelte';
+import { pairSummary } from '#lib/data/format.ts';
+import { tagKeys } from '#lib/data/prompts.ts';
+import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
+import type { PromptStatus } from '#lib/state/prompt-list.svelte.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
 
 // One grid, shared with the row component so the header and the rows sit in
 // the same grid - the same contract the other tables use.

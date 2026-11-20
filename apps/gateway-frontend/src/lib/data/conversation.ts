@@ -1,4 +1,4 @@
-import type { LogPayload } from '$lib/api/types';
+import type { LogPayload } from '#lib/api/types.ts';
 
 /**
  * Turns a stored log payload back into the conversation it represents.

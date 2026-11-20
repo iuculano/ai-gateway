@@ -1,22 +1,22 @@
 <script lang="ts">
-import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
+import { fetchSeries, type SeriesPoint } from '#lib/api/analytics.ts';
 import {
   alignedNow,
   alignedPreviousEnd,
   getAnalyticsFilters,
-} from '$lib/components/analytics/analytics-filters.svelte';
-import ModelComparison from '$lib/components/analytics/model-comparison.svelte';
-import SpendChart from '$lib/components/analytics/spend-chart.svelte';
-import SpendForecast from '$lib/components/analytics/spend-forecast.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { periodComparison } from '$lib/data/analytics-comparison';
-import { type CallerMetric, rankCallers } from '$lib/data/caller-ranking';
-import { outcomeBuckets, outcomes } from '$lib/data/chart-series';
-import { fmt, fmtBucket, fmtCostTotal, fmtLatency } from '$lib/data/format';
+} from '#lib/components/analytics/analytics-filters.svelte.ts';
+import ModelComparison from '#lib/components/analytics/model-comparison.svelte';
+import SpendChart from '#lib/components/analytics/spend-chart.svelte';
+import SpendForecast from '#lib/components/analytics/spend-forecast.svelte';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { periodComparison } from '#lib/data/analytics-comparison.ts';
+import { type CallerMetric, rankCallers } from '#lib/data/caller-ranking.ts';
+import { outcomeBuckets, outcomes } from '#lib/data/chart-series.ts';
+import { fmt, fmtBucket, fmtCostTotal, fmtLatency } from '#lib/data/format.ts';
 
 /**
  * Categorical hues for providers, validated against this surface (#0a0a0c) for

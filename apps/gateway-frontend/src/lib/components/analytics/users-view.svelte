@@ -1,12 +1,12 @@
 <script lang="ts">
 import UsersIcon from '@lucide/svelte/icons/users';
+import { type AnalyticsInterval, fetchUsers, type UsersResponse } from '#lib/api/analytics.ts';
+import { alignedNow } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { fmt, fmtSpend } from '#lib/data/format.ts';
 import { goto } from '$app/navigation';
-import { type AnalyticsInterval, fetchUsers, type UsersResponse } from '$lib/api/analytics';
-import { alignedNow } from '$lib/components/analytics/analytics-filters.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { Input } from '$lib/components/ui/input';
-import { fmt, fmtSpend } from '$lib/data/format';
 import UserPane from './user-pane.svelte';
 
 /**
@@ -119,7 +119,7 @@ let lookup = $state('');
 function openUser(event: SubmitEvent) {
   event.preventDefault();
   const user = lookup.trim();
-  if (user) void goto(usersHref(user), { noScroll: true });
+  if (user) void goto(usersHref(user), { reset: false });
 }
 
 // A user found by search, or linked to, may not be on the loaded pages.
@@ -153,7 +153,7 @@ const topMeasure = $derived(users[0] ? measure(users[0]) : 0);
 			     flex-none, or the scrolling list squeezes it below its height. -->
 			<a
 				href={usersHref(null)}
-				data-sveltekit-noscroll
+				data-sveltekit-reset="false"
 				aria-current={userId === undefined ? 'page' : undefined}
 				class="flex h-9 flex-none items-center justify-between gap-3 rounded-lg border px-3 {userId === undefined
 					? 'border-line-strong bg-seg text-zinc-50 shadow-[0_1px_2px_rgba(0,0,0,.3)]'
@@ -166,7 +166,7 @@ const topMeasure = $derived(users[0] ? measure(users[0]) : 0);
 			{#if unlisted && userId}
 				<a
 					href={usersHref(userId)}
-					data-sveltekit-noscroll
+					data-sveltekit-reset="false"
 					aria-current="page"
 					class="mt-1 flex items-center justify-between gap-3 rounded-md bg-surface-6 px-2.5 py-2"
 				>
@@ -189,7 +189,7 @@ const topMeasure = $derived(users[0] ? measure(users[0]) : 0);
 					{@const on = user.user_id === userId}
 					<a
 						href={usersHref(user.user_id)}
-						data-sveltekit-noscroll
+						data-sveltekit-reset="false"
 						aria-current={on ? 'page' : undefined}
 						class="flex flex-col gap-1 rounded-md px-2.5 py-1.5 {on ? 'bg-surface-6' : 'hover:bg-surface-4'}"
 					>

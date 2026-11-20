@@ -1,10 +1,10 @@
 <script lang="ts">
-import type { Webhook, WebhookDelivery } from '$lib/api/types';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import { fmtTs, timeAgo } from '$lib/data/format';
-import { deliveryOutcome } from '$lib/data/webhooks';
+import type { Webhook, WebhookDelivery } from '#lib/api/types.ts';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import { fmtTs, timeAgo } from '#lib/data/format.ts';
+import { deliveryOutcome } from '#lib/data/webhooks.ts';
 
 let {
   delivery,

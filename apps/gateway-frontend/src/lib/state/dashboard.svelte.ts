@@ -7,8 +7,8 @@ import {
   revokeApiKey,
   type UpdateApiKeyInput,
   updateApiKey,
-} from '$lib/api/api-keys';
-import type { ApiKey, CreatedApiKey, ListMeta } from '$lib/api/types';
+} from '#lib/api/api-keys.ts';
+import type { ApiKey, CreatedApiKey, ListMeta } from '#lib/api/types.ts';
 
 // Client-side cache of the dashboard's data, backed by the BFF proxy.
 // Mutations go to the API first; local state only changes on success.

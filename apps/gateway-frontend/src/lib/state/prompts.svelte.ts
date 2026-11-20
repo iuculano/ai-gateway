@@ -10,8 +10,8 @@ import {
   type UpdatePromptVersionInput,
   updatePrompt,
   updatePromptVersion,
-} from '$lib/api/prompts';
-import type { Prompt, PromptVersionSummary } from '$lib/api/types';
+} from '#lib/api/prompts.ts';
+import type { Prompt, PromptVersionSummary } from '#lib/api/types.ts';
 import { PromptList } from './prompt-list.svelte';
 
 const PAGE_SIZE = 50;

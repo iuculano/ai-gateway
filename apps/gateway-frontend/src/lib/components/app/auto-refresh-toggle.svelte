@@ -1,6 +1,6 @@
 <script lang="ts">
-import { Switch } from '$lib/components/ui/switch';
-import type { AutoRefresh } from '$lib/state/auto-refresh.svelte';
+import { Switch } from '#lib/components/ui/switch/index.ts';
+import type { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
 
 /**
  * The tailing switch in a table's toolbar.

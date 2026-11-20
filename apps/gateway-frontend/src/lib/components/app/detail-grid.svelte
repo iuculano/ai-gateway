@@ -24,7 +24,7 @@ export interface DetailItem {
 </script>
 
 <script lang="ts">
-import { copyToClipboard } from '$lib/clipboard';
+import { copyToClipboard } from '#lib/clipboard.ts';
 let { items, cols = 4 }: { items: DetailItem[]; cols?: 2 | 3 | 4 | 5 | 6 } = $props();
 
 // Spelled out rather than interpolated - Tailwind only compiles classes it can

@@ -1,5 +1,5 @@
 import type { InferRequestType, InferResponseType } from 'hono/client';
-import { topCallerReferences } from '$lib/data/caller-ranking';
+import { topCallerReferences } from '#lib/data/caller-ranking.ts';
 import { resolveActorNames } from './actors';
 import { client } from './client';
 

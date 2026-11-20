@@ -1,5 +1,5 @@
 <script lang="ts" module>
-import type { ChatCompletionRole } from '$lib/api/chat-completions';
+import type { ChatCompletionRole } from '#lib/api/chat-completions.ts';
 
 /**
  * The roles the composer offers.
@@ -25,9 +25,9 @@ export function emptyDraft(role: ComposerRole = 'user'): DraftMessage {
 </script>
 
 <script lang="ts">
-import * as Select from '$lib/components/ui/select';
-import { Textarea } from '$lib/components/ui/textarea';
-import { ROLE_COLORS } from '$lib/data/conversation';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { Textarea } from '#lib/components/ui/textarea/index.ts';
+import { ROLE_COLORS } from '#lib/data/conversation.ts';
 
 /**
  * One editable message in the request.

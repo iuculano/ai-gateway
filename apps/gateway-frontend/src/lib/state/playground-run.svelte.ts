@@ -1,6 +1,6 @@
-import type { ChatCompletionRequest, GatewayHeaders } from '$lib/api/chat-completions';
-import { createChatCompletion, streamChatCompletion } from '$lib/api/chat-completions';
-import { applyChunk, type CompletionAssembly, emptyAssembly, fromCompletion } from '$lib/data/completion';
+import type { ChatCompletionRequest, GatewayHeaders } from '#lib/api/chat-completions.ts';
+import { createChatCompletion, streamChatCompletion } from '#lib/api/chat-completions.ts';
+import { applyChunk, type CompletionAssembly, emptyAssembly, fromCompletion } from '#lib/data/completion.ts';
 
 /**
  * One model's half of a playground request.

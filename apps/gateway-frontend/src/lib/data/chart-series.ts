@@ -1,4 +1,4 @@
-import type { SeriesPoint } from '$lib/api/analytics';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
 
 export function cumulativeSpend(points: SeriesPoint[]) {
   let input = 0;

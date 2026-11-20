@@ -3,25 +3,26 @@ import { mock } from 'bun:test';
 /**
  * Makes the BFF's server modules importable outside a SvelteKit build.
  *
- * `$env/dynamic/private` and `$app/environment` are virtual modules that only
+ * `$app/env/private` and `$app/env` are virtual modules that only
  * exist once Vite has resolved them, so anything importing session.ts or
  * oidc.ts is unloadable in a bare test process. Stubbing them here is what lets
  * these tests exercise the REAL session module rather than a reimplementation
  * of it - which matters, because the behaviour under test is concurrency
  * coordination, and a reimplementation would coordinate its own bugs.
  */
-mock.module('$env/dynamic/private', () => ({
-  env: {
-    ZITADEL_ISSUER: 'https://idp.test',
-    ZITADEL_CLIENT_ID: 'test-client',
-    OIDC_REFRESH_ENABLED: 'true',
-    SESSION_IDLE_SECONDS: '3600',
-    SESSION_ABSOLUTE_SECONDS: '86400',
-    REDIS_URL: process.env.REDIS_FRONTEND_TEST_URL,
-  },
+// One export per variable declared in src/env.ts, because a name a module
+// imports and this stub lacks fails the import outright.
+mock.module('$app/env/private', () => ({
+  BACKEND_URL: undefined,
+  ZITADEL_ISSUER: 'https://idp.test',
+  ZITADEL_CLIENT_ID: 'test-client',
+  OIDC_REFRESH_ENABLED: 'true',
+  POST_LOGOUT_REDIRECT_URI: undefined,
+  SESSION_IDLE_SECONDS: '3600',
+  SESSION_ABSOLUTE_SECONDS: '86400',
 }));
 
-mock.module('$app/environment', () => ({ dev: true, browser: false, building: false }));
+mock.module('$app/env', () => ({ dev: true, browser: false, building: false }));
 
 if (!process.env.REDIS_FRONTEND_TEST_URL) {
   throw new Error(

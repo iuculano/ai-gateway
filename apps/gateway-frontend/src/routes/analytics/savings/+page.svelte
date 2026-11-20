@@ -1,18 +1,18 @@
 <script lang="ts">
-import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import { listApiKeys } from '$lib/api/api-keys';
-import { listAllProviders } from '$lib/api/models';
+import { fetchSeries, type SeriesPoint } from '#lib/api/analytics.ts';
+import { listApiKeys } from '#lib/api/api-keys.ts';
+import { listAllProviders } from '#lib/api/models.ts';
 import {
   alignedNow,
   alignedPreviousEnd,
   getAnalyticsFilters,
-} from '$lib/components/analytics/analytics-filters.svelte';
-import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmt, fmtCost, fmtSpend, providerTone } from '$lib/data/format';
+} from '#lib/components/analytics/analytics-filters.svelte.ts';
+import FilterPicker from '#lib/components/analytics/filter-picker.svelte';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { fmt, fmtCost, fmtSpend, providerTone } from '#lib/data/format.ts';
 import {
   cacheSaved,
   cheapestSwitch,
@@ -22,7 +22,7 @@ import {
   type ModelPrice,
   rankKeys,
   usageByModel,
-} from '$lib/data/savings';
+} from '#lib/data/savings.ts';
 
 const MAX_ROWS = 8;
 

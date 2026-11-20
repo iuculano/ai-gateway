@@ -1,7 +1,7 @@
 <script lang="ts">
+import { getAnalyticsFilters } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import UsersView from '#lib/components/analytics/users-view.svelte';
 import { page } from '$app/state';
-import { getAnalyticsFilters } from '$lib/components/analytics/analytics-filters.svelte';
-import UsersView from '$lib/components/analytics/users-view.svelte';
 
 const filters = getAnalyticsFilters();
 // ?actor= narrows the list to one caller's users; ?user= opens one user under

@@ -1,14 +1,14 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import { resolveActorNames } from '$lib/api/actors';
-import type { Prompt } from '$lib/api/types';
-import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import { fmtTs, formatDate, pairSummary } from '$lib/data/format';
-import { prompts as store } from '$lib/state/prompts.svelte';
+import { resolveActorNames } from '#lib/api/actors.ts';
+import type { Prompt } from '#lib/api/types.ts';
+import ConfirmDialog from '#lib/components/app/confirm-dialog.svelte';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import { fmtTs, formatDate, pairSummary } from '#lib/data/format.ts';
+import { prompts as store } from '#lib/state/prompts.svelte.ts';
 
 let {
   prompt,

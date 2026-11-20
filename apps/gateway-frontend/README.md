@@ -21,6 +21,7 @@ The application can be configure via environment variables.
 | Variable                   | Default                 | Description                    |
 | -------------------------- | ----------------------- | ------------------------------ |
 | `PORT`                     | `8081`                  | HTTP server port               |
+| `ORIGIN`                   | `https://` + `Host`     | Public origin of the site      |
 | `BACKEND_URL`              | `http://localhost:8080` | Gateway backend URL            |
 | `ZITADEL_ISSUER`           | Required                | OIDC issuer URL                |
 | `ZITADEL_CLIENT_ID`        | Required                | OIDC client ID                 |
@@ -31,3 +32,8 @@ The application can be configure via environment variables.
 | `REDIS_PASSWORD`           | Optional                | Redis password                 |
 | `SESSION_IDLE_SECONDS`     | `28800`                 | Session idle lifetime          |
 | `SESSION_ABSOLUTE_SECONDS` | `604800`                | Maximum session lifetime       |
+
+Set `ORIGIN` whenever the site is served over plain HTTP, for example
+`ORIGIN=http://localhost:8081` for a local production build. Without it the
+server assumes `https`, so the OIDC redirect URI is wrong and requests without a
+body, such as deletes, are rejected as cross-site.

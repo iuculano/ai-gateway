@@ -1,8 +1,8 @@
 <script lang="ts">
-import type { SeriesPoint } from '$lib/api/analytics';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import { cumulativeSpend } from '$lib/data/chart-series';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import { cumulativeSpend } from '#lib/data/chart-series.ts';
 import SpendExplanation from './spend-explanation.svelte';
 
 let {

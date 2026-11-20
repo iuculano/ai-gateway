@@ -1,12 +1,12 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import type { Webhook } from '$lib/api/types';
-import type { Pair } from '$lib/components/app/key-value-editor.svelte';
-import KeyValueEditor, { toPairs, toRecord } from '$lib/components/app/key-value-editor.svelte';
-import * as Dialog from '$lib/components/ui/dialog';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import { webhooks } from '$lib/state/webhooks.svelte';
+import type { Webhook } from '#lib/api/types.ts';
+import type { Pair } from '#lib/components/app/key-value-editor.svelte';
+import KeyValueEditor, { toPairs, toRecord } from '#lib/components/app/key-value-editor.svelte';
+import * as Dialog from '#lib/components/ui/dialog/index.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import { webhooks } from '#lib/state/webhooks.svelte.ts';
 
 /**
  * Create and edit are the same form over the same five fields, so they are one

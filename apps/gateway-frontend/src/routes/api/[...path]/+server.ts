@@ -1,6 +1,6 @@
-import { json, type RequestHandler } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
-import { refreshSession, type Session } from '$lib/server/session';
+import type { RequestHandler } from '@sveltejs/kit';
+import { refreshSession, type Session } from '#lib/server/session.ts';
+import { BACKEND_URL } from '$app/env/private';
 
 /**
  * The gateway's own request/response controls, all spelled `ai-*`:
@@ -24,10 +24,10 @@ const handler: RequestHandler = async ({ params, request, cookies, url, locals }
   // outright when there is no session.
   let session = locals.session;
   if (!session) {
-    return json({ error: { code: 401, message: 'Not authenticated.' } }, { status: 401 });
+    return Response.json({ error: { code: 401, message: 'Not authenticated.' } }, { status: 401 });
   }
 
-  const backend = env.BACKEND_URL ?? 'http://localhost:8080';
+  const backend = BACKEND_URL ?? 'http://localhost:8080';
   const target = `${backend}/v1/${params.path}${url.search}`;
 
   // Read once, reused across both attempts. A stream could only be consumed

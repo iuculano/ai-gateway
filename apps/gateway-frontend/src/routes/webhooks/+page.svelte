@@ -1,20 +1,20 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import type { Webhook } from '$lib/api/types';
-import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import DeliveryRow from '$lib/components/webhooks/delivery-row.svelte';
-import OutboxRow from '$lib/components/webhooks/outbox-row.svelte';
-import WebhookDialog from '$lib/components/webhooks/webhook-dialog.svelte';
-import WebhookRow from '$lib/components/webhooks/webhook-row.svelte';
-import { pairSummary } from '$lib/data/format';
-import { buildActivity, deliveryOutcome, EMPTY_ACTIVITY } from '$lib/data/webhooks';
-import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
-import { dashboard } from '$lib/state/dashboard.svelte';
-import { webhooks } from '$lib/state/webhooks.svelte';
+import type { Webhook } from '#lib/api/types.ts';
+import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import DeliveryRow from '#lib/components/webhooks/delivery-row.svelte';
+import OutboxRow from '#lib/components/webhooks/outbox-row.svelte';
+import WebhookDialog from '#lib/components/webhooks/webhook-dialog.svelte';
+import WebhookRow from '#lib/components/webhooks/webhook-row.svelte';
+import { pairSummary } from '#lib/data/format.ts';
+import { buildActivity, deliveryOutcome, EMPTY_ACTIVITY } from '#lib/data/webhooks.ts';
+import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
+import { webhooks } from '#lib/state/webhooks.svelte.ts';
 
 type View = 'endpoints' | 'outbox';
 

@@ -1,4 +1,4 @@
-import type { Webhook, WebhookDelivery, WebhookOutboxEntry } from '$lib/api/types';
+import type { Webhook, WebhookDelivery, WebhookOutboxEntry } from '#lib/api/types.ts';
 import {
   type CreateWebhookInput,
   createWebhook,
@@ -8,7 +8,7 @@ import {
   listWebhooks,
   type UpdateWebhookInput,
   updateWebhook,
-} from '$lib/api/webhooks';
+} from '#lib/api/webhooks.ts';
 import { CursorList } from './cursor-list.svelte';
 
 const PAGE_SIZE = 50;

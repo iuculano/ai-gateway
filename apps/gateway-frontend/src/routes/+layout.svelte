@@ -1,9 +1,9 @@
 <script lang="ts">
 import '../app.css';
-import favicon from '$lib/assets/favicon.svg';
-import Sidebar from '$lib/components/app/sidebar.svelte';
-import Topbar from '$lib/components/app/topbar.svelte';
-import { Toaster } from '$lib/components/ui/sonner';
+import favicon from '#lib/assets/favicon.svg';
+import Sidebar from '#lib/components/app/sidebar.svelte';
+import Topbar from '#lib/components/app/topbar.svelte';
+import { Toaster } from '#lib/components/ui/sonner/index.ts';
 
 let { children, data } = $props();
 </script>

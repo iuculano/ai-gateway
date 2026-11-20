@@ -1,13 +1,13 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import SettingRow from '$lib/components/settings/setting-row.svelte';
-import SettingsSection from '$lib/components/settings/settings-section.svelte';
-import { Input } from '$lib/components/ui/input';
-import * as Select from '$lib/components/ui/select';
-import { Switch } from '$lib/components/ui/switch';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import SettingRow from '#lib/components/settings/setting-row.svelte';
+import SettingsSection from '#lib/components/settings/settings-section.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { Switch } from '#lib/components/ui/switch/index.ts';
 
 /**
  * Settings, as a skeleton.

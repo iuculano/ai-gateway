@@ -1,4 +1,4 @@
-import type { SeriesPoint } from '$lib/api/analytics';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
 
 export type CallerMetric = 'requests' | 'cost_total';
 

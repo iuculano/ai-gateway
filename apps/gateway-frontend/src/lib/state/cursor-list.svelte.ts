@@ -1,4 +1,4 @@
-import type { ListMeta } from '$lib/api/types';
+import type { ListMeta } from '#lib/api/types.ts';
 
 export interface CursorPage<T> {
   data: T[];

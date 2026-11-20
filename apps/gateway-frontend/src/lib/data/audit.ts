@@ -1,4 +1,4 @@
-import type { AuditLog } from '$lib/api/types';
+import type { AuditLog } from '#lib/api/types.ts';
 import type { AuditCategory, AuditChange, AuditEvent } from './types';
 
 // Event names are '<area>.<action>' (e.g. 'api-keys.revoked'); the area maps

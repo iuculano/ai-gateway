@@ -1,15 +1,15 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import { resolveActorNames } from '$lib/api/actors';
-import type { Webhook } from '$lib/api/types';
-import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import { fmtTs, formatDate, pairSummary, timeAgo } from '$lib/data/format';
-import type { WebhookActivity } from '$lib/data/webhooks';
-import { webhooks as store } from '$lib/state/webhooks.svelte';
+import { resolveActorNames } from '#lib/api/actors.ts';
+import type { Webhook } from '#lib/api/types.ts';
+import ConfirmDialog from '#lib/components/app/confirm-dialog.svelte';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import { fmtTs, formatDate, pairSummary, timeAgo } from '#lib/data/format.ts';
+import type { WebhookActivity } from '#lib/data/webhooks.ts';
+import { webhooks as store } from '#lib/state/webhooks.svelte.ts';
 
 let {
   webhook,

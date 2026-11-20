@@ -1,10 +1,10 @@
 <script lang="ts">
-import type { CatalogModel, CatalogProvider } from '$lib/api/types';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import { fmtContext, fmtPricePerMillion, providerTone, timeAgo } from '$lib/data/format';
+import type { CatalogModel, CatalogProvider } from '#lib/api/types.ts';
+import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
+import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import { fmtContext, fmtPricePerMillion, providerTone, timeAgo } from '#lib/data/format.ts';
 import ModelTable from './model-table.svelte';
 
 let {

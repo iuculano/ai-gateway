@@ -1,8 +1,8 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listAllProviders } from '$lib/api/models';
-import { Input } from '$lib/components/ui/input';
-import { fmtContext, fmtPricePerMillion, providerTone } from '$lib/data/format';
+import { listAllProviders } from '#lib/api/models.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { fmtContext, fmtPricePerMillion, providerTone } from '#lib/data/format.ts';
 
 /** Suggest catalog models while allowing comma-separated routing lists. */
 let {

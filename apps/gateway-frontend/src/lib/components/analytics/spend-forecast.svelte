@@ -1,12 +1,12 @@
 <script lang="ts">
-import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import { alignedNow } from '$lib/components/analytics/analytics-filters.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { periodComparison } from '$lib/data/analytics-comparison';
-import { fmtCostTotal } from '$lib/data/format';
-import { spendForecast } from '$lib/data/spend-forecast';
+import { fetchSeries, type SeriesPoint } from '#lib/api/analytics.ts';
+import { alignedNow } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { periodComparison } from '#lib/data/analytics-comparison.ts';
+import { fmtCostTotal } from '#lib/data/format.ts';
+import { spendForecast } from '#lib/data/spend-forecast.ts';
 
 /**
  * This calendar month's spend and where it's heading. Always the current month,

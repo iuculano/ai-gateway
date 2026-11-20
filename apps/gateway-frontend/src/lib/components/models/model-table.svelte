@@ -1,6 +1,6 @@
 <script lang="ts">
-import type { CatalogModel } from '$lib/api/types';
-import { fmtContext, fmtPricePerMillion } from '$lib/data/format';
+import type { CatalogModel } from '#lib/api/types.ts';
+import { fmtContext, fmtPricePerMillion } from '#lib/data/format.ts';
 
 // Renders what it is given. The page owns filtering, so this cannot disagree
 // with the row above it about which models matched.

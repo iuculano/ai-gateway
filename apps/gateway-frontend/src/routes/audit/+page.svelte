@@ -1,17 +1,17 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listAuditLogs } from '$lib/api/audit-logs';
-import type { ListMeta } from '$lib/api/types';
-import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import AuditRow from '$lib/components/audit/audit-row.svelte';
-import { toAuditEvent } from '$lib/data/audit';
-import type { AuditCategory, AuditEvent } from '$lib/data/types';
-import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
-import { dashboard } from '$lib/state/dashboard.svelte';
+import { listAuditLogs } from '#lib/api/audit-logs.ts';
+import type { ListMeta } from '#lib/api/types.ts';
+import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import AuditRow from '#lib/components/audit/audit-row.svelte';
+import { toAuditEvent } from '#lib/data/audit.ts';
+import type { AuditCategory, AuditEvent } from '#lib/data/types.ts';
+import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
 type CatFilter = 'all' | AuditCategory;
 

@@ -9,7 +9,7 @@ const session: Session = {
   user: {},
 };
 const refreshSession = mock(async () => ({ ...session, accessToken: 'renewed-token' }));
-mock.module('$env/dynamic/private', () => ({ env: { BACKEND_URL: 'http://backend.test' } }));
+mock.module('$app/env/private', () => ({ BACKEND_URL: 'http://backend.test' }));
 mock.module(new URL('../../src/lib/server/session.ts', import.meta.url).pathname, () => ({ refreshSession }));
 const { POST } = await import('../../src/routes/api/[...path]/+server');
 let fetchSpy: ReturnType<typeof spyOn<typeof globalThis, 'fetch'>>;

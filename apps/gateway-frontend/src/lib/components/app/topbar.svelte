@@ -1,6 +1,6 @@
 <script lang="ts">
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 import { page } from '$app/state';
-import { dashboard } from '$lib/state/dashboard.svelte';
 
 let searchEl: HTMLInputElement | null = $state(null);
 

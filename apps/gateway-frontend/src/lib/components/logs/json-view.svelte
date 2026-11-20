@@ -1,5 +1,5 @@
 <script lang="ts">
-import { HIGHLIGHT_LIMIT, TOKEN_COLORS, tokenizeJson } from '$lib/data/json-highlight';
+import { HIGHLIGHT_LIMIT, TOKEN_COLORS, tokenizeJson } from '#lib/data/json-highlight.ts';
 
 /**
  * The 'JSON' rendering of a stored payload, syntax highlighted.

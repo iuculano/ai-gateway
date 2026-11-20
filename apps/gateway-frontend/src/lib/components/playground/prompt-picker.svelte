@@ -9,13 +9,13 @@ export interface PromptSelection {
 
 <script lang="ts">
 import { onMount, untrack } from 'svelte';
-import { getPromptVersion } from '$lib/api/prompts';
-import type { Prompt } from '$lib/api/types';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import * as Select from '$lib/components/ui/select';
-import { Input } from '$lib/components/ui/input';
-import { extractVariables } from '$lib/data/prompts';
-import { prompts } from '$lib/state/prompts.svelte';
+import { getPromptVersion } from '#lib/api/prompts.ts';
+import type { Prompt } from '#lib/api/types.ts';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { extractVariables } from '#lib/data/prompts.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
 
 /**
  * Picks a stored prompt for the request, and collects its variables.

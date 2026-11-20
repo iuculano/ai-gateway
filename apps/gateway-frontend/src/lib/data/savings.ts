@@ -1,4 +1,4 @@
-import type { SeriesPoint } from '$lib/api/analytics';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
 
 /** The catalog fields a what-if needs. Prices are dollars per million tokens. */
 export interface ModelPrice {

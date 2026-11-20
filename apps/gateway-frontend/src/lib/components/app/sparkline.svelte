@@ -1,5 +1,5 @@
 <script lang="ts">
-import { linePoints } from '$lib/data/format';
+import { linePoints } from '#lib/data/format.ts';
 
 let {
   values,

@@ -1,5 +1,5 @@
-import { type ListPromptsQuery, listPrompts } from '$lib/api/prompts';
-import type { ListMeta, Prompt } from '$lib/api/types';
+import { type ListPromptsQuery, listPrompts } from '#lib/api/prompts.ts';
+import type { ListMeta, Prompt } from '#lib/api/types.ts';
 
 export type PromptStatus = NonNullable<ListPromptsQuery['status']>;
 

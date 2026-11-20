@@ -1,13 +1,13 @@
 <script lang="ts">
-import { Input } from '$lib/components/ui/input';
-import * as Select from '$lib/components/ui/select';
-import { Textarea } from '$lib/components/ui/textarea';
+import { Input } from '#lib/components/ui/input/index.ts';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { Textarea } from '#lib/components/ui/textarea/index.ts';
 import {
   type DraftQuestion,
   QUESTION_TYPE_COLORS,
   QUESTION_TYPES,
   type QuestionType,
-} from '$lib/data/decision-questions';
+} from '#lib/data/decision-questions.ts';
 
 let {
   question = $bindable(),

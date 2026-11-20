@@ -1,16 +1,16 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { countLogs, listLogs } from '$lib/api/logs';
-import type { Log, LogListMeta } from '$lib/api/types';
-import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import type { PayloadView } from '$lib/components/logs/log-row.svelte';
-import LogRow from '$lib/components/logs/log-row.svelte';
-import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
-import { dashboard } from '$lib/state/dashboard.svelte';
+import { countLogs, listLogs } from '#lib/api/logs.ts';
+import type { Log, LogListMeta } from '#lib/api/types.ts';
+import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import type { PayloadView } from '#lib/components/logs/log-row.svelte';
+import LogRow from '#lib/components/logs/log-row.svelte';
+import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
 type StatusFilter = 'all' | 'complete' | 'failed' | 'incomplete';
 

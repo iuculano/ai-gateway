@@ -7,15 +7,15 @@ import {
   type SeriesPoint,
   type SessionsResponse,
   type TokensResponse,
-} from '$lib/api/analytics';
-import { alignedNow } from '$lib/components/analytics/analytics-filters.svelte';
-import SpendChart from '$lib/components/analytics/spend-chart.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { periodComparison } from '$lib/data/analytics-comparison';
-import { fmt, fmtBucket, fmtCostTotal, fmtSpend, providerTone } from '$lib/data/format';
+} from '#lib/api/analytics.ts';
+import { alignedNow } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import SpendChart from '#lib/components/analytics/spend-chart.svelte';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { periodComparison } from '#lib/data/analytics-comparison.ts';
+import { fmt, fmtBucket, fmtCostTotal, fmtSpend, providerTone } from '#lib/data/format.ts';
 
 /**
  * The right-hand side of the Users tab: everyone, or one user, with the same

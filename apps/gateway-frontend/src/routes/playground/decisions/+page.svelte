@@ -1,27 +1,27 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
 import { toast } from 'svelte-sonner';
+import { createDecision, type Decision, type DecisionQuestion, type DecisionRequest } from '#lib/api/decisions.ts';
+import { getLogRequest } from '#lib/api/logs.ts';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import JsonView from '#lib/components/logs/json-view.svelte';
+import DecisionAnswers from '#lib/components/playground/decision-answers.svelte';
+import ExamplePicker from '#lib/components/playground/example-picker.svelte';
+import JsonEditor from '#lib/components/playground/json-editor.svelte';
+import ModelPicker from '#lib/components/playground/model-picker.svelte';
+import PlaygroundTabs from '#lib/components/playground/playground-tabs.svelte';
+import QuestionEditor from '#lib/components/playground/question-editor.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import { Textarea } from '#lib/components/ui/textarea/index.ts';
+import { type DraftQuestion, emptyQuestion, toDraft, toQuestion } from '#lib/data/decision-questions.ts';
+import { fmtLatency, fmtTokens } from '#lib/data/format.ts';
+import { DECISION_EXAMPLES } from '#lib/data/playground-examples.ts';
 import { page } from '$app/state';
-import { createDecision, type Decision, type DecisionQuestion, type DecisionRequest } from '$lib/api/decisions';
-import { getLogRequest } from '$lib/api/logs';
-import { copyToClipboard } from '$lib/clipboard';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import JsonView from '$lib/components/logs/json-view.svelte';
-import DecisionAnswers from '$lib/components/playground/decision-answers.svelte';
-import ExamplePicker from '$lib/components/playground/example-picker.svelte';
-import JsonEditor from '$lib/components/playground/json-editor.svelte';
-import ModelPicker from '$lib/components/playground/model-picker.svelte';
-import PlaygroundTabs from '$lib/components/playground/playground-tabs.svelte';
-import QuestionEditor from '$lib/components/playground/question-editor.svelte';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import { Textarea } from '$lib/components/ui/textarea';
-import { type DraftQuestion, emptyQuestion, toDraft, toQuestion } from '$lib/data/decision-questions';
-import { fmtLatency, fmtTokens } from '$lib/data/format';
-import { DECISION_EXAMPLES } from '$lib/data/playground-examples';
 
 const FIELD_CLASS =
   'h-9 rounded-lg border-line-strong bg-surface-3 px-[11px] text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';

@@ -1,17 +1,17 @@
 <script lang="ts">
-import type { SeriesPoint } from '$lib/api/analytics';
-import CardToolbar from '$lib/components/app/card-toolbar.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { periodComparison } from '$lib/data/analytics-comparison';
-import { fmt, fmtCostTotal, fmtLatency, providerTone } from '$lib/data/format';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
+import CardToolbar from '#lib/components/app/card-toolbar.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { periodComparison } from '#lib/data/analytics-comparison.ts';
+import { fmt, fmtCostTotal, fmtLatency, providerTone } from '#lib/data/format.ts';
 import {
   type ModelChangeMetric,
   type ModelSortKey,
   modelChangeRows,
   modelComparisonRows,
   sortModelRows,
-} from '$lib/data/model-comparison';
+} from '#lib/data/model-comparison.ts';
 
 let {
   points,

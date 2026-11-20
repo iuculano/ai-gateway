@@ -1,4 +1,4 @@
-import type { SeriesPoint } from '$lib/api/analytics';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
 
 type ModelSpend = Pick<SeriesPoint, 'provider' | 'model' | 'requests' | 'cost_total'>;
 

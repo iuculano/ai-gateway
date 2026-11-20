@@ -31,7 +31,7 @@ export function toRecord(pairs: Pair[]): Record<string, string> | undefined {
 </script>
 
 <script lang="ts">
-import { Input } from '$lib/components/ui/input';
+import { Input } from '#lib/components/ui/input/index.ts';
 
 /**
  * The key/value map editor behind a webhook's filter and its tags.

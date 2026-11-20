@@ -1,11 +1,11 @@
 <script lang="ts">
-import { getPromptVersion, renderPromptVersion } from '$lib/api/prompts';
-import { copyToClipboard } from '$lib/clipboard';
-import Panel from '$lib/components/app/panel.svelte';
-import * as Dialog from '$lib/components/ui/dialog';
-import { Input } from '$lib/components/ui/input';
-import { extractVariables, segmentTemplate } from '$lib/data/prompts';
-import { prompts } from '$lib/state/prompts.svelte';
+import { getPromptVersion, renderPromptVersion } from '#lib/api/prompts.ts';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import Panel from '#lib/components/app/panel.svelte';
+import * as Dialog from '#lib/components/ui/dialog/index.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { extractVariables, segmentTemplate } from '#lib/data/prompts.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
 
 /**
  * Renders a version with values the user types, and shows the result.

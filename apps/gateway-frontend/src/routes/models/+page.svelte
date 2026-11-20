@@ -1,12 +1,12 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listProviders } from '$lib/api/models';
-import type { CatalogProvider } from '$lib/api/types';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import ProviderRow from '$lib/components/models/provider-row.svelte';
-import { timeAgo } from '$lib/data/format';
+import { listProviders } from '#lib/api/models.ts';
+import type { CatalogProvider } from '#lib/api/types.ts';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import ProviderRow from '#lib/components/models/provider-row.svelte';
+import { timeAgo } from '#lib/data/format.ts';
 
 const PAGE_SIZE = 20;
 

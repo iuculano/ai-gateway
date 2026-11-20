@@ -4,13 +4,13 @@ import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
 import PiggyBankIcon from '@lucide/svelte/icons/piggy-bank';
 import UsersIcon from '@lucide/svelte/icons/users';
 import type { Snippet } from 'svelte';
+import { fetchSeries, type SeriesPoint } from '#lib/api/analytics.ts';
+import { alignedNow, RANGES, setAnalyticsFilters } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import FilterPicker from '#lib/components/analytics/filter-picker.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import PageTabs from '#lib/components/app/page-tabs.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
 import { page } from '$app/state';
-import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import { alignedNow, RANGES, setAnalyticsFilters } from '$lib/components/analytics/analytics-filters.svelte';
-import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import PageTabs from '$lib/components/app/page-tabs.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
 
 let { children }: { children: Snippet } = $props();
 

@@ -10,15 +10,15 @@ import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 import WorkflowIcon from '@lucide/svelte/icons/workflow';
 import WrenchIcon from '@lucide/svelte/icons/wrench';
 import { onMount } from 'svelte';
+import { getTrace, listTraces } from '#lib/api/traces.ts';
+import type { Trace, TraceDetail, TraceNode, TraceSource, TraceStatus } from '#lib/api/types.ts';
+import CardToolbar from '#lib/components/app/card-toolbar.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { fmtCost, fmtLatency, fmtTokens, fmtTs } from '#lib/data/format.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 import { page } from '$app/state';
-import { getTrace, listTraces } from '$lib/api/traces';
-import type { Trace, TraceDetail, TraceNode, TraceSource, TraceStatus } from '$lib/api/types';
-import CardToolbar from '$lib/components/app/card-toolbar.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmtCost, fmtLatency, fmtTokens, fmtTs } from '$lib/data/format';
-import { dashboard } from '$lib/state/dashboard.svelte';
 
 type TraceFilter = 'all' | 'errors' | 'slow';
 

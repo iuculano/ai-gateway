@@ -1,6 +1,6 @@
 <script lang="ts">
-import type { DecisionAnswer } from '$lib/api/decisions';
-import { QUESTION_TYPE_COLORS } from '$lib/data/decision-questions';
+import type { DecisionAnswer } from '#lib/api/decisions.ts';
+import { QUESTION_TYPE_COLORS } from '#lib/data/decision-questions.ts';
 
 /** The answers, one row each: the verdict up front, the distribution behind it. */
 let { answers }: { answers: DecisionAnswer[] } = $props();

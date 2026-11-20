@@ -1,14 +1,14 @@
 <script lang="ts">
 import { untrack } from 'svelte';
-import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import CreateKeyDialog from '$lib/components/keys/create-key-dialog.svelte';
-import KeyRow from '$lib/components/keys/key-row.svelte';
-import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
-import { dashboard } from '$lib/state/dashboard.svelte';
+import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import CreateKeyDialog from '#lib/components/keys/create-key-dialog.svelte';
+import KeyRow from '#lib/components/keys/key-row.svelte';
+import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
 type StatusFilter = 'all' | 'active' | 'expired' | 'revoked';
 

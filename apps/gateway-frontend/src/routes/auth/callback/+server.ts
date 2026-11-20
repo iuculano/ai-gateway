@@ -1,6 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
-import { exchangeCode, resolveUserProfile } from '$lib/server/oidc';
-import { createSession } from '$lib/server/session';
+import { exchangeCode, resolveUserProfile } from '#lib/server/oidc.ts';
+import { createSession } from '#lib/server/session.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url, cookies }) => {

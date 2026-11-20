@@ -1,6 +1,6 @@
+import adapter from '@sveltejs/adapter-bun';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
-import adapter from 'svelte-adapter-bun';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -19,7 +19,8 @@ export default defineConfig({
         runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true),
       },
 
-      adapter: adapter(),
+      // Off by default in this adapter, on in the one it replaced.
+      adapter: adapter({ precompress: true }),
     }),
   ],
 });

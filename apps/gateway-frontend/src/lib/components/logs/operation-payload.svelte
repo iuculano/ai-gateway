@@ -1,7 +1,7 @@
 <script lang="ts">
-import type { DecisionAnswer, DecisionQuestion } from '$lib/api/decisions';
-import DecisionAnswers from '$lib/components/playground/decision-answers.svelte';
-import { QUESTION_TYPE_COLORS } from '$lib/data/decision-questions';
+import type { DecisionAnswer, DecisionQuestion } from '#lib/api/decisions.ts';
+import DecisionAnswers from '#lib/components/playground/decision-answers.svelte';
+import { QUESTION_TYPE_COLORS } from '#lib/data/decision-questions.ts';
 
 /** The Simple view of a decision or embedding payload. Chat payloads use MessageList instead. */
 let {

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { ROLE_COLORS, type Turn } from '$lib/data/conversation';
+import { ROLE_COLORS, type Turn } from '#lib/data/conversation.ts';
 import MarkdownText from './markdown-text.svelte';
 
 /**

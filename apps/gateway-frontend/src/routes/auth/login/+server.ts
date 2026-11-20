@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { dev } from '$app/environment';
-import { buildAuthorizationUrl } from '$lib/server/oidc';
+import { buildAuthorizationUrl } from '#lib/server/oidc.ts';
+import { dev } from '$app/env';
 import type { RequestHandler } from './$types';
 
 /**
@@ -45,5 +45,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     },
   );
 
-  redirect(302, authorizationUrl);
+  // The IDP lives on another origin, which SvelteKit refuses unless told so.
+  // The URL is built from the IDP's own discovery document, never from input.
+  redirect(302, authorizationUrl, { external: true });
 };
