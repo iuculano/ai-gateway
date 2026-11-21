@@ -1,25 +1,24 @@
 <script lang="ts">
 import type { Webhook, WebhookDelivery } from '#lib/api/types.ts';
-import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
-import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import DetailGrid, { type DetailItem } from '#lib/components/app/detail-grid.svelte';
 import ExpandableRow from '#lib/components/app/expandable-row.svelte';
 import { fmtTs, timeAgo } from '#lib/data/format.ts';
 import { deliveryOutcome } from '#lib/data/webhooks.ts';
 
-let {
-  delivery,
-  webhook,
-  cols,
-  expanded,
-  ontoggle,
-}: {
+interface Props {
   delivery: WebhookDelivery;
-  /** Undefined when the endpoint is not in the loaded page - see OutboxRow. */
+
+  /**
+   * Undefined when the endpoint is not on the loaded page of webhooks, which
+   * is normal and not an error.
+   */
   webhook: Webhook | undefined;
   cols: string;
   expanded: boolean;
   ontoggle: () => void;
-} = $props();
+}
+
+let { delivery, webhook, cols, expanded, ontoggle }: Props = $props();
 
 const attempted = $derived(fmtTs(delivery.created_at));
 const outcome = $derived(deliveryOutcome(delivery.status_code));
@@ -40,8 +39,8 @@ const detailItems: DetailItem[] = $derived([
 			<span class="text-zinc-600">{attempted.short} · </span>{attempted.time}
 		</span>
 
-		<!-- Single line now. The relative time under the name only restated the
-		     Attempted column beside it, and cost every row a second line to do it. -->
+		<!-- One line. A relative time under the name would only repeat the Attempted
+		     column beside it, and cost every row a second line to do it. -->
 		<span class="min-w-0" title={timeAgo(delivery.created_at)}>
 			{#if webhook}
 				<span class="block overflow-hidden text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-200">

@@ -1,23 +1,18 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * A titled group of setting rows.
- *
- * Deliberately not Panel. That one is the box inside an expanded table row, and
- * its header bar is a single uppercase caption with no room for the sentence of
- * context each of these groups needs to explain what it governs. Same border,
- * radius and surface, so the two still read as one family.
- */
-let {
-  title,
-  description,
-  children,
-}: {
+// A titled group of setting rows. It is not a Panel, whose header bar is one
+// uppercase caption with no room for the sentence each of these groups needs
+// to say what it governs. The border, radius and surface are the same, so the
+// two still read as one family.
+
+interface Props {
   title: string;
   description?: string;
   children: Snippet;
-} = $props();
+}
+
+let { title, description, children }: Props = $props();
 </script>
 
 <section class="overflow-hidden rounded-[9px] border border-line bg-surface-2">
@@ -28,8 +23,8 @@ let {
 		{/if}
 	</div>
 
-	<!-- divide-y rather than a border on each row: the last row must not carry
-	     one, and the section's own bottom edge already draws it. -->
+	<!-- Divided and not bordered row by row, because the last row must not carry
+	     a border and the section's own bottom edge already draws it. -->
 	<div class="divide-y divide-hairline">
 		{@render children()}
 	</div>

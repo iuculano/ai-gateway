@@ -3,18 +3,39 @@ import type { Snippet } from 'svelte';
 import CardToolbar from './card-toolbar.svelte';
 import ToolbarButton from './toolbar-button.svelte';
 
-/**
- * The bordered card every list page renders its table into: toolbar, column
- * header, and the loading / error / empty states.
- *
- * Those states were the worst of the drift - three loading labels in two
- * greys, and a retry button that was h-8 "Try again" on one page and h-[30px]
- * "Retry" on the other two.
- *
- * `cols` is applied as an inline style rather than a class. Tailwind compiles
- * the classes it can see in source, so a grid template passed in as a prop
- * would never be generated. Rows take the same value - see ExpandableRow.
- */
+// The bordered card every list page renders its table into, with the toolbar,
+// the column header and the loading, error and empty states.
+
+interface Props {
+  /**
+   * A CSS grid-template-columns value, such as '24px 1.8fr 1fr 84px'. It is
+   * applied as an inline style, because Tailwind cannot generate a class from
+   * a value it only sees as a prop. Rows take the same value.
+   */
+  cols: string;
+  columns: { label: string; align?: 'left' | 'right' }[];
+  toolbar?: Snippet;
+  loading?: boolean;
+  error?: string | null;
+  isEmpty?: boolean;
+  loadingLabel?: string;
+  emptyTitle?: string;
+  emptyHint?: string;
+  onretry?: () => void;
+  children: Snippet;
+
+  /**
+   * Pagination, when the page has more to fetch.
+   */
+  footer?: Snippet;
+
+  /**
+   * Lets a caller keep the footer snippet and hide the bar once it is
+   * exhausted.
+   */
+  showFooter?: boolean;
+}
+
 let {
   cols,
   columns,
@@ -29,24 +50,7 @@ let {
   children,
   footer,
   showFooter = true,
-}: {
-  /** A CSS grid-template-columns value, e.g. '24px 1.8fr 1fr 84px'. */
-  cols: string;
-  columns: { label: string; align?: 'left' | 'right' }[];
-  toolbar?: Snippet;
-  loading?: boolean;
-  error?: string | null;
-  isEmpty?: boolean;
-  loadingLabel?: string;
-  emptyTitle?: string;
-  emptyHint?: string;
-  onretry?: () => void;
-  children: Snippet;
-  /** Pagination, when the page has more to fetch. */
-  footer?: Snippet;
-  /** Lets a caller keep the footer snippet but hide the bar once it is exhausted. */
-  showFooter?: boolean;
-} = $props();
+}: Props = $props();
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">

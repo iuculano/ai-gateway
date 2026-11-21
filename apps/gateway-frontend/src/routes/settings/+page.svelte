@@ -9,53 +9,30 @@ import { Input } from '#lib/components/ui/input/index.ts';
 import * as Select from '#lib/components/ui/select/index.ts';
 import { Switch } from '#lib/components/ui/switch/index.ts';
 
-/**
- * Settings, as a skeleton.
- *
- * NOTHING HERE IS WIRED. There is no organization_settings table, no API module
- * and no store - every control below is local $state that resets on navigation,
- * and Save only says so. The shape is the deliverable: which settings exist,
- * where they live, and which of them a request header can still override.
- *
- * The organizing idea is that this page is mostly the other half of the `ai-*`
- * header block in chat-completions.schemas.ts. Those headers are per-request
- * with no default anywhere, so an organization that wants "never store prompt
- * bodies" has to edit every call site. Each row that a header overrides names
- * it, which is also what stops the two from drifting apart silently.
- *
- * Tabs rather than one long scroll because the groups have different audiences:
- * Defaults and Policy are the platform team's, Preferences is per-user, and
- * General is read once and never again.
- */
-
 type Tab = 'general' | 'defaults' | 'data' | 'limits' | 'policy' | 'notifications' | 'preferences';
 
 const TABS = [
-  { id: 'general' as const, label: 'General' },
-  { id: 'defaults' as const, label: 'Defaults' },
-  { id: 'data' as const, label: 'Data' },
-  { id: 'limits' as const, label: 'Limits' },
-  { id: 'policy' as const, label: 'Policy' },
-  { id: 'notifications' as const, label: 'Notifications' },
-  { id: 'preferences' as const, label: 'Preferences' },
-];
+  { id: 'general', label: 'General' },
+  { id: 'defaults', label: 'Defaults' },
+  { id: 'data', label: 'Data' },
+  { id: 'limits', label: 'Limits' },
+  { id: 'policy', label: 'Policy' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'preferences', label: 'Preferences' },
+] satisfies { id: Tab; label: string }[];
 
 let tab: Tab = $state('general');
 
-// Matches the dialogs' field styling - same height, radius and focus ring, so a
-// box here and a box in the create-key dialog are the same control.
+// The dialogs' field style, with the same height, radius and focus ring, so
+// that a box here and a box in the create-key dialog are the same control.
 const FIELD_CLASS =
   'h-8 rounded-[7px] border-line-strong bg-surface-5 px-2.5 text-[12.5px] text-zinc-200 focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-5';
 
 const TRIGGER_CLASS =
   'h-8 w-full rounded-[7px] border-line-strong bg-surface-5 px-2.5 text-[12.5px] text-zinc-200 dark:bg-surface-5 dark:hover:bg-surface-6';
 
-/**
- * Placeholder values, grouped by tab.
- *
- * One object per group rather than a flat bag of `let`s, so that the eventual
- * swap for a store is a change of the right-hand side and nothing else.
- */
+// Placeholder values, one object per tab, so that swapping them for a store
+// later changes the right-hand sides and nothing else.
 const org = $state({
   slug: 'acme-platform',
 });
@@ -108,20 +85,15 @@ const RETENTION_OPTIONS = ['7 days', '30 days', '90 days', '180 days', '365 days
 const EXPIRY_OPTIONS = ['30 days', '90 days', '365 days', 'Never'];
 const RETRY_OPTIONS = ['0', '1', '2', '3', '5', '10'];
 
-/**
- * The roles from ROLE_SCOPES_MAP in authorization.ts, listed rather than edited.
- *
- * Making this editable is a real feature and probably the most asked-for one on
- * this page, but it is also a security boundary: it needs audit rows and a rule
- * that an organization cannot strip its own last api-keys:write. Showing what
- * the constant already says costs nothing and lies about nothing.
- */
+// The roles from ROLE_SCOPES_MAP in authorization.ts, listed and not edited.
+// Editing them is a security boundary. It would need audit rows, and a rule
+// that an organization cannot strip its own last api-keys:write.
 const ROLES = [
   { name: 'admin', grants: 'All 14 scopes' },
   { name: 'user', grants: '7 read scopes + chat-completions:write' },
 ];
 
-function save() {
+function save(): void {
   toast.info('Settings are a preview - there is no API behind this page yet.');
 }
 </script>
@@ -147,8 +119,9 @@ function save() {
 	<FilterTabs tabs={TABS} bind:value={tab} />
 </div>
 
-<!-- max-w rather than full bleed: these are label/control pairs, and at 1600px
-     a row puts its switch half a screen from the thing it is labelled with. -->
+<!-- Capped in width and not full bleed. These are pairs of a label and a
+     control, and at 1600px a row would put its switch half a screen from the
+     thing it is labelled with. -->
 <div class="flex max-w-[880px] flex-col gap-3.5">
 	{#if tab === 'general'}
 		<SettingsSection

@@ -1,60 +1,29 @@
-<script module lang="ts">
-export interface Pair {
-  key: string;
-  value: string;
-}
-
-/**
- * The editor works on an ordered array, not on the `Record<string, string>` the
- * API takes.
- *
- * A record cannot hold the state this control spends most of its life in: a row
- * that has been added but not yet typed into has no key, and two half-typed rows
- * would collide on the empty string and silently eat each other.
- */
-export function toPairs(record?: Record<string, string> | null): Pair[] {
-  return Object.entries(record ?? {}).map(([key, value]) => ({ key, value }));
-}
-
-/**
- * Back to the API's shape, dropping rows with no key.
- *
- * Returns undefined rather than `{}` for an empty map: the column is nullable,
- * and an empty filter would otherwise read as "match nothing" when the intent
- * was to clear it.
- */
-export function toRecord(pairs: Pair[]): Record<string, string> | undefined {
-  const entries = pairs.map(({ key, value }) => [key.trim(), value.trim()] as const).filter(([key]) => key.length > 0);
-
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-</script>
-
 <script lang="ts">
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import { Input } from '#lib/components/ui/input/index.ts';
+import type { Pair } from '#lib/data/pairs.ts';
 
-/**
- * The key/value map editor behind a webhook's filter and its tags.
- *
- * Both are `jsonb` string maps on the backend and neither has a fixed set of
- * keys, so this is a repeated pair of text boxes rather than a picker.
- */
+// The key and value editor behind a webhook's filter and its tags. Both are
+// string maps with no fixed set of keys, so this is a repeated pair of text
+// boxes and not a picker.
+
+interface Props {
+  pairs: Pair[];
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+  addLabel?: string;
+  disabled?: boolean;
+}
+
 let {
   pairs = $bindable(),
   keyPlaceholder = 'key',
   valuePlaceholder = 'value',
   addLabel = 'Add pair',
   disabled = false,
-}: {
-  pairs: Pair[];
-  keyPlaceholder?: string;
-  valuePlaceholder?: string;
-  addLabel?: string;
-  disabled?: boolean;
-} = $props();
+}: Props = $props();
 
-const FIELD_CLASS =
-  'h-9 rounded-lg border-line-strong bg-surface-3 px-[11px] font-mono text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';
+const FIELD_CLASS = `h-9 px-[11px] font-mono text-[12.5px] ${FIELD_BASE}`;
 </script>
 
 <div class="flex flex-col gap-2">

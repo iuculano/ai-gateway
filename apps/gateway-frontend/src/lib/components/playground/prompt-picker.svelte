@@ -1,5 +1,7 @@
 <script module lang="ts">
-/** What the playground puts in the request body's `prompt` field. */
+/**
+ * What the playground puts in the request body's `prompt` field.
+ */
 export interface PromptSelection {
   name: string;
   version: number;
@@ -8,31 +10,32 @@ export interface PromptSelection {
 </script>
 
 <script lang="ts">
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import { onMount, untrack } from 'svelte';
 import { getPromptVersion } from '#lib/api/prompts.ts';
 import type { Prompt } from '#lib/api/types.ts';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
-import * as Select from '#lib/components/ui/select/index.ts';
 import { Input } from '#lib/components/ui/input/index.ts';
-import { extractVariables } from '#lib/data/prompts.ts';
+import * as Select from '#lib/components/ui/select/index.ts';
+import { carryValues, extractVariables, suppliedVariables } from '#lib/data/prompts.ts';
 import { prompts } from '#lib/state/prompts.svelte.ts';
 
-/**
- * Picks a stored prompt for the request, and collects its variables.
- *
- * The gateway expands the reference server-side, so nothing here renders
- * anything - the template is fetched only to work out which boxes to draw. What
- * the model actually receives is decided by the same code the API uses, which
- * is the point of sending a reference rather than the finished text.
- */
-let {
-  selection = $bindable(),
-  disabled = false,
-}: {
-  /** null when the request should carry no prompt. */
+// Picks a stored prompt for the request, and collects its variables.
+//
+// The gateway expands the reference itself, so nothing here renders anything.
+// The template is fetched only to work out which boxes to draw. What the model
+// receives is decided by the same code the API uses, which is the point of
+// sending a reference and not the finished text.
+
+interface Props {
+  /**
+   * Null when the request should carry no prompt.
+   */
   selection: PromptSelection | null;
   disabled?: boolean;
-} = $props();
+}
+
+let { selection = $bindable(), disabled = false }: Props = $props();
 
 const NONE = '__none__';
 
@@ -43,36 +46,43 @@ let loading = $state(false);
 let loadError: string | null = $state(null);
 let values: Record<string, string> = $state({});
 
-onMount(() => {
-  // The picker must not inherit the prompts page's status filter or cursor.
-  void prompts.list.filterByStatus('all');
-});
-
 const selected = $derived<Prompt | undefined>(prompts.list.rows.find((prompt) => prompt.name === promptName));
 const versions = $derived(selected ? prompts.versionsFor(selected.id) : null);
 const variables = $derived(extractVariables(template));
+const missing = $derived(variables.inputs.filter((name) => (values[name] ?? '').length === 0));
 
-// Fetch once per selection; cached failures are retried explicitly.
-$effect(() => {
-  const prompt = selected;
-  if (prompt) untrack(() => void prompts.ensureVersions(prompt.id));
+onMount(() => {
+  // The picker must not inherit the prompts page's status filter or cursor.
+  void prompts.filterByStatus('all');
 });
 
-// Also runs after Retry completes, without making another request.
+// Fetched once per selection. A failure is cached, and retried only when asked.
+$effect(() => {
+  const prompt = selected;
+
+  if (prompt) {
+    untrack(() => void prompts.ensureVersions(prompt.id));
+  }
+});
+
+// Lands on the active version, or the newest when there is none. This also runs
+// once a retry completes, without making another request.
 $effect(() => {
   const prompt = selected;
   const list = versions;
+
   if (!prompt || !list || list.loading || list.error) {
     version = null;
+
     return;
   }
 
-  version = list.rows.some((row) => row.version === prompt.active_version)
-    ? prompt.active_version
-    : (list.rows[0]?.version ?? null);
+  const hasActive = list.rows.some((row) => row.version === prompt.active_version);
+
+  version = hasActive ? prompt.active_version : (list.rows[0]?.version ?? null);
 });
 
-// Fetch the template for the chosen version, purely to discover its variables.
+// Fetches the template of the chosen version, only to find its variables.
 $effect(() => {
   const prompt = selected;
   const chosen = version;
@@ -80,6 +90,7 @@ $effect(() => {
   if (!prompt || chosen === null) {
     template = '';
     loadError = null;
+
     return;
   }
 
@@ -89,14 +100,7 @@ $effect(() => {
   getPromptVersion(prompt.id, chosen)
     .then((loaded) => {
       template = loaded.prompt;
-
-      // Keep anything already typed that the new template still asks for.
-      const next: Record<string, string> = {};
-      for (const name of extractVariables(loaded.prompt).inputs) {
-        next[name] = values[name] ?? '';
-      }
-
-      values = next;
+      values = carryValues(extractVariables(loaded.prompt).inputs, values);
     })
     .catch((error: unknown) => {
       loadError = error instanceof Error ? error.message : 'Failed to load the version.';
@@ -107,26 +111,16 @@ $effect(() => {
     });
 });
 
-// Publish upward. Only the variables the template actually asks for are sent -
-// a stale value from a previously chosen prompt is not the caller's intent.
+// Publishes the selection upward.
 $effect(() => {
   if (!selected || version === null) {
     selection = null;
+
     return;
   }
 
-  const supplied: Record<string, string> = {};
-  for (const name of variables.inputs) {
-    const value = values[name] ?? '';
-    if (value.length > 0) {
-      supplied[name] = value;
-    }
-  }
-
-  selection = { name: selected.name, version: version, variables: supplied };
+  selection = { name: selected.name, version: version, variables: suppliedVariables(variables.inputs, values) };
 });
-
-const missing = $derived(variables.inputs.filter((name) => (values[name] ?? '').length === 0));
 </script>
 
 <div class="flex flex-col gap-[18px] p-3.5">
@@ -212,9 +206,9 @@ const missing = $derived(variables.inputs.filter((name) => (values[name] ?? '').
 			<div>
 				<span class="mb-[7px] block text-[12.5px] font-medium text-zinc-200">
 					Variables
-					<!-- Named here rather than left to a 422 from the API: this page is
-					     where the request is being assembled, so the gap is worth showing
-					     before it is sent rather than after. -->
+					<!-- Named here and not left to a 422 from the API. This page is where
+					     the request is put together, so the gap is worth showing before it
+					     is sent and not after. -->
 					{#if missing.length > 0}
 						<span class="ml-1 font-normal text-amber-400/90">{missing.length} unfilled</span>
 					{/if}
@@ -231,7 +225,7 @@ const missing = $derived(variables.inputs.filter((name) => (values[name] ?? '').
 								bind:value={values[name]}
 								placeholder="value"
 								{disabled}
-								class="h-9 rounded-lg border-line-strong bg-surface-3 px-[11px] font-mono text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+								class="h-9 px-[11px] font-mono text-[12.5px] {FIELD_BASE}"
 							/>
 						</div>
 					{/each}

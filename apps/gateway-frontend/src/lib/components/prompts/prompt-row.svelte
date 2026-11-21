@@ -3,23 +3,13 @@ import { toast } from 'svelte-sonner';
 import { resolveActorNames } from '#lib/api/actors.ts';
 import type { Prompt } from '#lib/api/types.ts';
 import ConfirmDialog from '#lib/components/app/confirm-dialog.svelte';
-import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
-import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import DetailGrid, { type DetailItem } from '#lib/components/app/detail-grid.svelte';
 import ExpandableRow from '#lib/components/app/expandable-row.svelte';
 import Panel from '#lib/components/app/panel.svelte';
-import { fmtTs, formatDate, pairSummary } from '#lib/data/format.ts';
+import { fmtTs, formatDate, pairSummary, toneFor } from '#lib/data/format.ts';
 import { prompts as store } from '#lib/state/prompts.svelte.ts';
 
-let {
-  prompt,
-  cols,
-  expanded,
-  ontoggle,
-  onedit,
-  onpreview,
-  onnewversion,
-  oneditversion,
-}: {
+interface Props {
   prompt: Prompt;
   cols: string;
   expanded: boolean;
@@ -28,41 +18,26 @@ let {
   onpreview: () => void;
   onnewversion: () => void;
   oneditversion: (version: number) => void;
-} = $props();
+}
 
-const TONES = ['#10b981', '#60a5fa', '#c084fc', '#f59e0b', '#34d399'];
+let { prompt, cols, expanded, ontoggle, onedit, onpreview, onnewversion, oneditversion }: Props = $props();
+
+let creatorName: string | null = $state(null);
+let busy = $state(false);
+let confirmDeleteOpen = $state(false);
+
+// The version waiting to be confirmed, and the dialog's own open flag. They are
+// two pieces of state, because ConfirmDialog closes itself by writing to `open`
+// and so needs something writable. The number is left set while the dialog
+// animates out, or its title would flash a missing version on the way.
+let confirmVersionOpen = $state(false);
+let versionToDelete: number | null = $state(null);
 
 const p = $derived(prompt);
-
-// Same deterministic tone as the keys and webhooks tables, so a prompt keeps
-// its colour across renders and sorts.
-const tone = $derived(TONES[[...p.id].reduce((acc, char) => acc + char.charCodeAt(0), 0) % TONES.length]);
-
+const tone = $derived(toneFor(p.id));
 const versions = $derived(store.versionsFor(p.id));
 const created = $derived(fmtTs(p.created_at));
 const updated = $derived(fmtTs(p.updated_at));
-
-let creatorName: string | null = $state(null);
-
-$effect(() => {
-  const creatorId = p.creator_id;
-  creatorName = null;
-  if (!expanded || !creatorId) return;
-
-  let cancelled = false;
-  const creator = { actor_type: 'user', actor_id: creatorId };
-  resolveActorNames([creator])
-    .then((name) => {
-      if (!cancelled) creatorName = name(creator).trim() || null;
-    })
-    .catch(() => {
-      // Keep the creator ID visible if name resolution is unavailable.
-    });
-
-  return () => {
-    cancelled = true;
-  };
-});
 
 const detailItems: DetailItem[] = $derived([
   {
@@ -77,31 +52,64 @@ const detailItems: DetailItem[] = $derived([
   { label: 'Last updated', value: updated.full, title: updated.full, mono: false },
 ]);
 
-// Fetched when the row opens rather than with the page: a page of prompts
-// would otherwise be a page of extra requests, for panels nobody looked at.
+// The name behind the creator's id, looked up once the row is opened. When it
+// cannot be resolved, the id stays on show.
+$effect(() => {
+  const creatorId = p.creator_id;
+
+  creatorName = null;
+
+  if (!expanded || !creatorId) {
+    return;
+  }
+
+  const creator = { actor_type: 'user', actor_id: creatorId };
+  let cancelled = false;
+
+  resolveActorNames([creator])
+    .then((name) => {
+      if (!cancelled) {
+        creatorName = name(creator).trim() || null;
+      }
+    })
+    .catch(() => {});
+
+  return () => {
+    cancelled = true;
+  };
+});
+
+// Fetched when the row opens and not with the page, which would otherwise make
+// a request per prompt for panels nobody looked at.
 $effect(() => {
   if (expanded) {
     void store.ensureVersions(p.id);
   }
 });
 
-let busy = $state(false);
-let confirmDeleteOpen = $state(false);
+// The row itself is a button, so its own buttons keep their clicks from
+// toggling it.
+function preview(event: MouseEvent): void {
+  event.stopPropagation();
+  onpreview();
+}
 
-// The version awaiting confirmation, and the dialog's own open flag. Two pieces
-// of state rather than deriving `open` from the number: ConfirmDialog closes
-// itself by writing to `open`, so it has to be bound to something writable -
-// and the number is deliberately left set while the dialog animates out, or the
-// title flashes "Delete version null?" on the way.
-let confirmVersionOpen = $state(false);
-let versionToDelete: number | null = $state(null);
+function edit(event: MouseEvent): void {
+  event.stopPropagation();
+  onedit();
+}
 
-function askDeleteVersion(version: number) {
+function askDelete(event: MouseEvent): void {
+  event.stopPropagation();
+  confirmDeleteOpen = true;
+}
+
+function askDeleteVersion(version: number): void {
   versionToDelete = version;
   confirmVersionOpen = true;
 }
 
-async function remove() {
+async function remove(): Promise<void> {
   busy = true;
 
   try {
@@ -115,8 +123,10 @@ async function remove() {
   }
 }
 
-async function removeVersion() {
-  if (versionToDelete === null) return;
+async function removeVersion(): Promise<void> {
+  if (versionToDelete === null) {
+    return;
+  }
 
   busy = true;
 
@@ -131,7 +141,7 @@ async function removeVersion() {
   }
 }
 
-async function activate(version: number) {
+async function activate(version: number): Promise<void> {
   busy = true;
 
   try {
@@ -148,14 +158,13 @@ async function activate(version: number) {
 <ExpandableRow {cols} {expanded} {ontoggle}>
 	{#snippet cells()}
 		<span class="inline-flex min-w-0 items-center gap-[9px]">
-			<!-- A tone dot rather than an initials block. The 32px avatar was the
-			     tallest thing in the row and set the row height on its own; this keeps
-			     the same deterministic colour at the height logs' rows run at. -->
+			<!-- A dot in the prompt's own colour and not an initials block, which
+			     would be the tallest thing in the row and set its height. -->
 			<span class="size-[7px] flex-none rounded-full" style:background={tone}></span>
 			<span class="overflow-hidden font-mono text-[13px] font-medium text-ellipsis whitespace-nowrap">{p.name}</span>
 		</span>
 
-		<!-- Lifted out from under the name, where it made every row two lines tall. -->
+		<!-- Beside the name and not under it, which would make every row two lines tall. -->
 		<span class="overflow-hidden text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-500">
 			{p.description ?? '—'}
 		</span>
@@ -183,10 +192,7 @@ async function activate(version: number) {
 				type="button"
 				class="h-7 rounded-md border border-line-strong bg-surface-3 px-2.5 text-[11.5px] font-semibold text-zinc-300 hover:bg-surface-4 disabled:opacity-50"
 				disabled={busy}
-				onclick={(event) => {
-					event.stopPropagation();
-					onpreview();
-				}}
+				onclick={preview}
 			>
 				Preview
 			</button>
@@ -194,10 +200,7 @@ async function activate(version: number) {
 				type="button"
 				class="h-7 rounded-md border border-line-strong bg-surface-3 px-2.5 text-[11.5px] font-semibold text-zinc-300 hover:bg-surface-4 disabled:opacity-50"
 				disabled={busy}
-				onclick={(event) => {
-					event.stopPropagation();
-					onedit();
-				}}
+				onclick={edit}
 			>
 				Edit
 			</button>
@@ -205,10 +208,7 @@ async function activate(version: number) {
 				type="button"
 				class="h-7 rounded-md border border-red-500/30 bg-red-500/8 px-2.5 text-[11.5px] font-semibold text-red-400 hover:bg-red-500/15 disabled:opacity-50"
 				disabled={busy}
-				onclick={(event) => {
-					event.stopPropagation();
-					confirmDeleteOpen = true;
-				}}
+				onclick={askDelete}
 			>
 				Delete
 			</button>

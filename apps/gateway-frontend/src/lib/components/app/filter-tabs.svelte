@@ -1,30 +1,27 @@
 <script lang="ts" generics="T extends string">
-/**
- * The single filter control for every list page.
- *
- * These were three different things: a segmented control at 26px on keys,
- * coloured pills at 30px on audit, and a segmented control at 12px text on
- * logs. One segmented control now.
- *
- * The optional dot is what let audit's categories fold in without losing their
- * colour coding - the shape is shared, the meaning survives.
- *
- * Outer height is 32px (26 + padding + border), matching ToolbarButton so a
- * toolbar row aligns.
- */
-let {
-  tabs,
-  value = $bindable(),
-  equalWidth = false,
-  fill = false,
-}: {
+// The one filter control for every list page, a segmented control. A segment
+// can carry a coloured dot, which is how the audit log's categories keep their
+// colour coding. The outer height is 32px, the same as ToolbarButton, so that a
+// toolbar row lines up.
+
+interface Props {
   tabs: { id: T; label: string; color?: string }[];
   value: T;
-  /** Gives every segment the same 72px width for filters that must align across pages. */
+
+  /**
+   * Gives every segment the same 72px width, for filters that must align
+   * across pages.
+   */
   equalWidth?: boolean;
-  /** Stretches the control to its container, the segments sharing the width equally. */
+
+  /**
+   * Stretches the control to its container, with the segments sharing the
+   * width equally.
+   */
   fill?: boolean;
-} = $props();
+}
+
+let { tabs, value = $bindable(), equalWidth = false, fill = false }: Props = $props();
 </script>
 
 <div class="flex flex-wrap gap-0.5 {fill ? 'w-full' : ''} rounded-lg border border-line-strong bg-surface-3 p-0.5">

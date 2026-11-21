@@ -4,6 +4,8 @@ import type { Prompt } from '#lib/api/types.ts';
 import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import PageHeader from '#lib/components/app/page-header.svelte';
+import Pager from '#lib/components/app/pager.svelte';
+import RefreshButton from '#lib/components/app/refresh-button.svelte';
 import TableCard from '#lib/components/app/table-card.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
 import PreviewDialog from '#lib/components/prompts/preview-dialog.svelte';
@@ -14,11 +16,9 @@ import { pairSummary } from '#lib/data/format.ts';
 import { tagKeys } from '#lib/data/prompts.ts';
 import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
 import { dashboard } from '#lib/state/dashboard.svelte.ts';
-import type { PromptStatus } from '#lib/state/prompt-list.svelte.ts';
-import { prompts } from '#lib/state/prompts.svelte.ts';
+import { type PromptStatus, prompts } from '#lib/state/prompts.svelte.ts';
 
-// One grid, shared with the row component so the header and the rows sit in
-// the same grid - the same contract the other tables use.
+// Shared with PromptRow, so that the header and the rows sit in one grid.
 const COLS = '24px minmax(150px,1.3fr) minmax(150px,1.4fr) minmax(120px,1fr) 104px 112px 214px';
 
 const COLUMNS = [
@@ -37,102 +37,96 @@ const TABS = [
   { id: 'unversioned' as const, label: 'Unversioned', color: '#f59e0b' },
 ];
 
+const auto = new AutoRefresh();
+const list = prompts.list;
+
 let expandedRow: string | null = $state(null);
-
-function setStatus(status: PromptStatus) {
-  expandedRow = null;
-  void prompts.list.filterByStatus(status);
-}
-
-$effect(() => {
-  prompts.list.pageIndex;
-  expandedRow = null;
-});
-
 let promptDialogOpen = $state(false);
-
-/** The row the prompt dialog is editing; null puts it in create mode. */
-let editing: Prompt | null = $state(null);
-
 let versionDialogOpen = $state(false);
 let previewOpen = $state(false);
 
-/**
- * The prompt the version and preview dialogs are working on.
- *
- * Held separately from `editing` because those two stay open over a row that
- * may be edited underneath them, and because both need the prompt's id and name
- * after the row itself has been collapsed.
- */
+// The row the prompt dialog is editing, or null when it is making a new one.
+let editing: Prompt | null = $state(null);
+
+// The prompt the version and preview dialogs are working on. It is held apart
+// from `editing`, because those two stay open over a row that may be edited
+// underneath them and need its id and name after the row has been collapsed.
 let subject: Prompt | null = $state(null);
 
-/** The version the editor is rewriting; null appends a new one. */
+// The version the editor is rewriting, or null when it is adding a new one.
 let editingVersion: number | null = $state(null);
 
-// Load once on mount - NOT $effect, which would re-run whenever a load mutates
-// its own loading flag and hammer the endpoint on any error.
-const auto = new AutoRefresh();
-
-// Auto-refresh follows only the newest page, matching API Keys.
-$effect(() => auto.schedule(prompts.list.pageIndex === 0, () => prompts.list.refresh()));
-
-onMount(() => {
-  prompts.ensureLoaded();
-});
-
-function openCreate() {
-  editing = null;
-  promptDialogOpen = true;
-}
-
-function openEdit(prompt: Prompt) {
-  editing = prompt;
-  promptDialogOpen = true;
-}
-
-function openNewVersion(prompt: Prompt) {
-  subject = prompt;
-  editingVersion = null;
-  versionDialogOpen = true;
-}
-
-function openEditVersion(prompt: Prompt, version: number) {
-  subject = prompt;
-  editingVersion = version;
-  versionDialogOpen = true;
-}
-
-function openPreview(prompt: Prompt) {
-  subject = prompt;
-  previewOpen = true;
-}
-
-// The topbar's search box, shared by every page.
 const query = $derived(dashboard.search.trim().toLowerCase());
 
 const filtered = $derived(
-  prompts.list.rows.filter(
+  list.rows.filter(
     (prompt) =>
       !query || `${prompt.name} ${prompt.description ?? ''} ${pairSummary(prompt.tags)}`.toLowerCase().includes(query),
   ),
 );
 
-const versioned = $derived(prompts.list.rows.filter((prompt) => prompt.active_version != null).length);
-const unversioned = $derived(prompts.list.rows.length - versioned);
-const distinctTags = $derived(tagKeys(prompts.list.rows.map((prompt) => prompt.tags)).length);
+const versioned = $derived(list.rows.filter((prompt) => prompt.active_version != null).length);
+const unversioned = $derived(list.rows.length - versioned);
+const distinctTags = $derived(tagKeys(list.rows.map((prompt) => prompt.tags)).length);
 
-/**
- * The preview dialog opens on the subject's active version, so it has to read
- * the live row rather than the copy captured when the button was pressed -
- * activating a version from the panel behind it would otherwise be ignored.
- */
+// The preview opens on the subject's active version, so it reads the row as it
+// is now and not the copy taken when the button was pressed. Activating a
+// version from the panel behind it would otherwise go unnoticed.
 const subjectRow = $derived.by(() => {
-  // Copied to a const first: `subject` is mutable state, so the null check
-  // above does not narrow it inside the callback below.
   const current = subject;
-  if (current === null) return null;
 
-  return prompts.list.rows.find((prompt) => prompt.id === current.id) ?? current;
+  if (current === null) {
+    return null;
+  }
+
+  return list.rows.find((prompt) => prompt.id === current.id) ?? current;
+});
+
+function setStatus(status: PromptStatus): void {
+  expandedRow = null;
+
+  void prompts.filterByStatus(status);
+}
+
+function openCreate(): void {
+  editing = null;
+  promptDialogOpen = true;
+}
+
+function openEdit(prompt: Prompt): void {
+  editing = prompt;
+  promptDialogOpen = true;
+}
+
+function openNewVersion(prompt: Prompt): void {
+  subject = prompt;
+  editingVersion = null;
+  versionDialogOpen = true;
+}
+
+function openEditVersion(prompt: Prompt, version: number): void {
+  subject = prompt;
+  editingVersion = version;
+  versionDialogOpen = true;
+}
+
+function openPreview(prompt: Prompt): void {
+  subject = prompt;
+  previewOpen = true;
+}
+
+// A row that was open belongs to the page it was on.
+$effect(() => {
+  void list.pageIndex;
+  expandedRow = null;
+});
+
+$effect(() => auto.schedule(list.pageIndex === 0, () => list.refresh()));
+
+// Loaded once on mount and not in an effect, which would run again whenever
+// the load changed its own state.
+onMount(() => {
+  void prompts.ensureLoaded();
 });
 </script>
 
@@ -151,22 +145,22 @@ const subjectRow = $derived.by(() => {
 <TableCard
 	cols={COLS}
 	columns={COLUMNS}
-	loading={prompts.list.loading && prompts.list.rows.length === 0}
-	error={prompts.list.error}
+	loading={list.loading && list.rows.length === 0}
+	error={list.error}
 	isEmpty={filtered.length === 0}
 	loadingLabel="Loading prompts…"
-	emptyTitle={prompts.list.rows.length === 0 && prompts.list.pageIndex === 0 && prompts.list.status === 'all' ? 'No prompts yet' : 'No prompts match on this page'}
-	emptyHint={prompts.list.rows.length === 0 && prompts.list.pageIndex === 0 && prompts.list.status === 'all'
+	emptyTitle={list.rows.length === 0 && list.pageIndex === 0 && prompts.status === 'all' ? 'No prompts yet' : 'No prompts match on this page'}
+	emptyHint={list.rows.length === 0 && list.pageIndex === 0 && prompts.status === 'all'
 		? 'Create a prompt, then add a version to give it text.'
 		: undefined}
-	onretry={() => prompts.list.load()}
-	showFooter={prompts.list.pageIndex > 0 || prompts.list.hasMore}
+	onretry={() => list.load()}
+	showFooter={list.pageIndex > 0 || list.hasMore}
 >
 	{#snippet toolbar()}
-		<FilterTabs tabs={TABS} bind:value={() => prompts.list.status, setStatus} />
+		<FilterTabs tabs={TABS} bind:value={() => prompts.status, setStatus} />
 		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
 			<span class="font-medium text-zinc-100 tabular-nums">{filtered.length.toLocaleString()}</span>
-			of <span class="font-medium text-zinc-200 tabular-nums">{prompts.list.rows.length.toLocaleString()}</span> prompts on this page
+			of <span class="font-medium text-zinc-200 tabular-nums">{list.rows.length.toLocaleString()}</span> prompts on this page
 			<span class="mx-1 text-zinc-600">·</span>
 			<span class="font-medium text-emerald-400 tabular-nums">{versioned.toLocaleString()}</span> versioned
 			<span class="mx-1 text-zinc-600">·</span>
@@ -177,12 +171,9 @@ const subjectRow = $derived.by(() => {
 
 		<span class="ml-auto"></span>
 
-		<AutoRefreshToggle {auto} active={prompts.list.pageIndex === 0} pausedLabel="paused past page 1" />
+		<AutoRefreshToggle {auto} active={list.pageIndex === 0} pausedLabel="paused past page 1" />
 
-		<ToolbarButton disabled={prompts.list.loading} onclick={() => prompts.refresh()}>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Refresh
-		</ToolbarButton>
+		<RefreshButton disabled={list.loading} onclick={() => prompts.refresh()} />
 	{/snippet}
 
 	{#each filtered as prompt (prompt.id)}
@@ -199,17 +190,7 @@ const subjectRow = $derived.by(() => {
 	{/each}
 
 	{#snippet footer()}
-		<div class="flex items-center justify-center gap-3">
-			<ToolbarButton disabled={prompts.list.pageIndex === 0 || prompts.list.loading} onclick={() => prompts.list.previousPage()}>
-				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9.5 4L6 8l3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-				Newer
-			</ToolbarButton>
-			<span class="min-w-[64px] text-center text-[12.5px] text-zinc-500">Page {prompts.list.pageIndex + 1}</span>
-			<ToolbarButton disabled={!prompts.list.hasMore || prompts.list.loading} onclick={() => prompts.list.nextPage()}>
-				Older
-				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M6.5 4L10 8l-3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			</ToolbarButton>
-		</div>
+		<Pager list={list} />
 	{/snippet}
 </TableCard>
 

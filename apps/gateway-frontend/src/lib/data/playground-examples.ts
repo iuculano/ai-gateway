@@ -1,4 +1,4 @@
-import type { DraftMessage } from '#lib/components/playground/message-editor.svelte';
+import type { DraftMessage } from '#lib/data/playground-request.ts';
 import type { DraftQuestion } from './decision-questions';
 
 export interface ChatExample {

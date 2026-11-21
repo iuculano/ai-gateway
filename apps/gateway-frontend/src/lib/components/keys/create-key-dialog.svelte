@@ -1,159 +1,107 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
-import type { UpdateApiKeyInput } from '#lib/api/api-keys.ts';
 import type { ApiKey } from '#lib/api/types.ts';
 import { copyToClipboard } from '#lib/clipboard.ts';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import Panel from '#lib/components/app/panel.svelte';
 import * as Dialog from '#lib/components/ui/dialog/index.ts';
 import { Input } from '#lib/components/ui/input/index.ts';
 import { Label } from '#lib/components/ui/label/index.ts';
 import * as Select from '#lib/components/ui/select/index.ts';
 import { Switch } from '#lib/components/ui/switch/index.ts';
+import { CUSTOM_EXPIRY, EXPIRY_OPTIONS, keyChanges, keyForm, keyFormError, keyInput } from '#lib/data/api-keys.ts';
 import { SCOPE_OPTIONS } from '#lib/data/scopes.ts';
 import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
-let {
-  open = $bindable(false),
-  apiKey,
-  onsaved,
-}: {
+// One dialog for making a key and for editing one. With `apiKey` set it edits,
+// and a new key ends on a second step that shows its secret the one time.
+
+interface Props {
   open?: boolean;
   apiKey?: ApiKey;
   onsaved?: () => void;
-} = $props();
+}
 
-const EXPIRY_OPTIONS: Record<string, number | null> = {
-  Never: null,
-  '1 day': 1,
-  '7 days': 7,
-  '30 days': 30,
-  '90 days': 90,
-  '1 year': 365,
-  'Custom date & time': null,
-};
+let { open = $bindable(false), apiKey, onsaved }: Props = $props();
 
 let step: 'form' | 'done' = $state('form');
-let name = $state('');
-let description = $state('');
-let scopes: Record<string, boolean> = $state({});
-let expiry = $state('Never');
-let customExpiry = $state('');
-let rateLimitEnabled = $state(false);
-let rateLimitRequests: number | undefined = $state(100);
-let rateLimitWindow: number | undefined = $state(60);
+let form = $state(keyForm());
 let generatedKey = $state('');
 let copied = $state(false);
 let creating = $state(false);
+
+// The key as it was when the dialog opened, which is what an edit is compared
+// against.
 let original: ApiKey | undefined = $state();
-let originalExpiry = $state('');
 
 $effect(() => {
-  if (!open) return;
+  if (!open) {
+    return;
+  }
+
+  // Reset on opening and at no other time. Read tracked, the key would reset
+  // the form again whenever the list behind the dialog refreshed.
   untrack(() => {
     original = apiKey;
     step = 'form';
-    name = original?.name ?? '';
-    description = original?.description ?? '';
-    scopes = original
-      ? Object.fromEntries(
-          original.scopes
-            .split(' ')
-            .filter(Boolean)
-            .map((scope) => [scope, true]),
-        )
-      : { 'api-keys:read': true };
-    expiry = original?.expires_at ? 'Custom date & time' : 'Never';
-    const date = original?.expires_at ? new Date(original.expires_at) : null;
-    customExpiry = date ? new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '';
-    originalExpiry = customExpiry;
-    rateLimitEnabled = original?.rate_limit_requests != null;
-    rateLimitRequests = original?.rate_limit_requests ?? 100;
-    rateLimitWindow = original?.rate_limit_window ?? 60;
+    form = keyForm(apiKey);
     generatedKey = '';
     copied = false;
     creating = false;
   });
 });
 
-async function save() {
-  if (creating || apiKey?.revoked_at) return;
-  if (!name.trim()) {
-    toast.error('Give the key a name first.');
+async function save(): Promise<void> {
+  if (creating || apiKey?.revoked_at) {
     return;
   }
 
-  const days = EXPIRY_OPTIONS[expiry];
-  const expiryUnchanged =
-    original &&
-    (original.expires_at ? expiry === 'Custom date & time' && customExpiry === originalExpiry : expiry === 'Never');
-  const expiresAt =
-    expiry === 'Custom date & time' ? new Date(customExpiry) : days ? new Date(Date.now() + days * 86_400_000) : null;
-  if (!expiryUnchanged && expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
-    toast.error('Choose an expiration date and time in the future.');
+  const now = Date.now();
+  const problem = keyFormError(form, original, now);
+
+  if (problem) {
+    toast.error(problem);
+
     return;
   }
-  if (
-    rateLimitEnabled &&
-    (!Number.isInteger(rateLimitRequests) ||
-      !rateLimitRequests ||
-      rateLimitRequests < 1 ||
-      rateLimitRequests > 2_147_483_647 ||
-      !Number.isInteger(rateLimitWindow) ||
-      !rateLimitWindow ||
-      rateLimitWindow < 1 ||
-      rateLimitWindow > 2_147_483_647)
-  ) {
-    toast.error('Enter whole numbers between 1 and 2,147,483,647 for requests and window seconds.');
-    return;
-  }
+
   creating = true;
 
   try {
-    const input = {
-      name: name.trim(),
-      description: description.trim() || null,
-      scopes: Object.keys(scopes)
-        .filter((scope) => scopes[scope])
-        .join(' '),
-      expires_at: expiryUnchanged ? (original?.expires_at ?? null) : (expiresAt?.toISOString() ?? null),
-      rate_limit_requests: rateLimitEnabled ? Number(rateLimitRequests) : null,
-      rate_limit_window: rateLimitEnabled ? Number(rateLimitWindow) : null,
-    };
+    const input = keyInput(form, original, now);
+
     if (original) {
-      const updates: UpdateApiKeyInput = {};
-      if (input.name !== original.name) updates.name = input.name;
-      if (input.description !== original.description) updates.description = input.description;
-      if (input.scopes !== original.scopes) updates.scopes = input.scopes;
-      if (input.expires_at !== original.expires_at) updates.expires_at = input.expires_at;
-      if (
-        input.rate_limit_requests !== original.rate_limit_requests ||
-        input.rate_limit_window !== original.rate_limit_window
-      ) {
-        updates.rate_limit_requests = input.rate_limit_requests;
-        updates.rate_limit_window = input.rate_limit_window;
-      }
-      await dashboard.update(original.id, updates);
+      await dashboard.update(original.id, keyChanges(input, original));
       toast.success('Key updated');
       open = false;
       onsaved?.();
     } else {
       const created = await dashboard.create(input);
+
       generatedKey = created.key;
       step = 'done';
     }
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : original ? 'Failed to update key.' : 'Failed to create key.');
+    const fallback = original ? 'Failed to update key.' : 'Failed to create key.';
+
+    toast.error(error instanceof Error ? error.message : fallback);
   } finally {
     creating = false;
   }
 }
 
-async function copyGenerated() {
+async function copyGenerated(): Promise<void> {
   copied = false;
+
+  // The key is held on to, so that a copy which finishes after the dialog has
+  // moved on to another key does not mark that one as copied.
   const key = generatedKey;
-  const success = await copyToClipboard(key, 'Key copied to clipboard');
-  if (generatedKey === key) copied = success;
+  const succeeded = await copyToClipboard(key, 'Key copied to clipboard');
+
+  if (generatedKey === key) {
+    copied = succeeded;
+  }
 }
 </script>
 
@@ -179,9 +127,9 @@ async function copyGenerated() {
 					<Label for="key-name" class="mb-[7px] block text-[12.5px] font-medium text-zinc-200">Key name</Label>
 					<Input
 						id="key-name"
-						bind:value={name}
+						bind:value={form.name}
 						placeholder="e.g. Production server"
-						class="h-10 rounded-lg border-line-strong bg-surface-3 px-[13px] text-[13.5px] tracking-[-0.01em] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+						class="h-10 px-[13px] text-[13.5px] tracking-[-0.01em] {FIELD_BASE}"
 					/>
 				</div>
 
@@ -191,9 +139,9 @@ async function copyGenerated() {
 					</Label>
 					<Input
 						id="key-description"
-						bind:value={description}
+						bind:value={form.description}
 						placeholder="What will this key be used for?"
-						class="h-10 rounded-lg border-line-strong bg-surface-3 px-[13px] text-[13.5px] tracking-[-0.01em] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+						class="h-10 px-[13px] text-[13.5px] tracking-[-0.01em] {FIELD_BASE}"
 					/>
 				</div>
 
@@ -205,9 +153,9 @@ async function copyGenerated() {
 									<span class="whitespace-nowrap text-[13px] font-medium text-zinc-200">{scope.label}</span>
 									<span class="min-w-0 truncate text-[11.5px] text-zinc-500" title={scope.desc}>{scope.desc}</span>
 									<Switch
-										checked={!!scopes[scope.id]}
+										checked={!!form.scopes[scope.id]}
 										disabled={creating}
-										onCheckedChange={(on) => (scopes[scope.id] = on)}
+										onCheckedChange={(on) => (form.scopes[scope.id] = on)}
 										aria-label={scope.label}
 										class="h-5 w-9 shrink-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
 									/>
@@ -221,7 +169,7 @@ async function copyGenerated() {
 					<Panel title="Rate limit">
 						{#snippet actions()}
 							<Switch
-								bind:checked={rateLimitEnabled}
+								bind:checked={form.rateLimitEnabled}
 								disabled={creating}
 								aria-label="Enable rate limit"
 								class="h-5 w-9 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-800"
@@ -231,11 +179,11 @@ async function copyGenerated() {
 							<div class="grid grid-cols-2 gap-3">
 								<div>
 									<Label for="key-rate-requests" class="mb-2 block text-[12.5px] text-zinc-200">Requests</Label>
-									<Input id="key-rate-requests" type="number" min={1} max={2147483647} step={1} bind:value={rateLimitRequests} disabled={!rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+									<Input id="key-rate-requests" type="number" min={1} max={2147483647} step={1} bind:value={form.rateLimitRequests} disabled={!form.rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
 								</div>
 								<div>
 									<Label for="key-rate-window" class="mb-2 block text-[12.5px] text-zinc-200">Window (seconds)</Label>
-									<Input id="key-rate-window" type="number" min={1} max={2147483647} step={1} bind:value={rateLimitWindow} disabled={!rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+									<Input id="key-rate-window" type="number" min={1} max={2147483647} step={1} bind:value={form.rateLimitWindow} disabled={!form.rateLimitEnabled || creating} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
 								</div>
 							</div>
 							<p class="text-[11.5px] text-zinc-500">The first request starts the window. Once the limit is reached, further requests are blocked until the window resets.</p>
@@ -246,9 +194,9 @@ async function copyGenerated() {
 						<div class="space-y-3 px-[13px] py-3">
 							<div>
 								<Label for="key-expiry-preset" class="mb-2 block text-[12.5px] text-zinc-200">Expires after</Label>
-								<Select.Root type="single" bind:value={expiry} disabled={creating}>
+								<Select.Root type="single" bind:value={form.expiry} disabled={creating}>
 									<Select.Trigger id="key-expiry-preset" aria-label="Expiration" class="data-[size=default]:h-9 w-full border-line-strong bg-surface-3 text-[12.5px] text-zinc-200 dark:bg-surface-3">
-										{expiry}
+										{form.expiry}
 									</Select.Trigger>
 									<Select.Content>
 										{#each Object.keys(EXPIRY_OPTIONS) as option (option)}
@@ -259,7 +207,7 @@ async function copyGenerated() {
 							</div>
 							<div>
 								<Label for="key-expiration" class="mb-2 block text-[12.5px] text-zinc-200">Custom date &amp; time</Label>
-								<Input id="key-expiration" type="datetime-local" bind:value={customExpiry} disabled={creating || expiry !== 'Custom date & time'} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
+								<Input id="key-expiration" type="datetime-local" bind:value={form.customExpiry} disabled={creating || form.expiry !== CUSTOM_EXPIRY} class="h-9 border-line-strong bg-surface-3 dark:bg-surface-3" />
 							</div>
 							<p class="text-[11.5px] text-zinc-500">Custom dates use your local time zone. Presets start when you save.</p>
 						</div>
@@ -299,12 +247,11 @@ async function copyGenerated() {
 			</div>
 			<div class="min-h-0 overflow-y-auto px-6 pt-[18px] pb-1.5">
 				<div class="flex items-center gap-2 rounded-[9px] border border-line-strong bg-surface-3 py-2 pr-1.5 pl-3.5">
-					<!-- One line, scrolled rather than wrapped. A 64-character key needs
-					     ~500px and the dialog affords ~336px, so break-all used to wrap it
-					     onto three ragged lines beside a fixed-height button. min-w-0 is
-					     what lets the flex child shrink below its content width at all.
-					     select-all keeps manual copying possible now that the tail is off
-					     screen. -->
+					<!-- One line, scrolled and not wrapped. The key is wider than the
+					     dialog, and wrapped it ran to three ragged lines beside a
+					     fixed-height button. min-w-0 is what lets the flex child shrink
+					     below its content width, and select-all keeps copying by hand
+					     possible with the tail off screen. -->
 					<code
 						class="key-value min-w-0 flex-1 overflow-x-auto py-1 font-mono text-[13px] whitespace-nowrap text-emerald-400 select-all"
 					>{generatedKey}</code>
@@ -340,10 +287,10 @@ async function copyGenerated() {
 
 <style>
 	/*
-	 * The key scrolls sideways rather than wrapping, but the global scrollbar
-	 * style carries a 3px border sized for full-height panes - inside a 34px
-	 * row it swallows most of the box. Hidden here only; the content stays
-	 * reachable by dragging a selection, and the Copy button is the real path.
+	 * The key scrolls sideways, but the global scrollbar style carries a 3px
+	 * border sized for full-height panes, which swallows most of a 34px row. It
+	 * is hidden here only. The content stays reachable by dragging a selection,
+	 * and the Copy button is the real path.
 	 */
 	.key-value {
 		scrollbar-width: none;

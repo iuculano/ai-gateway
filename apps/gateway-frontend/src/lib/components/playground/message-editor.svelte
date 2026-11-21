@@ -1,51 +1,26 @@
-<script lang="ts" module>
-import type { ChatCompletionRole } from '#lib/api/chat-completions.ts';
-
-/**
- * The roles the composer offers.
- *
- * Deliberately short of the request schema's full set: a `tool` message must
- * carry a tool_call_id matching an assistant tool_call earlier in the same
- * conversation, and a composer that let one be written without its partner
- * would produce requests the provider rejects. Few-shot examples, which is what
- * people actually reach for here, need only these four.
- */
-export const COMPOSER_ROLES = ['system', 'developer', 'user', 'assistant'] as const;
-
-export type ComposerRole = Extract<ChatCompletionRole, (typeof COMPOSER_ROLES)[number]>;
-
-export interface DraftMessage {
-  role: ComposerRole;
-  content: string;
-}
-
-export function emptyDraft(role: ComposerRole = 'user'): DraftMessage {
-  return { role: role, content: '' };
-}
-</script>
-
 <script lang="ts">
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import * as Select from '#lib/components/ui/select/index.ts';
 import { Textarea } from '#lib/components/ui/textarea/index.ts';
 import { ROLE_COLORS } from '#lib/data/conversation.ts';
+import { COMPOSER_ROLES, type ComposerRole, type DraftMessage } from '#lib/data/playground-request.ts';
 
-/**
- * One editable message in the request.
- *
- * Sibling to MessageList, which renders the same conversation read-only. The
- * role tints come from the same table so a role looks the same on both sides of
- * the page.
- */
-let {
-  message = $bindable(),
-  disabled = false,
-  onremove,
-}: {
+// One editable message in the request. MessageList renders the same
+// conversation read-only, and the role tints come from the same table, so that
+// a role looks the same on both sides of the page.
+
+interface Props {
   message: DraftMessage;
   disabled?: boolean;
-  /** Omitted for a message that cannot be removed - the last one standing. */
+
+  /**
+   * Left out for a message that cannot be removed, which is the last one
+   * standing.
+   */
   onremove?: () => void;
-} = $props();
+}
+
+let { message = $bindable(), disabled = false, onremove }: Props = $props();
 
 const PLACEHOLDERS: Record<ComposerRole, string> = {
   system: 'Instructions the model should follow.',
@@ -56,8 +31,8 @@ const PLACEHOLDERS: Record<ComposerRole, string> = {
 </script>
 
 <div class="flex items-start gap-2">
-	<!-- Not bind:value: bits-ui types the value as a bare string, and the one
-	     cast belongs here rather than spread over every read of message.role. -->
+	<!-- Set through the callback and not bound. bits-ui types the value as a bare
+	     string, and the one cast belongs here and not on every read of the role. -->
 	<Select.Root
 		type="single"
 		value={message.role}
@@ -84,7 +59,7 @@ const PLACEHOLDERS: Record<ComposerRole, string> = {
 		placeholder={PLACEHOLDERS[message.role]}
 		{disabled}
 		rows={3}
-		class="max-h-64 min-h-[76px] rounded-lg border-line-strong bg-surface-3 px-[11px] py-2 text-[13px] leading-[1.6] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+		class="max-h-64 min-h-[76px] px-[11px] py-2 text-[13px] leading-[1.6] {FIELD_BASE}"
 	/>
 
 	<button
@@ -92,7 +67,7 @@ const PLACEHOLDERS: Record<ComposerRole, string> = {
 		class="flex size-9 flex-none items-center justify-center rounded-lg border border-line-strong bg-surface-3 text-zinc-500 hover:bg-surface-4 hover:text-zinc-300 disabled:opacity-30"
 		aria-label="Remove message"
 		disabled={disabled || !onremove}
-		onclick={() => onremove?.()}
+		onclick={onremove}
 	>
 		<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
 	</button>

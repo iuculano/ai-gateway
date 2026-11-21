@@ -4,8 +4,9 @@ import UsersView from '#lib/components/analytics/users-view.svelte';
 import { page } from '$app/state';
 
 const filters = getAnalyticsFilters();
-// ?actor= narrows the list to one caller's users; ?user= opens one user under
-// it. Both are linked to from the overview and from this tab's own lists.
+
+// ?actor= narrows the list to one caller's users, and ?user= opens one user
+// under it. Both are linked to from the overview and from this tab's own lists.
 const actorId = $derived(page.url.searchParams.get('actor') ?? undefined);
 const userId = $derived(page.url.searchParams.get('user') ?? undefined);
 </script>

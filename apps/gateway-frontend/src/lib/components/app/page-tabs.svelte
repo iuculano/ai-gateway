@@ -1,22 +1,20 @@
 <script lang="ts">
 import type { Component, Snippet } from 'svelte';
 
-/**
- * Section tabs under a page header, one route each so a tab can be linked to.
- * Anything passed as children sits at the right end of the row.
- */
-let {
-  label,
-  tabs,
-  current,
-  children,
-}: {
-  /** Names the tab row for screen readers. */
+// Section tabs under a page header, one route each so that a tab can be linked
+// to. Anything passed as children sits at the right end of the row.
+
+interface Props {
+  /**
+   * Names the tab row for screen readers.
+   */
   label: string;
   tabs: { id: string; label: string; href: string; icon: Component<{ class?: string }> }[];
   current: string;
   children?: Snippet;
-} = $props();
+}
+
+let { label, tabs, current, children }: Props = $props();
 </script>
 
 <div class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-2 border-b border-line">

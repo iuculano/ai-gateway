@@ -5,18 +5,20 @@ import type { Log, LogListMeta } from '#lib/api/types.ts';
 import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import PageHeader from '#lib/components/app/page-header.svelte';
+import Pager from '#lib/components/app/pager.svelte';
+import RefreshButton from '#lib/components/app/refresh-button.svelte';
 import TableCard from '#lib/components/app/table-card.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
-import type { PayloadView } from '#lib/components/logs/log-row.svelte';
-import LogRow from '#lib/components/logs/log-row.svelte';
+import LogRow, { type PayloadView } from '#lib/components/logs/log-row.svelte';
 import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
 import { dashboard } from '#lib/state/dashboard.svelte.ts';
+import { PagedList } from '#lib/state/paged-list.svelte.ts';
 
 type StatusFilter = 'all' | 'complete' | 'failed' | 'incomplete';
 
 const PAGE_SIZE = 20;
 
-// Shared with LogRow so the header and the rows sit in one grid.
+// Shared with LogRow, so that the header and the rows sit in one grid.
 const COLS =
   '24px 150px 84px minmax(104px,0.7fr) minmax(140px,1.4fr) 96px 100px 76px 100px 96px 104px 100px 92px 84px 180px';
 
@@ -50,20 +52,33 @@ const VIEW_TABS = [
   { id: 'json' as const, label: 'JSON' },
 ];
 
+const auto = new AutoRefresh();
+
 let tab: StatusFilter = $state('all');
 let expandedLog: string | null = $state(null);
 
-// Set from the toolbar and read by every row, so the choice holds as the reader
-// moves between rows. Defaults to the conversation, which is what the panel is
-// being opened to see most of the time; JSON is one click away when it isn't.
+// Set from the toolbar and read by every row, so that the choice holds as the
+// reader moves between rows. It opens on the conversation, which is what a row
+// is opened to see most of the time.
 let payloadView: PayloadView = $state('simple');
-const auto = new AutoRefresh();
 
-let logs: Log[] = $state([]);
-let stats: Awaited<ReturnType<typeof countLogs>> | null = $state(null);
+let stats = $state<Awaited<ReturnType<typeof countLogs>> | null>(null);
 let statsError = $state(false);
 
-async function refreshStats() {
+const list = new PagedList<Log, LogListMeta>(
+  (after) => listLogs({ limit: PAGE_SIZE, after_id: after, status: tab === 'all' ? undefined : tab }),
+  'Failed to load logs.',
+);
+
+const matchingCount = $derived(tab === 'all' ? stats?.total : stats?.by_status[tab]);
+
+const filtered = $derived.by(() => {
+  const query = dashboard.search.trim().toLowerCase();
+
+  return list.rows.filter((log) => !query || `${log.model} ${log.provider} ${log.id}`.toLowerCase().includes(query));
+});
+
+async function refreshStats(): Promise<void> {
   try {
     stats = await countLogs();
     statsError = false;
@@ -73,141 +88,45 @@ async function refreshStats() {
   }
 }
 
-function displayCount(count: number | undefined) {
+/**
+ * A count for the toolbar, with an estimate marked as one.
+ */
+function displayCount(count: number | undefined): string {
   return count === undefined ? '—' : `${stats?.estimated ? '~' : ''}${count.toLocaleString()}`;
 }
 
-let meta: LogListMeta | null = $state(null);
-let loading = $state(false);
-let error: string | null = $state(null);
-
-/** Zero-based. Page 0 is the newest logs and is the only one auto-refresh tails. */
-let pageIndex = $state(0);
-
-/**
- * The `after_id` cursor that fetches each page past the first: cursors[i] opens
- * page i + 1. Page 0 needs none, being the head of the list.
- *
- * A stack rather than a single cursor, because this endpoint is cursor-paged
- * and cursors only walk one step. Keeping the ones already used is what lets
- * Previous go back without re-walking from the top.
- *
- * Every fetch is therefore a FORWARD scan, including the ones that move
- * backwards through the pages. That matters for more than tidiness: `more_data`
- * reports whether the scan direction has more rows, so paging backwards with
- * `before_id` would leave it answering "are there newer logs" at the exact
- * moment Next needs to know whether there are older ones.
- */
-let cursors: string[] = $state([]);
-let requestId = 0;
-
-function setStatus(value: StatusFilter) {
+function setStatus(value: StatusFilter): void {
   tab = value;
-  pageIndex = 0;
-  cursors = [];
-  meta = null;
   expandedLog = null;
-  load({ index: 0 });
+
+  void list.restart();
 }
 
-const matchingCount = $derived.by(() => (tab === 'all' ? stats?.total : stats?.by_status[tab]));
-
-/**
- * Loads one page.
- *
- * `silent` is what the auto-refresh timer uses: it leaves `loading` alone so
- * the table keeps showing the rows it has instead of blanking to a spinner
- * every few seconds.
- */
-async function load({ index = pageIndex, silent = false }: { index?: number; silent?: boolean } = {}) {
-  const request = ++requestId;
-
-  if (!silent) {
-    loading = true;
-    error = null;
-  }
-
-  try {
-    const after = index === 0 ? undefined : cursors[index - 1];
-    const result = await listLogs({ limit: PAGE_SIZE, after_id: after, status: tab === 'all' ? undefined : tab });
-
-    if (request !== requestId) return;
-    logs = result.data;
-    meta = result.meta;
-    pageIndex = index;
-    error = null;
-
-    // Collapse any open row: the id it belonged to is not on this page.
-    if (!silent) {
-      expandedLog = null;
-    }
-  } catch (err) {
-    if (request !== requestId) return;
-    const message = err instanceof Error ? err.message : 'Failed to load logs.';
-
-    // A background refresh that fails must not throw away the rows the reader
-    // is looking at, and must not retry into the same failure every few
-    // seconds. Rethrown so AutoRefresh keeps the stale data, says so once, and
-    // switches itself off.
-    if (silent && logs.length > 0) {
-      throw err instanceof Error ? err : new Error(message);
-    }
-
-    error = message;
-  } finally {
-    if (request === requestId) loading = false;
-  }
+function reload(): void {
+  void list.load();
+  void refreshStats();
 }
 
-/**
- * Steps one page older.
- *
- * The cursor is recorded at the index it opens before the fetch, and the tail
- * beyond it is dropped - paging forward from a page reached by going back
- * invalidates whatever was recorded past it.
- */
-function nextPage() {
-  if (!meta?.more_data || !meta.oldest_id || loading) return;
-
-  cursors = [...cursors.slice(0, pageIndex), meta.oldest_id];
-  load({ index: pageIndex + 1 });
+async function tail(): Promise<void> {
+  // The counts look after their own failures, so that they cannot stop the
+  // rows from being tailed.
+  await Promise.all([list.refresh(), refreshStats()]);
 }
 
-function previousPage() {
-  if (pageIndex === 0 || loading) return;
-  load({ index: pageIndex - 1 });
-}
-
-// Load once on mount - NOT $effect, which would re-run whenever the load
-// mutates loading state and hammer the endpoint on any error.
-onMount(() => {
-  load();
-  refreshStats();
+// A row that was open belongs to the page it was on.
+$effect(() => {
+  void list.pageIndex;
+  expandedLog = null;
 });
 
-// The timer lives in an $effect purely so its cleanup runs on both halves of
-// the switch: toggling it off tears the interval down, and so does leaving the
-// page. A bare setInterval would keep firing after navigation.
-//
-// Gated to page 0, which is the only page new logs can arrive on - cursors are
-// ids and every new log takes a higher one, so a later page returns the same
-// rows however much traffic lands meanwhile. Ticking there would spend a request
-// per interval to redraw identical data. Reading pageIndex here also
-// re-subscribes the effect, so the timer restarts on the page that needs it.
-$effect(() =>
-  auto.schedule(pageIndex === 0, async () => {
-    // refreshStats handles its own failures so counts cannot stop row refreshes.
-    await Promise.all([load({ silent: true }), refreshStats()]);
-  }),
-);
+// Only the first page is tailed, because it is the only one new logs can
+// arrive on. Ids only grow, so a later page returns the same rows however much
+// traffic lands in the meantime.
+$effect(() => auto.schedule(list.pageIndex === 0, tail));
 
-const filtered = $derived.by(() => {
-  const q = dashboard.search.trim().toLowerCase();
-  return logs.filter((l) => {
-    if (q && !`${l.model} ${l.provider} ${l.id}`.toLowerCase().includes(q)) return false;
-    return true;
-  });
-});
+// Loaded once on mount and not in an effect, which would run again whenever
+// the load changed its own state.
+onMount(reload);
 </script>
 
 <PageHeader
@@ -218,19 +137,19 @@ const filtered = $derived.by(() => {
 <TableCard
 	cols={COLS}
 	columns={COLUMNS}
-	{loading}
-	{error}
+	loading={list.loading || list.pending}
+	error={list.error}
 	isEmpty={filtered.length === 0}
 	loadingLabel="Loading logs…"
-	emptyTitle={logs.length === 0 ? 'No logs recorded yet' : 'No logs match your filters'}
-	onretry={() => load()}
-	showFooter={pageIndex > 0 || (meta?.more_data ?? false)}
+	emptyTitle={list.rows.length === 0 ? 'No logs recorded yet' : 'No logs match your filters'}
+	onretry={() => list.load()}
+	showFooter={list.pageIndex > 0 || list.hasMore}
 >
 	{#snippet toolbar()}
 		<FilterTabs tabs={TABS} bind:value={() => tab, setStatus} />
 		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
       <span class="inline-grid text-right font-medium text-zinc-100 tabular-nums">
-        <span class="invisible col-start-1 row-start-1" aria-hidden="true">{logs.length}</span>
+        <span class="invisible col-start-1 row-start-1" aria-hidden="true">{list.rows.length}</span>
         <span class="col-start-1 row-start-1">{filtered.length}</span>
       </span>
       of <span class="font-medium text-zinc-200 tabular-nums">{displayCount(matchingCount)}</span> matching logs
@@ -249,12 +168,9 @@ const filtered = $derived.by(() => {
 			<FilterTabs tabs={VIEW_TABS} bind:value={payloadView} />
 		</span>
 
-		<AutoRefreshToggle {auto} active={pageIndex === 0} pausedLabel="paused off page 1" />
+		<AutoRefreshToggle {auto} active={list.pageIndex === 0} pausedLabel="paused off page 1" />
 
-		<ToolbarButton disabled={loading} onclick={() => { load(); refreshStats(); }}>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Refresh
-		</ToolbarButton>
+		<RefreshButton disabled={list.loading} onclick={reload} />
 	{/snippet}
 
 	{#each filtered as log (log.id)}
@@ -268,20 +184,6 @@ const filtered = $derived.by(() => {
 	{/each}
 
 	{#snippet footer()}
-		<div class="flex items-center justify-center gap-3">
-			<ToolbarButton disabled={pageIndex === 0 || loading} onclick={previousPage}>
-				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9.5 4L6 8l3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-				Newer
-			</ToolbarButton>
-
-			<!-- 'Page N', not 'Page N of M'. The endpoint is cursor-paged and there
-			     is no count, so a total would have to be invented. -->
-			<span class="min-w-[64px] text-center text-[12.5px] text-zinc-500">Page {pageIndex + 1}</span>
-
-			<ToolbarButton disabled={!meta?.more_data || loading} onclick={nextPage}>
-				Older
-				<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M6.5 4L10 8l-3.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			</ToolbarButton>
-		</div>
+		<Pager list={list} />
 	{/snippet}
 </TableCard>

@@ -1,28 +1,30 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
 import type { Webhook } from '#lib/api/types.ts';
-import type { Pair } from '#lib/components/app/key-value-editor.svelte';
-import KeyValueEditor, { toPairs, toRecord } from '#lib/components/app/key-value-editor.svelte';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
+import KeyValueEditor from '#lib/components/app/key-value-editor.svelte';
 import * as Dialog from '#lib/components/ui/dialog/index.ts';
 import { Input } from '#lib/components/ui/input/index.ts';
 import { Label } from '#lib/components/ui/label/index.ts';
+import { type Pair, toPairs, toRecord } from '#lib/data/pairs.ts';
+import { endpointProblem } from '#lib/data/webhooks.ts';
 import { webhooks } from '#lib/state/webhooks.svelte.ts';
 
-/**
- * Create and edit are the same form over the same five fields, so they are one
- * component: `webhook` set means edit, and the title, the submit verb and the
- * request are the only things that differ.
- */
-let {
-  open = $bindable(false),
-  webhook = null,
-}: {
-  open?: boolean;
-  /** The endpoint being edited, or null to create a new one. */
-  webhook?: Webhook | null;
-} = $props();
+// One form for making a webhook and for editing one, since both are the same
+// five fields. With `webhook` set it edits.
 
-const editing = $derived(webhook !== null);
+interface Props {
+  open?: boolean;
+
+  /**
+   * The endpoint being edited, or null to make a new one.
+   */
+  webhook?: Webhook | null;
+}
+
+let { open = $bindable(false), webhook = null }: Props = $props();
+
+const FIELD_CLASS = `h-10 px-[13px] text-[13.5px] tracking-[-0.01em] ${FIELD_BASE}`;
 
 let name = $state('');
 let description = $state('');
@@ -31,9 +33,11 @@ let filterPairs: Pair[] = $state([]);
 let tagPairs: Pair[] = $state([]);
 let saving = $state(false);
 
-// Reset on open rather than on close, so the form is never seen re-populating
-// as the dialog animates away. Reads `webhook` too: reopening on a different
-// row must not leave the previous row's values in the boxes.
+const editing = $derived(webhook !== null);
+
+// Reset on opening and not on closing, so that the form is never seen filling
+// back in as the dialog animates away. The webhook is read here too, so that
+// reopening on a different row does not leave the last row's values behind.
 $effect(() => {
   if (open) {
     name = webhook?.name ?? '';
@@ -45,40 +49,18 @@ $effect(() => {
   }
 });
 
-const FIELD_CLASS =
-  'h-10 rounded-lg border-line-strong bg-surface-3 px-[13px] text-[13.5px] tracking-[-0.01em] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';
-
-/**
- * Endpoint validation is client-side only.
- *
- * The API takes `endpoint` as a bare string, so nothing downstream rejects a
- * typo - the worker simply POSTs to it and records whatever failure comes back.
- * Catching it here is what keeps that out of the delivery history.
- */
-function endpointProblem(value: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return 'Enter a full URL, including https://.';
-  }
-
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    return 'The endpoint must be an http:// or https:// URL.';
-  }
-
-  return null;
-}
-
-async function save() {
+async function save(): Promise<void> {
   if (!name.trim()) {
     toast.error('Give the webhook a name first.');
+
     return;
   }
 
   const problem = endpointProblem(endpoint.trim());
+
   if (problem) {
     toast.error(problem);
+
     return;
   }
 
@@ -89,10 +71,9 @@ async function save() {
 
   try {
     if (webhook) {
-      // `{}` rather than undefined for a map the user emptied: drizzle skips
-      // undefined columns on an update, so undefined would silently keep the
-      // old rules. An empty filter matches every event, which is the same thing
-      // no filter at all means.
+      // A map that was emptied is sent as an empty one. The backend skips a
+      // field that is undefined on an update, which would quietly keep the old
+      // rules. An empty filter matches every event, the same as no filter.
       await webhooks.update(webhook.id, {
         name: name.trim(),
         description: description.trim() || null,
@@ -107,8 +88,8 @@ async function save() {
         name: name.trim(),
         description: description.trim() || undefined,
         endpoint: endpoint.trim(),
-        filter,
-        tags,
+        filter: filter,
+        tags: tags,
       });
 
       toast.success('Webhook created');

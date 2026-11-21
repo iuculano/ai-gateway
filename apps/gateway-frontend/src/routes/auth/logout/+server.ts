@@ -1,44 +1,36 @@
 import { redirect } from '@sveltejs/kit';
 import { buildEndSessionUrl, revokeRefreshToken } from '#lib/server/oidc.ts';
 import { destroySession } from '#lib/server/session.ts';
-import type { RequestHandler } from './$types';
+import type { RequestEvent } from './$types';
 
 /**
- * Signs the user out of this app AND of the IDP.
+ * Signs the visitor out of this app and of the identity provider.
  *
- * Clearing local state alone is not a logout. /auth/login builds an
- * authorization request with no `prompt`, so an IDP whose own session is still
- * alive issues a code immediately and signs the user straight back in - they
- * see a flicker and remain logged in. Ending the IDP session is what makes the
- * button mean what it says.
+ * A POST and not a GET, so that a link on another site cannot sign anyone out.
+ * SvelteKit turns away a form posted from another origin, and the session
+ * cookie is not sent with one either.
  */
-export const GET: RequestHandler = async ({ cookies }) => {
-  // Read and clear in one step: whatever happens with the IDP below, this
-  // browser is logged out locally before the response leaves. A logout that
-  // half-fails must fail towards signed-out.
+export async function POST({ cookies }: RequestEvent): Promise<never> {
+  // Cleared first, so that whatever the identity provider does below, this
+  // browser is already signed out here.
   const session = await destroySession(cookies);
 
+  // Awaited even though it swallows its own failures. Left to finish after the
+  // response, it could lose a race with the process stopping and leave a
+  // long-lived credential valid.
   if (session?.refreshToken) {
-    // Awaited on purpose, even though revokeRefreshToken swallows its own
-    // failures. Best-effort describes how it handles a FAILURE, not whether it
-    // runs: firing it off unawaited would let the response return first and
-    // leave the call racing process teardown, and a revocation that never
-    // reaches the IDP leaves a long-lived credential valid.
-    //
-    // One round trip on an action a user takes rarely is worth that guarantee.
-    // The local session is already gone either way - it was cleared above - so
-    // this cannot leave anyone signed in.
     await revokeRefreshToken(session.refreshToken);
   }
 
-  if (session?.idToken) {
-    const endSession = await buildEndSessionUrl(session.idToken);
-    if (endSession) {
-      redirect(302, endSession, { external: true });
-    }
+  // Ending the provider's own session is what makes this a sign-out. Left
+  // alive, it would answer the login page with a fresh code at once and sign
+  // the visitor straight back in.
+  const endSession = session?.idToken ? await buildEndSessionUrl(session.idToken) : null;
+
+  // A 303, which is the redirect that turns the browser's POST back into a GET.
+  if (endSession) {
+    redirect(303, endSession, { external: true });
   }
 
-  // No ID token to present, or an IDP without RP-initiated logout: local state
-  // is gone, which is the most this can do.
-  redirect(302, '/auth/login');
-};
+  redirect(303, '/auth/login');
+}

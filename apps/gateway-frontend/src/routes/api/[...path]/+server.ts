@@ -1,109 +1,108 @@
-import type { RequestHandler } from '@sveltejs/kit';
-import { refreshSession, type Session } from '#lib/server/session.ts';
+import { refreshSession } from '#lib/server/session.ts';
 import { BACKEND_URL } from '$app/env/private';
+import type { RequestEvent } from './$types';
+
+// Where this route is mounted, which is swapped for the backend's /v1.
+const API_PREFIX = '/api';
+
+// The gateway's own controls are all spelled `ai-*`, from the caller's provider
+// key to the correlation ids on the way back. They are not authentication, so
+// passing them through gives the browser nothing the backend would not grant
+// this session on a direct call.
+const GATEWAY_HEADER_PREFIX = 'ai-';
+
+// What else goes on from the browser's request. The trace headers let browser
+// instrumentation join its trace to the gateway's, and the user agent is what
+// the backend's audit log shows for who did something.
+const FORWARDED_HEADERS = new Set(['content-type', 'user-agent', 'traceparent', 'tracestate']);
 
 /**
- * The gateway's own request/response controls, all spelled `ai-*`:
- * `ai-api-key` (the caller's UPSTREAM provider credential), `ai-base-url`,
- * the log and retry switches, and correlation handles on the way back. W3C
- * trace headers are also forwarded so browser-side instrumentation can join
- * its application trace to the gateway request.
- *
- * Forwarded verbatim in both directions. They are not authentication - the
- * session bearer below is - so passing them through gives the browser nothing
- * the backend would not already grant this session on a direct call.
+ * The headers that go on to the backend, before a session's token is added.
  */
-const GATEWAY_HEADER_PREFIX = 'ai-';
-const TRACE_HEADERS = new Set(['traceparent', 'tracestate']);
+function forwardedHeaders(request: Request, clientAddress: string | undefined): Headers {
+  const headers = new Headers();
 
-// The BFF proxy: forwards /api/* to the backend's /v1/* with the session's
-// bearer token attached. The browser never holds a token; the backend does
-// all real authn/authz on every request.
-const handler: RequestHandler = async ({ params, request, cookies, url, locals }) => {
-  // hooks.server.ts resolved and renewed this already, and 401s the request
-  // outright when there is no session.
-  let session = locals.session;
+  // Names arrive lower-cased, so the comparisons need no normalising.
+  for (const [name, value] of request.headers) {
+    if (FORWARDED_HEADERS.has(name) || name.startsWith(GATEWAY_HEADER_PREFIX)) {
+      headers.set(name, value);
+    }
+  }
+
+  // Set from the connection and never copied from the request, so that a
+  // browser cannot name its own address. The backend takes it only from a peer
+  // on its list of trusted proxies.
+  if (clientAddress) {
+    headers.set('x-forwarded-for', clientAddress);
+  }
+
+  return headers;
+}
+
+/**
+ * A copy of the headers with a session's access token added.
+ */
+function authorized(headers: Headers, accessToken: string): Headers {
+  const copy = new Headers(headers);
+  copy.set('authorization', `Bearer ${accessToken}`);
+
+  return copy;
+}
+
+/**
+ * Forwards /api/* to the backend's /v1/* with the session's token attached, so
+ * that the browser never holds one.
+ */
+async function proxy({ request, cookies, url, locals, getClientAddress }: RequestEvent): Promise<Response> {
+  const session = locals.session;
+
   if (!session) {
     return Response.json({ error: { code: 401, message: 'Not authenticated.' } }, { status: 401 });
   }
 
+  // The path goes on as it was asked for, still encoded. Rebuilt from the
+  // decoded route parameter, a `..%2F` in it would climb out of /v1 to whatever
+  // else the backend serves.
   const backend = BACKEND_URL ?? 'http://localhost:8080';
-  const target = `${backend}/v1/${params.path}${url.search}`;
+  const target = `${backend}/v1${url.pathname.slice(API_PREFIX.length)}${url.search}`;
 
-  // Read once, reused across both attempts. A stream could only be consumed
-  // by the first, which is what would otherwise make the retry below
-  // impossible for anything carrying a body.
+  // Read once, because a stream could not be sent again on the retry below.
   const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer();
+  const forwarded = forwardedHeaders(request, getClientAddress());
+  const init = { method: request.method, body: body };
 
-  const forward = (accessToken: string) => {
-    const headers = new Headers({ authorization: `Bearer ${accessToken}` });
+  let response = await fetch(target, { ...init, headers: authorized(forwarded, session.accessToken) });
 
-    const contentType = request.headers.get('content-type');
-    if (contentType) {
-      headers.set('content-type', contentType);
-    }
-
-    // Header names are lower-cased by Headers, so the prefix test needs no
-    // normalisation of its own.
-    request.headers.forEach((value, name) => {
-      if (name.startsWith(GATEWAY_HEADER_PREFIX) || TRACE_HEADERS.has(name)) {
-        headers.set(name, value);
-      }
-    });
-
-    return fetch(target, { method: request.method, headers: headers, body: body });
-  };
-
-  let response = await forward(session.accessToken);
-
-  /**
-   * The reactive half of renewal.
-   *
-   * Renewing ahead of expiry cannot see a token revoked at the IDP, a
-   * deactivated user, a rotated JWKS, or a session evicted from Valkey - all of
-   * which arrive here as a 401 on a token that looked valid moments ago.
-   *
-   * Only gateway authentication failures can be retried safely. An upstream
-   * provider's 401 is marked separately: our session was accepted and the
-   * handler already ran, so refreshing it would replay a failed inference.
-   *
-   * Never on 403: that is authorize() saying the token is fine and the caller
-   * lacks the scope, and a new token carries the same scopes. Retrying it would
-   * loop without ever changing the answer.
-   */
+  // Renewing ahead of expiry cannot see a token revoked at the identity
+  // provider or a signing key that was rotated. Those arrive here, as a 401 on
+  // a token that looked valid a moment ago.
+  //
+  // Only the gateway's own refusal is retried. A provider's 401 is marked as
+  // upstream, and by then the request has run, so a retry would replay a failed
+  // inference. A 403 is never retried either, because a new token carries the
+  // same scopes.
   if (response.status === 401 && response.headers.get('ai-error-source') !== 'upstream' && session.refreshToken) {
-    const renewed: Session | null = await refreshSession(cookies);
+    const renewed = await refreshSession(cookies);
 
     if (renewed && renewed.accessToken !== session.accessToken) {
-      session = renewed;
-      response = await forward(renewed.accessToken);
+      response = await fetch(target, { ...init, headers: authorized(forwarded, renewed.accessToken) });
     }
   }
 
-  // Rebuilt rather than passed through wholesale: the backend's hop-by-hop and
-  // transfer headers do not describe the response this handler is about to
-  // send, and copying content-length in particular breaks a streamed body.
-  const responseHeaders = new Headers({
-    'content-type': response.headers.get('content-type') ?? 'application/json',
-  });
+  // Rebuilt and not passed through whole. The backend's transfer headers do not
+  // describe the response sent from here, and a copied content-length breaks a
+  // streamed body.
+  const headers = new Headers({ 'content-type': response.headers.get('content-type') ?? 'application/json' });
 
-  response.headers.forEach((value, name) => {
+  for (const [name, value] of response.headers) {
     if (name.startsWith(GATEWAY_HEADER_PREFIX)) {
-      responseHeaders.set(name, value);
+      headers.set(name, value);
     }
-  });
+  }
 
-  // response.body is handed on unread, which is what keeps a text/event-stream
-  // completion streaming to the browser rather than arriving in one piece once
-  // the provider has finished.
-  return new Response(response.status === 204 ? null : response.body, {
-    status: response.status,
-    headers: responseHeaders,
-  });
-};
+  // The body is handed on unread, which keeps a completion streaming to the
+  // browser as it is produced.
+  return new Response(response.status === 204 ? null : response.body, { status: response.status, headers: headers });
+}
 
-export const GET = handler;
-export const POST = handler;
-export const PATCH = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export { proxy as DELETE, proxy as GET, proxy as PATCH, proxy as POST, proxy as PUT };

@@ -1,36 +1,45 @@
 <script lang="ts">
 import { MediaQuery } from 'svelte/reactivity';
 
-/**
- * An old-school demoscene sine scroller.
- *
- * The text runs right to left and each glyph rides a wave that is fixed in
- * SPACE, not in the string - so the letters ripple through the curve as they
- * travel, which is what the C64/Amiga intros actually did. A wave attached to
- * the string would just wobble the whole line up and down.
- */
-let {
-  text,
-  height = 132,
-}: {
+// An old-school demoscene sine scroller. The text runs right to left and each
+// glyph rides a wave that is fixed in space and not in the string, so the
+// letters ripple through the curve as they travel. A wave attached to the
+// string would only wobble the whole line up and down.
+
+interface Props {
   text: string;
-  /** Canvas height. Needs room for the font plus twice the amplitude. */
+
+  /**
+   * The canvas height, which needs room for the font and twice the amplitude.
+   */
   height?: number;
-} = $props();
+}
+
+interface Glyph {
+  char: string;
+  advance: number;
+}
+
+let { text, height = 132 }: Props = $props();
 
 const FONT_PX = 34;
 const FONT = `700 ${FONT_PX}px "Geist Mono Variable", ui-monospace, monospace`;
 const INK = '#10b981';
 
-/** Scroll speed, px per ms. ~90px/s reads without being a chore. */
+// Scroll speed in px per ms, which is about 90px a second.
 const SPEED = 0.09;
-/** Peak vertical travel, px either side of the middle. */
+
+// Peak vertical travel, in px either side of the middle.
 const AMPLITUDE = 21;
-/** Distance for one full wave, px. Roughly four characters per hump. */
+
+// The distance one full wave covers in px, roughly four characters to a hump.
 const WAVELENGTH = 190;
-/** Wave drift, radians per ms. Slow enough to look alive, not seasick. */
+
+// How fast the wave drifts, in radians per ms.
 const DRIFT = 0.0011;
-/** Blank run between repeats so the loop point does not read as a typo. */
+
+// The blank run between repeats, so that the loop point does not read as a
+// typo.
 const GAP = 140;
 
 const TAU = Math.PI * 2;
@@ -40,20 +49,59 @@ const reduced = new MediaQuery('prefers-reduced-motion: reduce');
 let canvas: HTMLCanvasElement | undefined = $state();
 let width = $state(0);
 
-// Lives outside the frame loop: a resize tears the loop down and starts a new
-// one, and the text should carry on from where it was rather than snap back.
+// Kept outside the frame loop. A resize tears the loop down and starts a new
+// one, and the text should carry on from where it was.
 let travelled = 0;
 let phase = 0;
 
+// Each glyph's advance and the length of one run of the text, measured once
+// and not on every frame.
+let glyphs: Glyph[] = [];
+let run = 0;
+
+function measure(ctx: CanvasRenderingContext2D): void {
+  glyphs = [];
+  run = GAP;
+
+  for (const char of text) {
+    const advance = ctx.measureText(char).width;
+
+    glyphs.push({ char: char, advance: advance });
+    run += advance;
+  }
+}
+
+function render(ctx: CanvasRenderingContext2D): void {
+  ctx.clearRect(0, 0, width, height);
+
+  // Copies tile leftwards from the one entering at the right edge, so that the
+  // line is full from the first frame. Each sits exactly one run behind the
+  // last, which makes the wrap seamless.
+  const copies = Math.ceil(width / run) + 1;
+
+  for (let copy = 0; copy < copies; copy++) {
+    let x = width - travelled - copy * run;
+
+    for (const glyph of glyphs) {
+      if (x > -glyph.advance && x < width) {
+        ctx.fillText(glyph.char, x, height / 2 + Math.sin((x / WAVELENGTH) * TAU + phase) * AMPLITUDE);
+      }
+
+      x += glyph.advance;
+    }
+  }
+}
+
 $effect(() => {
   const element = canvas;
-  if (!element || width === 0) return;
+  const ctx = element?.getContext('2d');
 
-  const ctx = element.getContext('2d');
-  if (!ctx) return;
+  if (!element || !ctx || width === 0) {
+    return;
+  }
 
-  // Assigning width/height also resets the transform, so the DPR scale below
-  // applies once per setup rather than compounding across resizes.
+  // Assigning the size also resets the transform, so the scale below applies
+  // once per setup and does not compound across resizes.
   const dpr = window.devicePixelRatio || 1;
   element.width = Math.round(width * dpr);
   element.height = Math.round(height * dpr);
@@ -64,54 +112,27 @@ $effect(() => {
   ctx.shadowColor = INK;
   ctx.shadowBlur = 14;
 
-  const chars = [...text];
+  measure(ctx);
 
-  /** Per-glyph advances, measured once - this redraws the whole line 60x a second. */
-  const measure = () => chars.map((char) => ({ char, advance: ctx.measureText(char).width }));
-  const runOf = (glyphs: { advance: number }[]) => glyphs.reduce((sum, g) => sum + g.advance, 0) + GAP;
-
-  let glyphs = measure();
-  let run = runOf(glyphs);
+  // The webfont may still be loading, which would leave the fallback's advances
+  // in place, so the text is measured again once it lands.
   let cancelled = false;
 
-  // The webfont may still be loading, which would freeze the fallback's advances
-  // in place. Re-measure once it lands.
-  document.fonts?.ready.then(() => {
-    if (cancelled) return;
-    glyphs = measure();
-    run = runOf(glyphs);
-  });
-
-  const render = () => {
-    ctx.clearRect(0, 0, width, height);
-    const midY = height / 2;
-
-    // Copies tile leftwards from the one entering at the right edge, so the
-    // line is full from the first frame instead of scrolling in from an empty
-    // canvas. Each sits exactly one run behind the last, so the wrap is seamless.
-    const copies = Math.ceil(width / run) + 1;
-
-    for (let copy = 0; copy < copies; copy++) {
-      let x = width - travelled - copy * run;
-
-      for (const glyph of glyphs) {
-        if (x > -glyph.advance && x < width) {
-          ctx.fillText(glyph.char, x, midY + Math.sin((x / WAVELENGTH) * TAU + phase) * AMPLITUDE);
-        }
-        x += glyph.advance;
-      }
+  void document.fonts.ready.then(() => {
+    if (!cancelled) {
+      measure(ctx);
     }
-  };
+  });
 
   let last = performance.now();
   let frame = requestAnimationFrame(function step(now) {
-    const dt = now - last;
+    const elapsed = now - last;
     last = now;
 
-    travelled = (travelled + dt * SPEED) % run;
-    phase = (phase + dt * DRIFT) % TAU;
+    travelled = (travelled + elapsed * SPEED) % run;
+    phase = (phase + elapsed * DRIFT) % TAU;
 
-    render();
+    render(ctx);
     frame = requestAnimationFrame(step);
   });
 
@@ -129,7 +150,7 @@ $effect(() => {
 			{text}
 		</p>
 	{:else}
-		<!-- The canvas is decoration; the words themselves go to screen readers. -->
+		<!-- The canvas is decoration, and the words themselves go to screen readers. -->
 		<span class="sr-only">{text}</span>
 		<canvas bind:this={canvas} class="block" style:width="{width}px" style:height="{height}px" aria-hidden="true"
 		></canvas>

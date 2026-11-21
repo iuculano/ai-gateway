@@ -2,46 +2,27 @@
 import type { DecisionAnswer, DecisionQuestion } from '#lib/api/decisions.ts';
 import DecisionAnswers from '#lib/components/playground/decision-answers.svelte';
 import { QUESTION_TYPE_COLORS } from '#lib/data/decision-questions.ts';
+import { asRecord, embeddingDimensions, embeddingInputs, embeddingsOf } from '#lib/data/log-payloads.ts';
 
-/** The Simple view of a decision or embedding payload. Chat payloads use MessageList instead. */
-let {
-  operation,
-  kind,
-  payload,
-}: {
+// The Simple view of a decision or embedding payload. Chat payloads use
+// MessageList.
+
+interface Props {
   operation: 'embedding' | 'decision';
   kind: 'request' | 'response';
   payload: unknown;
-} = $props();
+}
 
-const record = $derived(
-  typeof payload === 'object' && payload !== null
-    ? (payload as Record<string, unknown>)
-    : ({} as Record<string, unknown>),
-);
-
-const questions = $derived(Array.isArray(record.questions) ? (record.questions as DecisionQuestion[]) : []);
-const answers = $derived(Array.isArray(record.answers) ? (record.answers as DecisionAnswer[]) : []);
-
-const inputs = $derived(
-  typeof record.input === 'string'
-    ? [record.input]
-    : Array.isArray(record.input)
-      ? record.input.filter((value): value is string => typeof value === 'string')
-      : [],
-);
-
-const embeddings = $derived(Array.isArray(record.data) ? (record.data as { embedding?: unknown }[]) : []);
-
-// A float array, or base64 of little-endian float32s at four bytes each.
-const dimensions = $derived.by(() => {
-  const first = embeddings[0]?.embedding;
-  if (Array.isArray(first)) return first.length;
-  if (typeof first === 'string') return Math.floor(atob(first).length / 4);
-  return null;
-});
+let { operation, kind, payload }: Props = $props();
 
 const CAPTION_CLASS = 'text-[10.5px] font-medium tracking-[.05em] text-zinc-600 uppercase';
+
+const record = $derived(asRecord(payload));
+const questions = $derived(Array.isArray(record.questions) ? (record.questions as DecisionQuestion[]) : []);
+const answers = $derived(Array.isArray(record.answers) ? (record.answers as DecisionAnswer[]) : []);
+const inputs = $derived(embeddingInputs(payload));
+const embeddings = $derived(embeddingsOf(payload));
+const dimensions = $derived(embeddingDimensions(payload));
 </script>
 
 {#snippet empty()}

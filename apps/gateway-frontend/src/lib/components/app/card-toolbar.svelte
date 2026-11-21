@@ -1,13 +1,9 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * The toolbar row at the top of a page-level card.
- *
- * TableCard and custom cards both render through this component so their
- * controls share one source of truth for wrapping, spacing, padding, and the
- * divider below the row.
- */
+// The toolbar row at the top of a page-level card. TableCard and custom cards
+// both render through it, so that wrapping, spacing and the divider below are
+// decided in one place.
 let { children }: { children: Snippet } = $props();
 </script>
 

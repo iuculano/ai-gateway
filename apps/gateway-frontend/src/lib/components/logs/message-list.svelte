@@ -2,43 +2,40 @@
 import { ROLE_COLORS, type Turn } from '#lib/data/conversation.ts';
 import MarkdownText from './markdown-text.svelte';
 
-/**
- * The 'Simple' rendering of a stored payload: the conversation, without the
- * parameters wrapped around it.
- *
- * Roles are tinted rather than labelled with colour alone - the label carries
- * the meaning, the tint only makes the alternation easy to scan.
- */
-let {
-  turns,
-  class: className = 'max-h-72',
-  autoscroll = false,
-  markdown = false,
-}: {
+// The Simple rendering of a stored payload, which is the conversation without
+// the parameters wrapped around it. Each role carries its label, and the tint
+// is only there to make the alternation easy to scan.
+
+interface Props {
   turns: Turn[];
+
   /**
-   * Height override. A log row can only afford the 72 that is the default; a
-   * page whose whole purpose is the transcript can afford more.
+   * Overrides the height. A log row can only afford the default, where a page
+   * whose whole purpose is the transcript can afford more.
    */
   class?: string;
+
   /**
-   * Pins the view to the newest text as it grows, for a response still
-   * streaming in. Off by default - a stored payload is not going anywhere, and
-   * moving a reader's scroll position under them would be wrong.
+   * Pins the view to the newest text as it grows, for a response that is still
+   * streaming in. It is off by default, because a stored payload is not going
+   * anywhere and a reader's scroll position should not move under them.
    */
   autoscroll?: boolean;
   markdown?: boolean;
-} = $props();
+}
+
+let { turns, class: className = 'max-h-72', autoscroll = false, markdown = false }: Props = $props();
 
 let container: HTMLDivElement | null = $state(null);
 
-// The last turn's text is read explicitly so the effect re-runs on every token
-// appended to it, not only when a whole turn is added. Without that a growing
-// message would scroll off the bottom of its own box and leave the reader
-// watching a stationary first line.
 $effect(() => {
-  if (!autoscroll || !container) return;
+  if (!autoscroll || !container) {
+    return;
+  }
 
+  // The last turn's text is read as well as the count, so that this runs on
+  // every token added to it and not only when a whole turn arrives. Without
+  // that a growing message would scroll off the bottom of its own box.
   void turns.length;
   void turns.at(-1)?.text;
 

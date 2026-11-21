@@ -1,18 +1,17 @@
 <script lang="ts">
 import * as Select from '#lib/components/ui/select/index.ts';
 
-/** Fills the form with a ready-made request. */
-let {
-  examples,
-  onpick,
-  disabled = false,
-}: {
+// Fills the form with a ready-made request.
+
+interface Props {
   examples: { label: string }[];
   onpick: (index: number) => void;
   disabled?: boolean;
-} = $props();
+}
 
-// Reset after every pick so choosing the same example twice still fires.
+let { examples, onpick, disabled = false }: Props = $props();
+
+// Reset after every pick, so that choosing the same example twice still fires.
 let value = $state('');
 </script>
 

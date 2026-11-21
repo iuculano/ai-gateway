@@ -1,28 +1,24 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * The strip of StatCards above a table.
- *
- * The default uses four columns, whatever the page puts in it. A per-page column count
- * would make a card on a two-stat page twice the width of one on a four-stat
- * page, which is the drift this is meant to remove - a stat card should be the
- * same object everywhere. Pages with fewer than four simply leave the tail of
- * the row empty, which is what the keys page already did.
- * Compact inline summaries use fewer columns on narrow screens to keep their labels readable.
- */
-let {
-  children,
-  compact = false,
-  columns = 4,
-}: {
+// The strip of StatCards above a table. It is four columns whatever the page
+// puts in it, because a column count per page would make a card on a two-stat
+// page twice as wide as one on a four-stat page. Compact summaries use fewer
+// columns on narrow screens, to keep their labels readable.
+
+interface Props {
   children: Snippet;
   compact?: boolean;
-  /** Number of inline summaries across on wide screens. */
-  columns?: 4 | 5 | 6;
-} = $props();
 
-// Spelled out so Tailwind sees each class.
+  /**
+   * How many inline summaries sit across on wide screens.
+   */
+  columns?: 4 | 5 | 6;
+}
+
+let { children, compact = false, columns = 4 }: Props = $props();
+
+// Spelled out so that Tailwind sees each class.
 const WIDE_COLUMNS = { 4: '2xl:grid-cols-4', 5: '2xl:grid-cols-5', 6: '2xl:grid-cols-6' };
 </script>
 

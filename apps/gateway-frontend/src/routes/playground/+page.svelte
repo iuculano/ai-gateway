@@ -1,20 +1,16 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
 import { toast } from 'svelte-sonner';
-import type { ChatCompletionMessage, ChatCompletionRequest, GatewayHeaders } from '#lib/api/chat-completions.ts';
+import type { ChatCompletionRequest, GatewayHeaders } from '#lib/api/chat-completions.ts';
 import { getLogRequest } from '#lib/api/logs.ts';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import PageHeader from '#lib/components/app/page-header.svelte';
 import Panel from '#lib/components/app/panel.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
 import ExamplePicker from '#lib/components/playground/example-picker.svelte';
 import JsonEditor from '#lib/components/playground/json-editor.svelte';
-import type { DraftMessage } from '#lib/components/playground/message-editor.svelte';
-import MessageEditor, {
-  COMPOSER_ROLES,
-  type ComposerRole,
-  emptyDraft,
-} from '#lib/components/playground/message-editor.svelte';
+import MessageEditor from '#lib/components/playground/message-editor.svelte';
 import ModelPicker from '#lib/components/playground/model-picker.svelte';
 import PlaygroundTabs from '#lib/components/playground/playground-tabs.svelte';
 import type { PromptSelection } from '#lib/components/playground/prompt-picker.svelte';
@@ -27,135 +23,114 @@ import { Switch } from '#lib/components/ui/switch/index.ts';
 import { toResponsePayload } from '#lib/data/completion.ts';
 import { responseTurns } from '#lib/data/conversation.ts';
 import { CHAT_EXAMPLES } from '#lib/data/playground-examples.ts';
+import {
+  blankDrafts,
+  type DraftMessage,
+  draftsFrom,
+  emptyDraft,
+  fieldsOutsideForm,
+  formJson,
+  parseJsonObject,
+  samplingError,
+  toMessages,
+} from '#lib/data/playground-request.ts';
 import { PlaygroundRun } from '#lib/state/playground-run.svelte.ts';
 import { webhooks } from '#lib/state/webhooks.svelte.ts';
 import { page } from '$app/state';
 
-/**
- * The one field style this page uses, matching the create-key dialog's.
- *
- * Declared once rather than per input: the settings rail has six of them and
- * they were never going to stay in step by hand.
- */
-const FIELD_CLASS =
-  'h-9 rounded-lg border-line-strong bg-surface-3 px-[11px] text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';
+// The one field style this page uses, matching the create-key dialog's.
+const FIELD_CLASS = `h-9 px-[11px] text-[12.5px] ${FIELD_BASE}`;
 
 const MONO_FIELD_CLASS = `${FIELD_CLASS} font-mono`;
 
-// The request. Starts with a system and a user message because that is the
-// shape almost every first request has; blanks are dropped on send, so the
-// system row costs nothing if it goes unused.
-let drafts: DraftMessage[] = $state([emptyDraft('system'), emptyDraft('user')]);
-
-// Each column sends the same request with its own model and provider credential.
+// Each column sends the same request with its own model and provider
+// credential.
 const MAX_COMPARISONS = 4;
+
+const NO_WEBHOOK = '__none__';
+
+// The request body can be edited as a form or as raw JSON. Model, prompt,
+// streaming and caching stay in their own controls either way.
+const MODE_TABS = [
+  { id: 'form' as const, label: 'Form' },
+  { id: 'json' as const, label: 'JSON' },
+];
+
+// The request. Blank messages are dropped on send, so the system row costs
+// nothing if it goes unused.
+let drafts: DraftMessage[] = $state(blankDrafts());
+let mode: 'form' | 'json' = $state('form');
+let requestJson = $state('');
+
 let comparisons = $state([new PlaygroundRun('openai/gpt-5')]);
 const running = $derived(comparisons.some((run) => run.running));
-
-onDestroy(stop);
 
 let stream = $state(true);
 let cacheEnabled = $state(false);
 
-/** The stored prompt to expand, or null to send the messages as written. */
+// The stored prompt to expand, or null to send the messages as written.
 let promptSelection: PromptSelection | null = $state(null);
 
-/**
- * The webhook to notify about this request, via ai-webhook-id.
- *
- * Queues one delivery for the log this request writes. Nothing fans out
- * automatically yet, so naming one here is currently the only way to put work
- * in the outbox.
- */
-const NO_WEBHOOK = '__none__';
+// The webhook to notify about this request, through ai-webhook-id. It queues
+// one delivery for the log this request writes. Nothing fans out automatically
+// yet, so naming one here is the only way to put work in the outbox.
 let webhookId = $state(NO_WEBHOOK);
+
+// A cleared numeric field is undefined, so that the provider's default stays
+// unset.
+let temperature = $state<number | undefined>(undefined);
+let maxTokens = $state<number | undefined>(undefined);
+let topP = $state<number | undefined>(undefined);
+const sampling = $derived({ temperature: temperature, topP: topP, maxTokens: maxTokens });
+
+onDestroy(stop);
 
 onMount(() => {
   webhooks.endpoints.ensureLoaded();
 
   // The logs page links here with ?from=<log id> to replay a stored request.
   const from = page.url.searchParams.get('from');
-  if (from) void loadFromLog(from);
-});
-
-// Normalize cleared numeric bindings to undefined so provider defaults stay unset.
-let temperature = $state<number | undefined>(undefined);
-let maxTokens = $state<number | undefined>(undefined);
-let topP = $state<number | undefined>(undefined);
-
-/**
- * One draft, as the request's discriminated union.
- *
- * Built per role rather than spread from a single object literal: `role` here
- * is a union of four literals, and an object typed that way does not narrow to
- * any one member of the union it has to satisfy.
- */
-function toMessage(draft: DraftMessage): ChatCompletionMessage {
-  const content = draft.content.trim();
-
-  switch (draft.role) {
-    case 'system':
-      return { role: 'system', content: content };
-    case 'developer':
-      return { role: 'developer', content: content };
-    case 'assistant':
-      return { role: 'assistant', content: content };
-    default:
-      return { role: 'user', content: content };
+  if (from) {
+    void loadFromLog(from);
   }
-}
+});
 
 /**
  * The chosen stored prompt as a request field.
- *
- * A reference, not the rendered text. The gateway expands it with the same
- * code path any other caller would get, built-ins included.
  */
-function promptField() {
-  return promptSelection
-    ? {
-        prompt: {
-          name: promptSelection.name,
-          version: promptSelection.version,
-          variables: promptSelection.variables,
-        },
-      }
-    : {};
+function promptField(): Pick<ChatCompletionRequest, 'prompt'> {
+  if (!promptSelection) {
+    return {};
+  }
+
+  // A reference and not the rendered text. The gateway expands it with the
+  // same code path any other caller would get, built-ins included.
+  return {
+    prompt: {
+      name: promptSelection.name,
+      version: promptSelection.version,
+      variables: promptSelection.variables,
+    },
+  };
 }
 
 /**
- * The request body, or null when the form is not ready to send.
- *
- * Empty messages are dropped rather than sent: a blank system row is the
- * page's own default, and forwarding it would put an empty instruction in front
- * of every conversation started here.
+ * The form as a request body, or null after telling the reader why it cannot
+ * be sent.
  */
-function buildBody(): ChatCompletionRequest | null {
-  if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
-    toast.error('Temperature must be between 0 and 2.');
-    return null;
-  }
+function formBody(): ChatCompletionRequest | null {
+  const messages = toMessages(drafts);
+  const problem = samplingError(sampling) ?? (messages.length === 0 ? 'Write at least one message.' : null);
 
-  if (topP !== undefined && (!Number.isFinite(topP) || topP < 0 || topP > 1)) {
-    toast.error('Top P must be between 0 and 1.');
-    return null;
-  }
+  if (problem) {
+    toast.error(problem);
 
-  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) {
-    toast.error('Max completion tokens must be a positive safe integer.');
-    return null;
-  }
-
-  const messages = drafts.filter((draft) => draft.content.trim().length > 0).map(toMessage);
-
-  if (messages.length === 0) {
-    toast.error('Write at least one message.');
     return null;
   }
 
   return {
-    // Replaced by every run with its own model - that substitution is what
-    // makes compare mode "the same request, several models" by construction.
+    // Replaced by every run with its own model. That substitution is what
+    // makes compare mode the same request to several models by construction.
     model: '',
     messages: messages,
     ...promptField(),
@@ -165,84 +140,115 @@ function buildBody(): ChatCompletionRequest | null {
   };
 }
 
+/**
+ * The request JSON as an object, or null after telling the reader it is not
+ * one.
+ */
+function parseRequestJson(): Record<string, unknown> | null {
+  const parsed = parseJsonObject(requestJson);
+
+  if (!parsed) {
+    toast.error('The request JSON must be a valid object.');
+  }
+
+  return parsed;
+}
+
+/**
+ * The JSON body as sent. The gateway validates it, and its 400 says what is
+ * wrong.
+ */
+function jsonBody(): ChatCompletionRequest | null {
+  const parsed = parseRequestJson();
+
+  return parsed ? ({ ...parsed, model: '', ...promptField() } as ChatCompletionRequest) : null;
+}
+
 function buildHeaders(): GatewayHeaders {
   return {
-    // Replaced by every run with its own credential, the same way `model` is.
+    // Replaced by every run with its own credential, the same way the model is.
     'ai-api-key': '',
     'ai-cache-enabled': String(cacheEnabled),
     ...(webhookId !== NO_WEBHOOK ? { 'ai-webhook-id': webhookId } : {}),
   };
 }
 
-async function run() {
-  if (running) return;
+async function run(): Promise<void> {
+  if (running) {
+    return;
+  }
 
   const targets = comparisons.filter((entry) => entry.model.trim().length > 0);
   if (targets.length === 0) {
     toast.error('Name at least one model to send this to.');
+
     return;
   }
 
-  // Per column, because each spends its own credential. Named rather than
-  // counted: with four columns, "a key is missing" does not say which one.
+  // Checked per column, because each spends its own credential. The models are
+  // named, since with four columns "a key is missing" does not say which one.
   const unkeyed = targets.filter((entry) => entry.apiKey.trim().length === 0);
   if (unkeyed.length > 0) {
     toast.error(`Paste the provider API key for ${unkeyed.map((entry) => entry.model.trim()).join(', ')}.`);
+
     return;
   }
 
-  const body = mode === 'json' ? jsonBody() : buildBody();
-  if (!body) return;
+  const body = mode === 'json' ? jsonBody() : formBody();
+  if (!body) {
+    return;
+  }
 
   const headers = buildHeaders();
 
-  // In flight together, not one after another: the point of comparing is to see
-  // the answers arrive against each other. PlaygroundRun.send never throws, so
-  // one provider refusing a key cannot cancel the rest.
+  // In flight together, because the point of comparing is to see the answers
+  // arrive against each other. PlaygroundRun.send never throws, so one provider
+  // refusing a key cannot cancel the rest.
   await Promise.all(targets.map((entry) => entry.send(headers, body, stream)));
 }
 
-function stop() {
+function stop(): void {
   for (const entry of comparisons) {
     entry.stop();
   }
 }
 
-function addComparison() {
-  if (comparisons.length >= MAX_COMPARISONS) return;
-  comparisons.push(new PlaygroundRun(''));
+function addComparison(): void {
+  if (comparisons.length < MAX_COMPARISONS) {
+    comparisons.push(new PlaygroundRun(''));
+  }
 }
 
-function removeComparison(index: number) {
+function removeComparison(index: number): void {
   comparisons = comparisons.filter((_, position) => position !== index);
 }
 
 /**
- * Loads a stored request off a log, for re-running it against another model.
- *
- * The stored payload is what the gateway actually sent, which matters: a
- * request that named a prompt was already expanded into a system message before
- * it was logged, so replaying it reproduces the historical wording rather than
- * whatever the active prompt version says today.
+ * Loads a stored request off a log, for running it again against another
+ * model.
  *
  * @param id
  * The log to read the request from.
  */
-async function loadFromLog(id: string) {
+async function loadFromLog(id: string): Promise<void> {
+  // The stored payload is what the gateway sent. A request that named a prompt
+  // was expanded into a system message before it was logged, so replaying it
+  // reproduces the wording of the time and not the active prompt version.
   try {
     const payload = (await getLogRequest(id)) as Partial<ChatCompletionRequest> | null;
 
     if (!payload?.messages?.length) {
       toast.error('That log has no stored request to replay.');
+
       return;
     }
 
     applyRequest(payload);
 
-    if (typeof payload.model === 'string' && payload.model.length > 0) {
-      // Seeded rather than overwritten wholesale. The original model is the
-      // baseline you are comparing a candidate against.
-      if (comparisons[0]) comparisons[0].model = payload.model;
+    // The first column is seeded and the others are left alone. The original
+    // model is the baseline a candidate is compared against.
+    if (payload.model && comparisons[0]) {
+      comparisons[0].model = payload.model;
     }
 
     toast.success('Loaded the request from that log');
@@ -251,90 +257,37 @@ async function loadFromLog(id: string) {
   }
 }
 
-/** Fills the form from a request body. Fields the form has no place for are ignored. */
-function applyRequest(payload: Partial<ChatCompletionRequest>) {
-  const messages = (payload.messages ?? [])
-    .filter((message): message is Extract<ChatCompletionMessage, { role: ComposerRole }> =>
-      (COMPOSER_ROLES as readonly string[]).includes(message.role),
-    )
-    .map((message) => ({
-      role: message.role,
-      // Content can arrive as parts rather than a string. The composer edits
-      // text, so the parts are flattened rather than dropped.
-      content:
-        typeof message.content === 'string'
-          ? message.content
-          : (message.content ?? []).map((part) => ('text' in part ? part.text : '')).join(''),
-    }));
-
-  drafts = messages.length > 0 ? messages : [emptyDraft('system'), emptyDraft('user')];
+/**
+ * Fills the form from a request body. Fields the form has no place for are
+ * ignored.
+ */
+function applyRequest(payload: Partial<ChatCompletionRequest>): void {
+  drafts = draftsFrom(payload.messages ?? []);
   temperature = payload.temperature ?? undefined;
   maxTokens = payload.max_completion_tokens ?? undefined;
   topP = payload.top_p ?? undefined;
 }
 
-// The request body can be edited as a form or as raw JSON. Model, prompt,
-// streaming and caching stay in their own controls either way.
-const MODE_TABS = [
-  { id: 'form' as const, label: 'Form' },
-  { id: 'json' as const, label: 'JSON' },
-];
-let mode: 'form' | 'json' = $state('form');
-let requestJson = $state('');
-
-// The body fields the form can show. Anything else only survives in JSON.
-const FORM_FIELDS = ['messages', 'temperature', 'top_p', 'max_completion_tokens'];
-
-function formToJson(): string {
-  // JSON.stringify drops the parameters left unset.
-  return JSON.stringify(
-    {
-      messages: drafts.filter((draft) => draft.content.trim().length > 0).map(toMessage),
-      temperature: temperature,
-      top_p: topP,
-      max_completion_tokens: maxTokens,
-    },
-    null,
-    2,
-  );
-}
-
-/** The JSON as an object, or null after telling the reader what's wrong. */
-function parseRequestJson(): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(requestJson);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Reported below.
+function setMode(next: 'form' | 'json'): void {
+  if (next === mode) {
+    return;
   }
 
-  toast.error('The request JSON must be a valid object.');
-  return null;
-}
-
-/** The JSON body as sent. The gateway validates it, and its 400 says what's wrong. */
-function jsonBody(): ChatCompletionRequest | null {
-  const parsed = parseRequestJson();
-  return parsed ? ({ ...parsed, model: '', ...promptField() } as ChatCompletionRequest) : null;
-}
-
-function setMode(next: 'form' | 'json') {
-  if (next === mode) return;
-
   if (next === 'json') {
-    requestJson = formToJson();
+    requestJson = formJson(drafts, sampling);
     mode = 'json';
+
     return;
   }
 
   const parsed = parseRequestJson();
-  if (!parsed) return;
+  if (!parsed) {
+    return;
+  }
 
   applyRequest(parsed as Partial<ChatCompletionRequest>);
 
-  const dropped = Object.keys(parsed).filter((key) => !FORM_FIELDS.includes(key) && key !== 'model');
+  const dropped = fieldsOutsideForm(parsed);
   if (dropped.length > 0) {
     toast.warning(`The form has no fields for ${dropped.join(', ')}, so they were dropped.`);
   }
@@ -342,31 +295,45 @@ function setMode(next: 'form' | 'json') {
   mode = 'form';
 }
 
-function applyExample(index: number) {
-  const example = CHAT_EXAMPLES[index];
-  if (!example) return;
+/**
+ * Replaces the messages, keeping the JSON view in step when it is the one
+ * showing.
+ */
+function setDrafts(next: DraftMessage[]): void {
+  drafts = next;
 
-  drafts = example.messages.map((message) => ({ ...message }));
-  if (mode === 'json') requestJson = formToJson();
+  if (mode === 'json') {
+    requestJson = formJson(drafts, sampling);
+  }
 }
 
-function clear() {
-  if (running) return;
+function applyExample(index: number): void {
+  const example = CHAT_EXAMPLES[index];
 
-  drafts = [emptyDraft('system'), emptyDraft('user')];
-  if (mode === 'json') requestJson = formToJson();
+  if (example) {
+    setDrafts(example.messages.map((message) => ({ ...message })));
+  }
+}
+
+function clear(): void {
+  if (running) {
+    return;
+  }
+
+  setDrafts(blankDrafts());
+
   for (const entry of comparisons) {
     entry.reset();
   }
 }
 
-function addMessage() {
+function addMessage(): void {
   // Alternating, because the reason to add a message under a user turn is
   // almost always to write the assistant's half of a few-shot example.
   drafts.push(emptyDraft(drafts.at(-1)?.role === 'user' ? 'assistant' : 'user'));
 }
 
-function onKeydown(event: KeyboardEvent) {
+function onKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     event.preventDefault();
     run();
@@ -494,9 +461,9 @@ function onKeydown(event: KeyboardEvent) {
 			{/each}
 
 			{#if comparisons.length < MAX_COMPARISONS}
-				<!-- A tile in the grid rather than a button beneath it: adding a model
-				     adds a column, and the control that does it should occupy the space
-				     the column will take. -->
+				<!-- A tile in the grid and not a button beneath it. Adding a model adds
+				     a column, and the control that does it sits where the column will
+				     go. -->
 				<button
 					type="button"
 					class="flex min-h-[120px] w-full items-center justify-center gap-[7px] rounded-[9px] border border-dashed border-line-strong text-[12.5px] text-zinc-500 hover:border-zinc-700 hover:text-zinc-300 disabled:opacity-40"
@@ -515,9 +482,9 @@ function onKeydown(event: KeyboardEvent) {
 	     out of view, which is the wrong thing to lose while changing them.
 	     The offset covers the 57px topbar plus main's own top padding.
 
-	     [&>*]:shrink-0 is load-bearing: these are flex children of a capped
-	     column, so without it they shrink to fit instead of overflowing, and
-	     Panel's own overflow-hidden then clips the text inside them. -->
+	     The shrink-0 on the children is needed. They are flex children of a
+	     capped column, so without it they shrink to fit instead of overflowing,
+	     and Panel's own overflow-hidden then clips the text inside them. -->
 	<div
 		class="sticky top-0 flex max-h-[calc(100vh-108px)] flex-col gap-3.5 overflow-y-auto pr-0.5 [&>*]:shrink-0"
 	>

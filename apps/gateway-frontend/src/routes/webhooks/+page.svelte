@@ -4,29 +4,36 @@ import type { Webhook } from '#lib/api/types.ts';
 import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
 import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import PageHeader from '#lib/components/app/page-header.svelte';
+import RefreshButton from '#lib/components/app/refresh-button.svelte';
 import TableCard from '#lib/components/app/table-card.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
 import DeliveryRow from '#lib/components/webhooks/delivery-row.svelte';
 import OutboxRow from '#lib/components/webhooks/outbox-row.svelte';
 import WebhookDialog from '#lib/components/webhooks/webhook-dialog.svelte';
 import WebhookRow from '#lib/components/webhooks/webhook-row.svelte';
-import { pairSummary } from '#lib/data/format.ts';
-import { buildActivity, deliveryOutcome, EMPTY_ACTIVITY } from '#lib/data/webhooks.ts';
+import {
+  buildActivity,
+  deliveryOutcome,
+  EMPTY_ACTIVITY,
+  searchDeliveries,
+  searchEndpoints,
+  searchOutbox,
+} from '#lib/data/webhooks.ts';
 import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
 import { dashboard } from '#lib/state/dashboard.svelte.ts';
 import { webhooks } from '#lib/state/webhooks.svelte.ts';
 
 type View = 'endpoints' | 'outbox';
 
-// One grid per view, shared with that view's row component so the header and
-// the rows sit in one grid - the same contract the other three tables use.
+// One grid per table, shared with that table's row component, so that the
+// header and the rows sit in one grid.
 const ENDPOINT_COLS = '24px minmax(130px,1.1fr) minmax(130px,1.2fr) minmax(170px,1.5fr) 90px 84px 104px 124px';
 const OUTBOX_COLS = '24px 128px minmax(120px,1fr) 84px';
 const DELIVERY_COLS = '24px 128px minmax(110px,1fr) 60px 104px';
 
-// Deliveries are windowed to one screenful. The list is the only one of the
-// three that grows without bound - one row per attempt, forever - and rendering
-// every loaded row made the queue view taller than the viewport on its own.
+// Deliveries are shown a screenful at a time. Theirs is the only list of the
+// three that grows without end, with a row for every attempt, and showing
+// every loaded row made the queue view taller than the window on its own.
 const DELIVERY_PAGE_SIZE = 20;
 
 const ENDPOINT_COLUMNS = [
@@ -40,8 +47,8 @@ const ENDPOINT_COLUMNS = [
   { label: 'Actions', align: 'right' as const },
 ];
 
-// Log ID and Endpoint were dropped when these moved to half width. Both are
-// still in each row's expanded panel, so nothing became unreachable.
+// The log id and the endpoint are left to each row's expanded panel, because
+// these two tables share the width of one.
 const OUTBOX_COLUMNS = [
   { label: '' },
   { label: 'Queued' },
@@ -57,116 +64,95 @@ const DELIVERY_COLUMNS = [
   { label: 'Outcome' },
 ];
 
+// Two tabs and not three. The queue and the attempts it produced are read
+// together, because a row leaves the outbox and turns up in the deliveries
+// moments later.
+const VIEW_TABS = [
+  { id: 'endpoints', label: 'Endpoints' },
+  { id: 'outbox', label: 'Queue' },
+] satisfies { id: View; label: string }[];
+
+const auto = new AutoRefresh();
+
 let view: View = $state('endpoints');
 
-/**
- * The open row, as one slot across all three tables.
- *
- * They can share it because every id in them is a uuid from a different table:
- * one held over from another view matches nothing, so the row renders closed -
- * and comes back open when that view does.
- */
+// The open row, as one slot across all three tables. They can share it because
+// every id in them is a UUID from a different table. One held over from
+// another view matches nothing there, and its row is open again when its own
+// view comes back.
 let expandedRow: string | null = $state(null);
 
-/** Which window of deliveries is on screen. Zero-based, like the logs page. */
+// Which screenful of deliveries is on show, counted from zero.
 let deliveryPage = $state(0);
 
 let dialogOpen = $state(false);
 
-/** The row the dialog is editing; null puts it in create mode. */
+// The endpoint the dialog is editing, or null when it is creating one.
 let editing: Webhook | null = $state(null);
 
-// Load once on mount - NOT $effect, which would re-run whenever a load mutates
-// its own loading flag and hammer the endpoints on any error.
-const auto = new AutoRefresh();
+// The lists on show. The queue view shows two at once, side by side.
+const shown = $derived(view === 'endpoints' ? [webhooks.endpoints] : [webhooks.outbox, webhooks.deliveries]);
 
-// Only the list actually on screen is tailed. Refreshing all three on every
-// tick would be three requests to redraw two tables nobody is looking at - and
-// the outbox is the one worth watching live, since it drains on its own.
-// Tails whatever is on screen - both halves of the queue view, so the outbox
-// draining and the delivery it produced arrive in the same tick rather than a
-// refresh apart.
-$effect(() =>
-  auto.schedule(tailable, async () => {
-    await Promise.all(shown.map((entry) => entry.refresh()));
-  }),
-);
+// A refresh reads first pages only, so tailing pauses once a list on show has
+// been paged. On the queue view it also pauses while the deliveries are off
+// their first screenful, which a refresh would shuffle out from under the
+// reader.
+const tailable = $derived(shown.every((list) => !list.appended) && (view === 'endpoints' || deliveryPage === 0));
 
+/**
+ * Reads the lists on show again. Both halves of the queue view are read in one
+ * tick, so that a row leaving the outbox and the delivery it became arrive
+ * together.
+ */
+async function refreshShown(): Promise<void> {
+  await Promise.all(shown.map((list) => list.refresh()));
+}
+
+$effect(() => auto.schedule(tailable, refreshShown));
+
+// Loaded once on mount and not in an effect, which would run again whenever
+// the load changed its own state.
 onMount(() => {
-  webhooks.ensureLoaded();
+  void webhooks.ensureLoaded();
 });
 
-function openCreate() {
+function openCreate(): void {
   editing = null;
   dialogOpen = true;
 }
 
-function openEdit(webhook: Webhook) {
+function openEdit(webhook: Webhook): void {
   editing = webhook;
   dialogOpen = true;
 }
 
-/** Per-endpoint counters, over the loaded outbox and delivery windows. */
+// Counted over the rows that are loaded, and not over all time.
 const activity = $derived(buildActivity(webhooks.outbox.rows, webhooks.deliveries.rows));
-
-const delivered = $derived(webhooks.deliveries.rows.filter((d) => deliveryOutcome(d.status_code).ok).length);
+const delivered = $derived(
+  webhooks.deliveries.rows.filter((delivery) => deliveryOutcome(delivery.status_code).ok).length,
+);
 const failed = $derived(webhooks.deliveries.rows.length - delivered);
 const successRate = $derived(
   webhooks.deliveries.rows.length === 0 ? null : (delivered / webhooks.deliveries.rows.length) * 100,
 );
 
-// The topbar's search box, shared by every page.
+// The top bar's search box narrows all three tables.
 const query = $derived(dashboard.search.trim().toLowerCase());
+const filteredEndpoints = $derived(searchEndpoints(webhooks.endpoints.rows, query));
+const filteredOutbox = $derived(searchOutbox(webhooks.outbox.rows, query, webhooks.byId));
+const filteredDeliveries = $derived(searchDeliveries(webhooks.deliveries.rows, query, webhooks.byId));
 
-const filteredEndpoints = $derived(
-  webhooks.endpoints.rows.filter(
-    (w) =>
-      !query ||
-      `${w.name} ${w.description ?? ''} ${w.endpoint} ${pairSummary(w.tags)} ${pairSummary(w.filter)}`
-        .toLowerCase()
-        .includes(query),
-  ),
-);
-
-// The outbox and delivery tables carry ids, so their search also has to cover
-// the endpoint name those ids resolve to - matching on the raw uuid alone would
-// make the box useless on two of the three views.
-const filteredOutbox = $derived(
-  webhooks.outbox.rows.filter(
-    (entry) =>
-      !query ||
-      `${entry.log_id} ${entry.webhook_id} ${webhooks.byId.get(entry.webhook_id)?.name ?? ''}`
-        .toLowerCase()
-        .includes(query),
-  ),
-);
-
-const filteredDeliveries = $derived(
-  webhooks.deliveries.rows.filter((delivery) => {
-    if (!query) return true;
-
-    const webhook = webhooks.byId.get(delivery.webhook_id);
-    const outcome = deliveryOutcome(delivery.status_code);
-
-    return `${delivery.status_code} ${outcome.label} ${delivery.webhook_id} ${webhook?.name ?? ''} ${webhook?.endpoint ?? ''}`
-      .toLowerCase()
-      .includes(query);
-  }),
-);
-
-/** The 20 attempts on screen. */
 const pagedDeliveries = $derived(
   filteredDeliveries.slice(deliveryPage * DELIVERY_PAGE_SIZE, (deliveryPage + 1) * DELIVERY_PAGE_SIZE),
 );
 
-/** Whether this window reaches the end of what has been fetched so far. */
+// Whether the screenful on show reaches the end of what has been fetched.
 const atEndOfLoadedDeliveries = $derived((deliveryPage + 1) * DELIVERY_PAGE_SIZE >= filteredDeliveries.length);
-
 const canPageDeliveriesForward = $derived(!atEndOfLoadedDeliveries || webhooks.deliveries.hasMore);
 
-// A shrinking list must not strand the window past the end of it - a search that
-// narrows to three rows, or a refresh that returns fewer, would otherwise leave
-// an empty table with no way back except paging.
+// A list that shrinks must not leave the reader past its end. A search that
+// narrows to three rows, or a refresh that brings back fewer, would otherwise
+// show an empty table.
 $effect(() => {
   const lastPage = Math.max(0, Math.ceil(filteredDeliveries.length / DELIVERY_PAGE_SIZE) - 1);
 
@@ -176,60 +162,51 @@ $effect(() => {
 });
 
 /**
- * Steps one window older, fetching the next server page when this one runs out.
- *
- * The list is fetched 50 at a time and shown 20 at a time, so most steps are a
- * slice of rows already in hand and cost nothing.
+ * Steps one screenful older, fetching the next page when this one runs out.
+ * The list is fetched 50 at a time and shown 20 at a time, so most steps cost
+ * nothing.
  */
-async function nextDeliveryPage() {
-  if (webhooks.deliveries.loadingMore) return;
+async function nextDeliveryPage(): Promise<void> {
+  if (webhooks.deliveries.loadingMore) {
+    return;
+  }
 
   if (atEndOfLoadedDeliveries) {
-    if (!webhooks.deliveries.hasMore) return;
+    if (!webhooks.deliveries.hasMore) {
+      return;
+    }
 
     await webhooks.deliveries.loadMore();
 
-    // The fetch can fail, or return rows the current search excludes. Either
-    // way there is no window to move to, and advancing would blank the table.
-    if ((deliveryPage + 1) * DELIVERY_PAGE_SIZE >= filteredDeliveries.length) return;
+    // The fetch can fail, or bring back rows the search leaves out. Either way
+    // there is nothing to step to, and stepping would blank the table.
+    if (atEndOfLoadedDeliveries) {
+      return;
+    }
   }
 
   expandedRow = null;
   deliveryPage += 1;
 }
 
-function previousDeliveryPage() {
-  if (deliveryPage === 0) return;
+function previousDeliveryPage(): void {
+  if (deliveryPage === 0) {
+    return;
+  }
 
   expandedRow = null;
   deliveryPage -= 1;
 }
 
-/** Re-reads every list from the top, which puts the delivery window back on it. */
-function refreshAll() {
+/**
+ * Reads every list again from the top, which puts the deliveries back on their
+ * first screenful.
+ */
+function refreshAll(): void {
   deliveryPage = 0;
   expandedRow = null;
-  webhooks.refresh();
+  void webhooks.refresh();
 }
-
-// Two tabs, not three. The queue and the attempts it produced are one subject
-// read together - a row leaves the outbox and appears in deliveries moments
-// later, and watching that as two separate tables meant flipping back and forth
-// to follow a single delivery.
-const VIEW_TABS = [
-  { id: 'endpoints' as const, label: 'Endpoints' },
-  { id: 'outbox' as const, label: 'Queue' },
-];
-
-/** The lists on screen. The queue view shows two at once, side by side. */
-const shown = $derived(view === 'endpoints' ? [webhooks.endpoints] : [webhooks.outbox, webhooks.deliveries]);
-
-/**
- * Tailing re-reads first pages only, so it pauses if any shown list was paged -
- * and, on the queue view, while the delivery window is off its first page, which
- * a re-read would shuffle out from under.
- */
-const tailable = $derived(shown.every((list) => !list.appended) && (view === 'endpoints' || deliveryPage === 0));
 </script>
 
 <PageHeader
@@ -268,10 +245,7 @@ const tailable = $derived(shown.every((list) => !list.appended) && (view === 'en
 {#snippet refreshControls()}
 	<AutoRefreshToggle {auto} active={tailable} pausedLabel="paused past page 1" />
 
-	<ToolbarButton disabled={shown.some((entry) => entry.loading)} onclick={refreshAll}>
-		<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-		Refresh
-	</ToolbarButton>
+	<RefreshButton disabled={shown.some((entry) => entry.loading)} onclick={refreshAll} />
 {/snippet}
 
 {#if view === 'endpoints'}
@@ -315,12 +289,9 @@ const tailable = $derived(shown.every((list) => !list.appended) && (view === 'en
 		{/snippet}
 	</TableCard>
 {:else}
-	<!-- The queue and the attempts it produced, read together: a row leaves the
-	     outbox and appears on the right moments later, which as two tabs meant
-	     flipping back and forth to follow one delivery.
-
-	     Stacked below xl. Each table still wants ~450px of columns, and two of
-	     them at a laptop width would truncate the webhook names both key on. -->
+	<!-- Side by side from xl up, and stacked below it. Each table wants about
+	     450px of columns, and two of them at a laptop's width would cut off the
+	     webhook names that both are read by. -->
 	<div class="grid grid-cols-1 items-start gap-3.5 xl:grid-cols-2">
 		<TableCard
 			cols={OUTBOX_COLS}

@@ -1,8 +1,8 @@
-import type { LayoutServerLoad } from './$types';
+import type { UserProfile } from '#lib/server/oidc.ts';
+import type { LayoutServerLoadEvent } from './$types';
 
-// The session is resolved and enforced in hooks.server.ts, which redirects
-// unauthenticated page requests before this ever runs. The check below is a
-// type narrowing rather than a second gate.
-export const load: LayoutServerLoad = async ({ locals }) => {
+export function load({ locals }: LayoutServerLoadEvent): { user: UserProfile | undefined } {
+  // The hook has already turned away a page request with no session, so the
+  // user is only missing on a page that matched no route.
   return { user: locals.session?.user };
-};
+}

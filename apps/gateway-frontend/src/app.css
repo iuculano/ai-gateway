@@ -79,7 +79,7 @@
   --font-sans: "Geist Variable", sans-serif;
   --font-mono: "Geist Mono Variable", monospace;
 
-  /* Surface ramp used across the dashboard (darkest page bg -> raised chrome) */
+  /* The dashboard's surfaces, from the page background up to raised chrome. */
   --color-surface-0: #08080a;
   --color-surface-1: #0a0a0c;
   --color-surface-2: #0c0c0e;
@@ -168,27 +168,7 @@
     opacity: 1;
   }
 }
-@keyframes pop-in {
-  from {
-    transform: scale(0.96) translateY(6px);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1) translateY(0);
-    opacity: 1;
-  }
-}
-@keyframes grow-bar {
-  from {
-    transform: scaleY(0);
-  }
-  to {
-    transform: scaleY(1);
-  }
-}
 
 @theme inline {
   --animate-fade-in: fade-in 0.18s ease;
-  --animate-pop-in: pop-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
-  --animate-grow-bar: grow-bar 0.45s cubic-bezier(0.32, 0.72, 0, 1);
 }

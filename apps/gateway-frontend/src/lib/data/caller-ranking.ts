@@ -2,28 +2,58 @@ import type { SeriesPoint } from '#lib/api/analytics.ts';
 
 export type CallerMetric = 'requests' | 'cost_total';
 
-export function topCallerReferences(points: SeriesPoint[]) {
-  const references = new Map<string, SeriesPoint>();
-  for (const metric of ['requests', 'cost_total'] as const) {
-    for (const point of rankCallers(points, metric)) {
-      references.set(JSON.stringify([point.actor_type, point.actor_id]), point);
-    }
-  }
+/**
+ * A caller on a leaderboard, with the figure it is ranked by, the same figure
+ * from the window before, and the length of its bar as a percentage of the
+ * leader's.
+ */
+export type RankedCaller = SeriesPoint & { value: number; previous: number; width: number };
+
+const LEADERBOARD_SIZE = 6;
+
+function callerKey(point: SeriesPoint): string {
+  return JSON.stringify([point.actor_type, point.actor_id]);
+}
+
+/**
+ * The callers on either leaderboard, once each, which is everyone whose name
+ * needs resolving.
+ */
+export function topCallerReferences(points: SeriesPoint[]): SeriesPoint[] {
+  const leaders = [...rankCallers(points, 'requests'), ...rankCallers(points, 'cost_total')];
+  const references = new Map(leaders.map((point) => [callerKey(point), point]));
+
   return [...references.values()];
 }
 
-export function rankCallers(points: SeriesPoint[], metric: CallerMetric) {
-  const total = points.reduce((sum, point) => sum + point[metric], 0);
-  const ranked = [...points].sort(
-    (a, b) =>
-      b[metric] - a[metric] ||
-      JSON.stringify([a.actor_type, a.actor_id]).localeCompare(JSON.stringify([b.actor_type, b.actor_id])),
-  );
+/**
+ * The leading callers by requests or by spend, each with a bar length relative
+ * to the leader and its own figure from the window before.
+ *
+ * @param points
+ * This window's rows, one per caller.
+ *
+ * @param metric
+ * The figure to rank by.
+ *
+ * @param previousPoints
+ * The window before, one row per caller.
+ */
+export function rankCallers(
+  points: SeriesPoint[],
+  metric: CallerMetric,
+  previousPoints: SeriesPoint[] = [],
+): RankedCaller[] {
+  const previous = new Map(previousPoints.map((point) => [callerKey(point), point[metric]]));
+
+  // Ties break on the caller, so the order does not shuffle between loads.
+  const ranked = [...points].sort((a, b) => b[metric] - a[metric] || callerKey(a).localeCompare(callerKey(b)));
   const maximum = ranked[0]?.[metric] ?? 0;
-  return ranked.slice(0, 6).map((point) => ({
+
+  return ranked.slice(0, LEADERBOARD_SIZE).map((point) => ({
     ...point,
     value: point[metric],
-    share: total > 0 ? (point[metric] / total) * 100 : null,
+    previous: previous.get(callerKey(point)) ?? 0,
     width: maximum > 0 ? (point[metric] / maximum) * 100 : 0,
   }));
 }

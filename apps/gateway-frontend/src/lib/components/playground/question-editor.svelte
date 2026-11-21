@@ -1,4 +1,5 @@
 <script lang="ts">
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import { Input } from '#lib/components/ui/input/index.ts';
 import * as Select from '#lib/components/ui/select/index.ts';
 import { Textarea } from '#lib/components/ui/textarea/index.ts';
@@ -9,38 +10,47 @@ import {
   type QuestionType,
 } from '#lib/data/decision-questions.ts';
 
-let {
-  question = $bindable(),
-  number,
-  disabled = false,
-  onremove,
-}: {
+interface Props {
   question: DraftQuestion;
-  /** Shown in the card's corner so a long list is easy to talk about. */
+
+  /**
+   * Shown in the card's corner, so that a long list is easy to talk about.
+   */
   number: number;
   disabled?: boolean;
-  /** Omitted for a question that cannot be removed - the last one standing. */
+
+  /**
+   * Left out for a question that cannot be removed, which is the last one
+   * standing.
+   */
   onremove?: () => void;
-} = $props();
+}
 
-// Every control in the card is 32px tall, the same as the page's tabs and buttons.
-const FIELD_CLASS =
-  'rounded-lg border-line-strong bg-surface-3 px-[11px] text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';
+let { question = $bindable(), number, disabled = false, onremove }: Props = $props();
 
-// Borderless so the cards read as text first and controls second.
+// Every control in the card is 32px tall, the same as the page's tabs and
+// buttons.
+const FIELD_CLASS = `px-[11px] text-[12.5px] ${FIELD_BASE}`;
+
+// Borderless, so that the cards read as text first and controls second.
 const GHOST_BUTTON_CLASS =
   'flex flex-none items-center justify-center rounded-lg text-zinc-600 hover:bg-surface-4 hover:text-zinc-300 disabled:opacity-30 disabled:hover:bg-transparent';
 
-/** The API's minimums. A choice needs one option, a score needs two levels to place anything between. */
+// The fewest options the API accepts. A choice needs one, and a score needs
+// two levels to place anything between.
 const MIN_OPTIONS: Record<QuestionType, number> = { predicate: 0, choice: 1, score: 2 };
 
 const color = $derived(QUESTION_TYPE_COLORS[question.type]);
 
-function setType(type: QuestionType) {
+function addOption(): void {
+  question.options.push({ value: '', description: '' });
+}
+
+function setType(type: QuestionType): void {
   question.type = type;
 
   while (question.options.length < MIN_OPTIONS[type]) {
-    question.options.push({ value: '', description: '' });
+    addOption();
   }
 }
 </script>
@@ -98,15 +108,15 @@ function setType(type: QuestionType) {
 			class="{GHOST_BUTTON_CLASS} size-8"
 			aria-label="Remove question"
 			disabled={disabled || !onremove}
-			onclick={() => onremove?.()}
+			onclick={onremove}
 		>
 			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
 		</button>
 	</div>
 
 	{#if question.type !== 'predicate'}
-		<!-- Indented to sit under the type picker, so the rows read as part of
-		     the question above rather than questions of their own. -->
+		<!-- Indented to sit under the type picker, so that the rows read as part of
+		     the question above and not as questions of their own. -->
 		<div class="flex flex-col gap-1.5 border-t border-line py-2.5 pr-2.5 pl-[38px]">
 			<span class="mb-0.5 text-[10.5px] font-medium tracking-[.05em] text-zinc-600 uppercase">
 				{question.type === 'choice' ? 'Choices' : 'Levels, lowest first'}
@@ -153,7 +163,7 @@ function setType(type: QuestionType) {
 				type="button"
 				class="ml-6 flex h-7 w-fit items-center gap-[7px] rounded-md px-2 text-[12px] text-zinc-500 hover:bg-surface-4 hover:text-zinc-300 disabled:opacity-50"
 				{disabled}
-				onclick={() => question.options.push({ value: '', description: '' })}
+				onclick={addOption}
 			>
 				<svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
 				{question.type === 'choice' ? 'Add choice' : 'Add level'}

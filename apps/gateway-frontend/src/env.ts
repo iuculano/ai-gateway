@@ -1,7 +1,10 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 
-/** Lets a variable be left unset, which SvelteKit otherwise refuses to start without. */
-function optional(value: string | undefined) {
+/**
+ * Lets a variable be left unset, which SvelteKit otherwise refuses to start
+ * without.
+ */
+function optional(value: string | undefined): string | undefined {
   return value;
 }
 

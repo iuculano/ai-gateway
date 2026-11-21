@@ -5,91 +5,95 @@ import PiggyBankIcon from '@lucide/svelte/icons/piggy-bank';
 import UsersIcon from '@lucide/svelte/icons/users';
 import type { Snippet } from 'svelte';
 import { fetchSeries, type SeriesPoint } from '#lib/api/analytics.ts';
-import { alignedNow, RANGES, setAnalyticsFilters } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import { RANGES, setAnalyticsFilters, windowOf } from '#lib/components/analytics/analytics-filters.svelte.ts';
 import FilterPicker from '#lib/components/analytics/filter-picker.svelte';
 import PageHeader from '#lib/components/app/page-header.svelte';
 import PageTabs from '#lib/components/app/page-tabs.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { Latest } from '#lib/state/latest.svelte.ts';
 import { page } from '$app/state';
 
 let { children }: { children: Snippet } = $props();
 
 const ACCENT = '#10b981';
 
-const tabs = [
+const TABS = [
   { id: 'overview', label: 'Overview', href: '/analytics', icon: LayoutDashboardIcon },
   { id: 'users', label: 'Users', href: '/analytics/users', icon: UsersIcon },
   { id: 'sessions', label: 'Sessions', href: '/analytics/sessions', icon: MessagesSquareIcon },
   { id: 'savings', label: 'Savings', href: '/analytics/savings', icon: PiggyBankIcon },
 ];
-const current = $derived(tabs.findLast((tab) => page.url.pathname.startsWith(tab.href))?.id ?? 'overview');
 
 const filters = setAnalyticsFilters();
+
+// Every provider and model seen lately, for the two pickers to offer.
+const options = new Latest<SeriesPoint[]>();
+
 let rangeOpen = $state(false);
+
+const current = $derived(TABS.findLast((tab) => page.url.pathname.startsWith(tab.href))?.id ?? 'overview');
 
 // Users, sessions and savings look across every model, so the model filters
 // only apply to the overview. A session narrowed to one model would be a part
 // of one.
 const modelFilters = $derived(current === 'overview');
 
-let filterPoints = $state<SeriesPoint[]>([]);
-let filtersLoading = $state(true);
-let filtersError = $state(false);
-let filterRequest = 0;
-const providerOptions = $derived(
-  [...new Set(filterPoints.flatMap((point) => (point.provider ? [point.provider] : [])))].sort(),
-);
-const modelOptions = $derived(
-  [
-    ...new Set(
-      filterPoints
-        .filter((point) => !filters.provider || point.provider === filters.provider)
-        .flatMap((point) => (point.model ? [point.model] : [])),
-    ),
-  ].sort(),
-);
+const providerOptions = $derived.by(() => {
+  const providers = new Set<string>();
 
-function setProvider(value: string) {
+  for (const point of options.value ?? []) {
+    if (point.provider) {
+      providers.add(point.provider);
+    }
+  }
+
+  return [...providers].sort();
+});
+
+const modelOptions = $derived.by(() => {
+  const models = new Set<string>();
+
+  for (const point of options.value ?? []) {
+    if (point.model && (!filters.provider || point.provider === filters.provider)) {
+      models.add(point.model);
+    }
+  }
+
+  return [...models].sort();
+});
+
+function setProvider(value: string): void {
   filters.provider = value;
   filters.model = '';
 }
 
-/** Keep options independent of the selected filters, including prior-period activity. */
-async function loadFilterOptions() {
-  const request = ++filterRequest;
-  filtersLoading = true;
-  filtersError = false;
-  const end = alignedNow();
-  const days = filters.range.days;
-  try {
-    const [models] = await fetchSeries({
-      start_date: new Date(end - 2 * days * 86_400_000).toISOString(),
-      end_date: new Date(end).toISOString(),
-      groupings: [['provider', 'model']],
-    });
-    if (request === filterRequest) filterPoints = models;
-  } catch {
-    if (request === filterRequest) filtersError = true;
-  } finally {
-    if (request === filterRequest) filtersLoading = false;
-  }
+async function fetchOptions(): Promise<SeriesPoint[]> {
+  // Twice the window, and under no filters. The options then do not depend on
+  // what is picked, and still offer what was only active in the window before.
+  const [models] = await fetchSeries({ ...windowOf(2 * filters.range.days), groupings: [['provider', 'model']] });
+
+  return models;
+}
+
+function loadFilterOptions(): void {
+  void options.load(fetchOptions);
 }
 
 $effect(() => {
   void filters.range.id;
-  void loadFilterOptions();
+  loadFilterOptions();
 });
 </script>
 
 <div class="analytics-layout">
 	<PageHeader title="Analytics" description="Traffic, spend, users and latency across every model routed through Relay." />
 
-	<PageTabs label="Analytics sections" {tabs} {current}>
+	<PageTabs label="Analytics sections" tabs={TABS} {current}>
 		{#if modelFilters}
 			<FilterPicker id="analytics-provider" label="Provider" options={providerOptions} bind:value={() => filters.provider, setProvider} class="w-40" />
 			<FilterPicker id="analytics-model" label="Model" options={modelOptions} bind:value={filters.model} class="w-52" />
-			{#if filtersLoading}<span class="text-xs text-zinc-500" role="status">Loading filters…</span>{/if}
-			{#if filtersError}<ToolbarButton onclick={loadFilterOptions}>Retry filters</ToolbarButton>{/if}
+			{#if options.loading}<span class="text-xs text-zinc-500" role="status">Loading filters…</span>{/if}
+			{#if options.error}<ToolbarButton onclick={loadFilterOptions}>Retry filters</ToolbarButton>{/if}
 		{/if}
 		<div class="relative">
 			<ToolbarButton onclick={() => (rangeOpen = !rangeOpen)}>

@@ -1,43 +1,43 @@
 <script lang="ts">
 import { getPromptVersion, renderPromptVersion } from '#lib/api/prompts.ts';
 import { copyToClipboard } from '#lib/clipboard.ts';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
 import Panel from '#lib/components/app/panel.svelte';
 import * as Dialog from '#lib/components/ui/dialog/index.ts';
 import { Input } from '#lib/components/ui/input/index.ts';
-import { extractVariables, segmentTemplate } from '#lib/data/prompts.ts';
+import { carryValues, extractVariables, segmentTemplate, suppliedVariables } from '#lib/data/prompts.ts';
 import { prompts } from '#lib/state/prompts.svelte.ts';
 
-/**
- * Renders a version with values the user types, and shows the result.
- *
- * The rendering is done by the API, not here. What comes back is the text the
- * gateway would actually put in front of a model - built-ins resolved by the
- * same clock, the same precedence between built-ins and supplied inputs, the
- * same decision about what to do with a tag nothing fills. A local renderer
- * would be a second opinion, and the whole point of a preview is that it is
- * not one.
- */
-let {
-  open = $bindable(false),
-  promptId,
-  promptName,
-  activeVersion = null,
-}: {
+// Renders a version with values the user types, and shows the result.
+//
+// The rendering is done by the API and not here. What comes back is the text
+// the gateway would put in front of a model, with the same built-ins, the same
+// precedence between them and what was supplied, and the same treatment of a
+// tag nothing fills. A renderer in the page would be a second opinion, and the
+// point of a preview is that it is not one.
+
+interface Props {
   open?: boolean;
   promptId: string;
   promptName: string;
-  /** Preselected when the dialog opens. Falls back to the newest version. */
-  activeVersion?: number | null;
-} = $props();
 
-/** Debounce before re-rendering, so a held key is one request rather than ten. */
+  /**
+   * The version the dialog opens on, which falls back to the newest.
+   */
+  activeVersion?: number | null;
+}
+
+let { open = $bindable(false), promptId, promptName, activeVersion = null }: Props = $props();
+
+// How long to wait before rendering again, so that a held key is one request
+// and not ten.
 const RENDER_DELAY_MS = 250;
 
 let selected: number | null = $state(null);
 let template = $state('');
 let loadingTemplate = $state(false);
 
-/** Values for the non-built-in tags, keyed by tag name. */
+// What was typed for each of the template's own tags, by tag name.
 let inputs: Record<string, string> = $state({});
 
 let rendered: string | null = $state(null);
@@ -48,11 +48,14 @@ let renderError: string | null = $state(null);
 const versions = $derived(prompts.versionsFor(promptId));
 const variables = $derived(extractVariables(template));
 const segments = $derived(segmentTemplate(template));
+const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').length > 0).length);
 
-// Load the version list and choose one. Runs on open, and again if the dialog
-// is reopened on a different prompt.
+// Loads the versions and picks one. It runs on opening, and again when the
+// dialog is reopened on a different prompt.
 $effect(() => {
-  if (!open) return;
+  if (!open) {
+    return;
+  }
 
   const id = promptId;
   const preferred = activeVersion;
@@ -66,37 +69,30 @@ $effect(() => {
 
   void prompts.ensureVersions(id).then(() => {
     const rows = prompts.versionsFor(id).rows;
-    if (rows.length === 0) return;
 
     // The active version is what a caller gets by default, so it is what a
-    // preview should open on. Newest only when nothing is active yet.
-    const wanted = preferred !== null && rows.some((row) => row.version === preferred) ? preferred : rows[0]?.version;
+    // preview opens on. The newest is used only when nothing is active yet.
+    const hasPreferred = preferred !== null && rows.some((row) => row.version === preferred);
 
-    selected = wanted ?? null;
+    selected = hasPreferred ? preferred : (rows[0]?.version ?? null);
   });
 });
 
-// Fetch the chosen version's text.
+// Fetches the chosen version's text.
 $effect(() => {
-  if (!open || selected === null) return;
-
-  const id = promptId;
-  const version = selected;
+  if (!open || selected === null) {
+    return;
+  }
 
   loadingTemplate = true;
 
-  getPromptVersion(id, version)
+  getPromptVersion(promptId, selected)
     .then((loaded) => {
       template = loaded.prompt;
 
-      // Seed a box per detected tag, keeping anything already typed - switching
-      // version should not clear values the new template still asks for.
-      const next: Record<string, string> = {};
-      for (const name of extractVariables(loaded.prompt).inputs) {
-        next[name] = inputs[name] ?? '';
-      }
-
-      inputs = next;
+      // Switching version keeps what was typed for the tags the new template
+      // still has.
+      inputs = carryValues(extractVariables(loaded.prompt).inputs, inputs);
     })
     .catch((error: unknown) => {
       renderError = error instanceof Error ? error.message : 'Failed to load the version.';
@@ -106,34 +102,13 @@ $effect(() => {
     });
 });
 
-// Re-render whenever the version or any value changes, debounced. The request
-// is fired from a timeout, so nothing it writes is tracked back into here.
-$effect(() => {
-  if (!open || selected === null || loadingTemplate || !template) return;
-
-  const id = promptId;
-  const version = selected;
-
-  // Empty boxes are omitted rather than sent as ''. The renderer treats a
-  // supplied empty string as a real value and substitutes nothing, which in a
-  // preview is indistinguishable from a tag that resolved correctly. Left out,
-  // the tag comes back in `unresolved` and stays visible in the output - which
-  // is what "you have not filled this in yet" should look like.
-  const payload = Object.fromEntries(Object.entries($state.snapshot(inputs)).filter(([, value]) => value.length > 0));
-
-  const timer = setTimeout(() => {
-    void render(id, version, payload);
-  }, RENDER_DELAY_MS);
-
-  return () => clearTimeout(timer);
-});
-
-async function render(id: string, version: number, payload: Record<string, string>) {
+async function render(id: string, version: number, payload: Record<string, string>): Promise<void> {
   rendering = true;
   renderError = null;
 
   try {
     const result = await renderPromptVersion(id, version, payload);
+
     rendered = result.prompt;
     unresolved = result.unresolved;
   } catch (error) {
@@ -143,13 +118,35 @@ async function render(id: string, version: number, payload: Record<string, strin
   }
 }
 
-function copyRendered() {
-  if (rendered === null) return;
+// Renders again whenever the version or a value changes, after a pause. The
+// request is made from a timeout, so nothing it writes is tracked back in here.
+$effect(() => {
+  if (!open || selected === null || loadingTemplate || !template) {
+    return;
+  }
 
-  void copyToClipboard(rendered, 'Rendered prompt copied');
+  const id = promptId;
+  const version = selected;
+
+  // An empty box is left out and not sent as an empty string. The renderer
+  // takes an empty string as a real value and puts nothing in its place, which
+  // looks the same as a tag that resolved. Left out, the tag comes back as
+  // unresolved and stays in the output, which is what not filled in yet should
+  // look like.
+  const payload = suppliedVariables(variables.inputs, $state.snapshot(inputs));
+
+  const timer = setTimeout(() => {
+    void render(id, version, payload);
+  }, RENDER_DELAY_MS);
+
+  return () => clearTimeout(timer);
+});
+
+function copyRendered(): void {
+  if (rendered !== null) {
+    void copyToClipboard(rendered, 'Rendered prompt copied');
+  }
 }
-
-const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').length > 0).length);
 </script>
 
 <Dialog.Root bind:open>
@@ -174,9 +171,9 @@ const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').l
 				<span class="text-[12.5px] text-zinc-600">Add a version to this prompt and there will be something to render.</span>
 			</div>
 		{:else}
-			<!-- Version picker. Chips rather than a select: the count is small, the
-			     active one has to be visibly different, and switching is the main
-			     thing done in this dialog. -->
+			<!-- The version picker, as chips and not a select. The count is small, the
+			     active one has to look different, and switching is the main thing
+			     done in this dialog. -->
 			<div class="flex flex-none items-center gap-2 overflow-x-auto border-b border-line bg-surface-1 px-6 py-3">
 				<span class="flex-none text-[11.5px] tracking-[.06em] text-zinc-600 uppercase">Version</span>
 
@@ -196,7 +193,7 @@ const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').l
 			</div>
 
 			<div class="grid min-h-0 grow grid-cols-2 divide-x divide-line">
-				<!-- Left: what is being rendered, and the values going into it. -->
+				<!-- On the left, what is being rendered and the values going into it. -->
 				<div class="flex min-h-0 flex-col gap-3.5 overflow-y-auto p-5">
 					<Panel title="Template · v{selected ?? '—'}">
 						{#if loadingTemplate}
@@ -232,7 +229,7 @@ const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').l
 											id="preview-input-{name}"
 											bind:value={inputs[name]}
 											placeholder="value"
-											class="h-9 rounded-lg border-line-strong bg-surface-3 px-[11px] font-mono text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+											class="h-9 px-[11px] font-mono text-[12.5px] {FIELD_BASE}"
 										/>
 									</div>
 								{/each}
@@ -255,7 +252,7 @@ const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').l
 					{/if}
 				</div>
 
-				<!-- Right: the result. -->
+				<!-- On the right, the result. -->
 				<div class="flex min-h-0 flex-col bg-surface-1">
 					<div class="flex flex-none items-center gap-2.5 border-b border-line px-5 py-3">
 						<span class="text-[11.5px] tracking-[.06em] text-zinc-600 uppercase">Rendered</span>
@@ -296,9 +293,9 @@ const filled = $derived(variables.inputs.filter((name) => (inputs[name] ?? '').l
 					{/if}
 
 					{#if unresolved.length > 0}
-						<!-- Named rather than merely counted: an unresolved tag is left in
-						     the output verbatim, so without this the only clue is spotting
-						     the braces that survived. -->
+						<!-- Named and not only counted. An unresolved tag is left in the
+						     output as it is, so without this the only clue is spotting the
+						     braces that survived. -->
 						<div class="flex-none border-t border-line bg-surface-2 px-5 py-3">
 							<div class="mb-1.5 text-[11.5px] text-amber-400">
 								Left unfilled, and returned as written:

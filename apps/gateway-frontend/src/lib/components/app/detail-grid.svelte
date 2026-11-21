@@ -1,34 +1,50 @@
 <script module lang="ts">
 /**
- * The label/value grid at the top of an expanded row.
- *
- * All three rows built this by hand with the same hairline trick (gap-px over a
- * bg-line parent), just with different column counts and cell markup.
+ * One cell of the label and value grid at the top of an expanded row.
  */
 export interface DetailItem {
   label: string;
   value: string;
-  /** Ids, keys and timestamps read better monospaced. On by default. */
+
+  /**
+   * Ids, keys and timestamps read better monospaced, so this is on by default.
+   */
   mono?: boolean;
-  /** Overrides the value colour, for cells that carry a status. */
+
+  /**
+   * Overrides the value's colour, for cells that carry a status.
+   */
   tone?: string;
-  /** Native tooltip, for values that get truncated. */
+
+  /**
+   * A native tooltip, for values that get truncated.
+   */
   title?: string;
-  /** Adds a button to copy the full value. */
+
+  /**
+   * Adds a button that copies the full value.
+   */
   copyable?: boolean;
-  /** Adds a link to the audit history for this value. */
+
+  /**
+   * Adds a link to the audit history for this value.
+   */
   auditHref?: string;
-  /** Makes the value itself a link, e.g. to where it can be looked into. */
+
+  /**
+   * Makes the value itself a link, such as to where it can be looked into.
+   */
   href?: string;
 }
 </script>
 
 <script lang="ts">
 import { copyToClipboard } from '#lib/clipboard.ts';
+
 let { items, cols = 4 }: { items: DetailItem[]; cols?: 2 | 3 | 4 | 5 | 6 } = $props();
 
-// Spelled out rather than interpolated - Tailwind only compiles classes it can
-// find in source.
+// Spelled out and not interpolated, because Tailwind only compiles the classes
+// it can find in source.
 const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-cols-5', 6: 'grid-cols-6' } as const;
 </script>
 

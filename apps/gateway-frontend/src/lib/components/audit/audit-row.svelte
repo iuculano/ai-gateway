@@ -1,63 +1,30 @@
 <script lang="ts">
 import { copyToClipboard } from '#lib/clipboard.ts';
-import type { DetailItem } from '#lib/components/app/detail-grid.svelte';
-import DetailGrid from '#lib/components/app/detail-grid.svelte';
+import DetailGrid, { type DetailItem } from '#lib/components/app/detail-grid.svelte';
 import ExpandableRow from '#lib/components/app/expandable-row.svelte';
 import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import Panel from '#lib/components/app/panel.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import type { AuditEvent } from '#lib/data/audit.ts';
 import { fmtChangeValue, fmtTs, humanize, parseUA } from '#lib/data/format.ts';
-import type { AuditEvent } from '#lib/data/types.ts';
 
-let {
-  event,
-  cols,
-  catColor,
-  catLabel,
-  expanded,
-  ontoggle,
-}: {
+interface Props {
   event: AuditEvent;
   cols: string;
   catColor: string;
   catLabel: string;
   expanded: boolean;
   ontoggle: () => void;
-} = $props();
+}
 
-const e = $derived(event);
-const occ = $derived(fmtTs(e.occurredAt));
-const rec = $derived(fmtTs(e.createdAt));
-const statusColor = $derived(e.status === 'success' ? '#10b981' : '#f87171');
-const statusLabel = $derived(e.status === 'success' ? 'Success' : 'Failure');
-const actorTypeLabel = $derived(
-  { unknown: 'Unknown', user: 'User', api_key: 'API key', system: 'System' }[e.actorType] ?? e.actorType,
-);
-const changes = $derived(
-  e.metadata?.changes
-    ? Object.entries(e.metadata.changes).map(([field, v]) => ({
-        field: humanize(field),
-        from: fmtChangeValue(v.old) ?? '∅',
-        to: fmtChangeValue(v.new) ?? '∅',
-      }))
-    : [],
-);
-const hasChanges = $derived(changes.length > 0);
-const metaJson = $derived(JSON.stringify(e.metadata, null, 2));
+let { event, cols, catColor, catLabel, expanded, ontoggle }: Props = $props();
 
-const detailItems: DetailItem[] = $derived([
-  { label: 'Event ID', value: e.id },
-  { label: 'Action', value: e.action },
-  { label: 'Status', value: statusLabel, tone: statusColor, mono: false },
-  { label: 'Request ID', value: e.requestId },
-  { label: `Actor · ${actorTypeLabel}`, value: e.actorName, mono: false },
-  { label: 'Target type', value: e.targetType ?? '—' },
-  { label: 'Target ID', value: e.targetId ?? '—' },
-  { label: 'Occurred at', value: occ.full },
-  { label: 'Recorded at', value: rec.full },
-  { label: 'IP address', value: e.ip ?? '—' },
-  { label: 'User agent', value: parseUA(e.userAgent), mono: false, title: e.userAgent ?? undefined },
-]);
+const ACTOR_TYPES: Record<string, string> = {
+  unknown: 'Unknown',
+  user: 'User',
+  api_key: 'API key',
+  system: 'System',
+};
 
 const VIEWS = [
   { id: 'diff' as const, label: 'Diff' },
@@ -65,12 +32,47 @@ const VIEWS = [
 ];
 
 let metaView: 'diff' | 'json' = $state('diff');
+
+const e = $derived(event);
+const occ = $derived(fmtTs(e.occurred_at ?? e.created_at));
+const rec = $derived(fmtTs(e.created_at));
+const statusColor = $derived(e.status === 'success' ? '#10b981' : '#f87171');
+const statusLabel = $derived(e.status === 'success' ? 'Success' : 'Failure');
+const actorTypeLabel = $derived(ACTOR_TYPES[e.actor_type] ?? e.actor_type);
+const metaJson = $derived(JSON.stringify(e.metadata, null, 2));
+
+const changes = $derived(
+  Object.entries(e.metadata?.changes ?? {}).map(([field, change]) => ({
+    field: humanize(field),
+    from: fmtChangeValue(change.old) ?? '∅',
+    to: fmtChangeValue(change.new) ?? '∅',
+  })),
+);
+const hasChanges = $derived(changes.length > 0);
+
+const detailItems: DetailItem[] = $derived([
+  { label: 'Event ID', value: e.id },
+  { label: 'Action', value: e.event },
+  { label: 'Status', value: statusLabel, tone: statusColor, mono: false },
+  { label: 'Request ID', value: e.request_id ?? '—' },
+  { label: `Actor · ${actorTypeLabel}`, value: e.actorLabel, mono: false },
+  { label: 'Target type', value: e.target_type ?? '—' },
+  { label: 'Target ID', value: e.target_id ?? '—' },
+  { label: 'Occurred at', value: occ.full },
+  { label: 'Recorded at', value: rec.full },
+  { label: 'IP address', value: e.ip ?? '—' },
+  { label: 'User agent', value: parseUA(e.user_agent), mono: false, title: e.user_agent ?? undefined },
+]);
+
+// A row opens on its diff when it has one, and on the raw metadata otherwise.
 $effect(() => {
-  if (expanded) metaView = hasChanges ? 'diff' : 'json';
+  if (expanded) {
+    metaView = hasChanges ? 'diff' : 'json';
+  }
 });
 
-function copyMeta(ev: MouseEvent) {
-  ev.stopPropagation();
+function copyMeta(click: MouseEvent): void {
+  click.stopPropagation();
   void copyToClipboard(metaJson, 'Metadata copied');
 }
 </script>
@@ -79,23 +81,22 @@ function copyMeta(ev: MouseEvent) {
 	{#snippet cells()}
 		<span class="font-mono text-xs text-zinc-400"><span class="text-zinc-600">{occ.short} · </span>{occ.time}</span>
 		<span class="inline-flex min-w-0 items-center gap-[9px]">
-			<!-- A tone dot rather than an initials block. The 32px avatar was the
-			     tallest thing in the row and set the row height on its own; this keeps
-			     the same deterministic colour at the height logs' rows run at. -->
+			<!-- A dot in the actor's colour and not an initials block, which would be
+			     the tallest thing in the row and set its height. -->
 			<span
 				class="size-[7px] flex-none rounded-full"
-				style:background={e.actorType === 'user' ? e.actorTone : e.actorType === 'api_key' ? '#10b981' : '#71717a'}
+				style:background={e.actor_type === 'user' ? e.actorTone : e.actor_type === 'api_key' ? '#10b981' : '#71717a'}
 			></span>
 			<span class="overflow-hidden text-[12.5px] font-medium text-ellipsis whitespace-nowrap text-zinc-200">
-				{e.actorName}
+				{e.actorLabel}
 			</span>
 		</span>
 
-		<!-- Lifted out from under the actor name, where it made every row two lines. -->
+		<!-- Beside the actor's name and not under it, which would make every row two lines. -->
 		<span class="text-[12.5px] whitespace-nowrap text-zinc-500">{actorTypeLabel}</span>
 
 		<span class="inline-flex min-w-0 items-center gap-2">
-			<code class="font-mono text-xs whitespace-nowrap text-zinc-300">{e.action}</code>
+			<code class="font-mono text-xs whitespace-nowrap text-zinc-300">{e.event}</code>
 			{#if e.targetLabel}
 				<code
 					class="min-w-0 overflow-hidden rounded-[5px] border border-line-strong bg-surface-5 px-1.5 py-px font-mono text-[11.5px] text-ellipsis whitespace-nowrap text-zinc-400"

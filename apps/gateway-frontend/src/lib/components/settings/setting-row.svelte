@@ -1,43 +1,31 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * One labelled control inside a SettingsSection.
- *
- * The control column is a fixed width rather than shrink-to-fit, because a
- * section mixes switches, selects and number boxes - sized to their contents
- * they staircase down the right edge of the card instead of lining up.
- */
-let {
-  label,
-  description,
-  header,
-  pending,
-  children,
-}: {
+// One labelled control inside a SettingsSection. The control column has a fixed
+// width, because a section mixes switches, selects and number boxes, and sized
+// to their contents they would step down the right edge of the card and not
+// line up.
+
+interface Props {
   label: string;
   description?: string;
+
   /**
-   * The `ai-*` request header that overrides this default, if any.
-   *
-   * Rendered beside the label because that relationship is the entire design of
-   * this page: these are organization defaults for knobs that exist only
-   * per-request today, and nothing else on screen would tell a reader which of
-   * the two wins.
+   * The `ai-*` request header that overrides this default, if there is one. It
+   * is shown beside the label, because nothing else on the page would say which
+   * of the two wins.
    */
   header?: string;
+
   /**
-   * Why this control does nothing yet - 'Needs enforcement', 'Phase 3'.
-   *
-   * A setting nothing reads has to say so on its face. The battle plan's
-   * non-goals end with "accepting security settings that are not enforced", and
-   * a page full of unwired toggles is the largest available version of that
-   * mistake. Every row here carries one until its backend lands.
+   * Why this control does nothing yet, such as 'Not wired'. A setting that
+   * nothing reads has to say so on its face.
    */
   pending?: string;
-  /** The control itself. */
   children: Snippet;
-} = $props();
+}
+
+let { label, description, header, pending, children }: Props = $props();
 </script>
 
 <div class="flex items-start gap-6 px-4 py-[13px]">

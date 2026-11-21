@@ -1,22 +1,20 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * The title block every list page opens with.
- *
- * Owns the spacing and type scale so the three pages cannot drift apart again -
- * they previously disagreed on the bottom margin alone (mb-6 vs mb-[22px]).
- */
-let {
-  title,
-  description,
-  actions,
-}: {
+// The title block every list page opens with. It owns the spacing and the type
+// scale, so that the pages cannot drift apart.
+
+interface Props {
   title: string;
   description?: string;
-  /** Right-aligned controls. Use ToolbarButton so the heights match. */
+
+  /**
+   * Right-aligned controls. ToolbarButton keeps their heights matching.
+   */
   actions?: Snippet;
-} = $props();
+}
+
+let { title, description, actions }: Props = $props();
 </script>
 
 <div class="mb-[22px] flex items-end gap-5">
