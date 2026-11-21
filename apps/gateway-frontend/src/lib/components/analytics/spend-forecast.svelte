@@ -5,83 +5,90 @@ import ChartCard from '#lib/components/app/chart-card.svelte';
 import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
 import { periodComparison } from '#lib/data/analytics-comparison.ts';
+import { axisTop, brokenLinePath } from '#lib/data/chart-series.ts';
 import { fmtCostTotal } from '#lib/data/format.ts';
 import { spendForecast } from '#lib/data/spend-forecast.ts';
+import { Latest } from '#lib/state/latest.svelte.ts';
 
-/**
- * This calendar month's spend and where it's heading. Always the current month,
- * whatever range the rest of the page shows, but narrowed by its provider and
- * model filters.
- *
- * Daily shows each day's spend, then the run rate for the days to come.
- * Cumulative is the budget view: the month's running total against last
- * month's, with the projected path to month end.
- */
-let { provider, model, height: chartHeight = 160 }: { provider?: string; model?: string; height?: number } = $props();
+type View = 'daily' | 'cumulative';
+
+interface Props {
+  provider?: string;
+  model?: string;
+  height?: number;
+}
+
+let { provider, model, height: cardHeight = 160 }: Props = $props();
 
 const ACTUAL = '#10b981';
 const LAST_MONTH_INK = '#71717a';
 const GRID = '#1f1f23';
 const AXIS_INK = '#52525b';
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-let points = $state<SeriesPoint[]>([]);
-let now = $state(new Date(alignedNow()));
-let loading = $state(true);
-let failed = $state(false);
-let request = 0;
+// The chart sits under the figures, with a money axis on the left.
+const PAD = { top: 10, right: 10, bottom: 22, left: 56 };
 
-let view = $state<'daily' | 'cumulative'>('daily');
-const views = [
+// How much of the card's height the figures above the chart take.
+const FIGURES_HEIGHT = 44;
+
+const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
+
+const VIEWS = [
   { id: 'daily', label: 'Daily' },
   { id: 'cumulative', label: 'Cumulative' },
-] satisfies { id: typeof view; label: string }[];
+] satisfies { id: View; label: string }[];
 
-async function load() {
-  const current = ++request;
-  loading = true;
-  failed = false;
+// The days fetched, with the moment they were fetched up to.
+const series = new Latest<{ points: SeriesPoint[]; now: Date }>();
 
-  // From the start of last month, for the comparisons and a full week of run
-  // rate early in the month.
+let view = $state<View>('daily');
+let width = $state(600);
+let hovered = $state<number | null>(null);
+
+async function fetchDays(): Promise<{ points: SeriesPoint[]; now: Date }> {
+  // From the start of last month, for the comparisons and for a full week of
+  // run rate early in the month.
   const end = new Date(alignedNow());
   const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, 1));
 
-  try {
-    const [days] = await fetchSeries({
-      start_date: start.toISOString(),
-      end_date: end.toISOString(),
-      interval: 'day',
-      provider: provider || undefined,
-      model: model || undefined,
-      groupings: [['bucket']],
-    });
-    if (current !== request) return;
-    points = days;
-    now = end;
-  } catch {
-    if (current === request) failed = true;
-  } finally {
-    if (current === request) loading = false;
-  }
+  const [days] = await fetchSeries({
+    start_date: start.toISOString(),
+    end_date: end.toISOString(),
+    interval: 'day',
+    provider: provider || undefined,
+    model: model || undefined,
+    groupings: [['bucket']],
+  });
+
+  return { points: days, now: end };
+}
+
+function load(): void {
+  void series.load(fetchDays);
 }
 
 $effect(() => {
   void [provider, model];
-  void load();
+  load();
 });
 
+const loading = $derived(series.loading);
+const failed = $derived(series.error !== null);
+const points = $derived(series.value?.points ?? []);
+const now = $derived(series.value?.now ?? new Date(alignedNow()));
 const forecast = $derived(spendForecast(points, now));
-const monthName = $derived(MONTHS[now.getUTCMonth()]);
-const lastMonthName = $derived(MONTHS[(now.getUTCMonth() + 11) % 12]);
+const monthName = $derived(MONTH.format(now));
+const lastMonthName = $derived(MONTH.format(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)));
+
 const versusLastMonth = $derived(
   periodComparison(forecast.projected, forecast.lastMonth > 0 ? forecast.lastMonth : null, {
     label: 'last month',
     lowerIsBetter: true,
   }),
 );
-// The fair day-to-day comparison: this month so far against last month by the
-// same point.
+
+// The fair comparison from day to day, which is this month so far against last
+// month by the same point.
 const versusSamePoint = $derived(
   periodComparison(forecast.monthToDate, forecast.lastMonthToDate > 0 ? forecast.lastMonthToDate : null, {
     label: `${lastMonthName} by the same point`,
@@ -89,53 +96,51 @@ const versusSamePoint = $derived(
   }),
 );
 
-// The chart, under the figures, with a money axis on the left.
-const PAD = { top: 10, right: 10, bottom: 22, left: 56 };
-// The figures above the chart take this much of the card's height.
-const FIGURES_H = 44;
-const HEIGHT = $derived(Math.max(80, chartHeight - FIGURES_H));
-const plotHeight = $derived(HEIGHT - PAD.top - PAD.bottom);
-let width = $state(600);
-let hovered = $state<number | null>(null);
-
+const height = $derived(Math.max(80, cardHeight - FIGURES_HEIGHT));
+const plotHeight = $derived(height - PAD.top - PAD.bottom);
 const days = $derived(forecast.days);
 const plotWidth = $derived(Math.max(1, width - PAD.left - PAD.right));
 const slot = $derived(plotWidth / Math.max(1, days.length));
 const barWidth = $derived(Math.max(2, Math.min(18, slot * 0.7)));
 
-// Rounded up so the gridlines land on round amounts.
-const axisTop = $derived.by(() => {
+const axisMax = $derived.by(() => {
   const values =
     view === 'daily'
       ? days.map((day) => day.actual ?? day.projected ?? 0)
       : days.flatMap((day) => [day.cumulative ?? 0, day.projectedCumulative ?? 0, day.lastMonthCumulative ?? 0]);
-  const peak = Math.max(0, ...values);
-  if (peak === 0) return 1;
-  const step = 10 ** Math.floor(Math.log10(peak)) / 2;
-  return Math.ceil(peak / step) * step;
+
+  return axisTop(Math.max(0, ...values));
 });
 
-const x = (index: number) => PAD.left + slot * (index + 0.5);
-const y = (value: number) => PAD.top + plotHeight - (value / axisTop) * plotHeight;
-
-/** An SVG path through one of the day series, lifting the pen over gaps. */
-function pathOf(values: (number | null)[]) {
-  let path = '';
-  let drawing = false;
-  for (const [index, value] of values.entries()) {
-    if (value === null) {
-      drawing = false;
-      continue;
-    }
-    path += `${drawing ? 'L' : 'M'}${x(index).toFixed(1)},${y(value).toFixed(1)} `;
-    drawing = true;
-  }
-  return path;
+function x(index: number): number {
+  return PAD.left + slot * (index + 0.5);
 }
 
-const actualPath = $derived(pathOf(days.map((day) => day.cumulative)));
-const projectedPath = $derived(pathOf(days.map((day) => day.projectedCumulative)));
-const lastMonthPath = $derived(pathOf(days.map((day) => day.lastMonthCumulative)));
+function y(value: number): number {
+  return PAD.top + plotHeight - (value / axisMax) * plotHeight;
+}
+
+const actualPath = $derived(
+  brokenLinePath(
+    days.map((day) => day.cumulative),
+    x,
+    y,
+  ),
+);
+const projectedPath = $derived(
+  brokenLinePath(
+    days.map((day) => day.projectedCumulative),
+    x,
+    y,
+  ),
+);
+const lastMonthPath = $derived(
+  brokenLinePath(
+    days.map((day) => day.lastMonthCumulative),
+    x,
+    y,
+  ),
+);
 const selected = $derived(hovered === null ? null : days[hovered]);
 
 // A new response or view clears the tooltip.
@@ -150,7 +155,7 @@ $effect(() => {
 	title="This month"
 	hint={view === 'daily' ? "Each day's spend; the rest at the last 7 days' pace." : `Running total against ${lastMonthName}'s, projected at the last 7 days' pace.`}
 >
-	{#snippet actions()}<FilterTabs tabs={views} bind:value={view} />{/snippet}
+	{#snippet actions()}<FilterTabs tabs={VIEWS} bind:value={view} />{/snippet}
 	<div class="flex flex-col">
 		<div class="flex h-[44px] items-start gap-6">
 			<div>
@@ -194,34 +199,34 @@ $effect(() => {
 				</div>
 			{/if}
 			{#if loading}
-				<div class="flex items-center justify-center text-[12.5px] text-zinc-600" style:height="{HEIGHT}px">Loading spend…</div>
+				<div class="flex items-center justify-center text-[12.5px] text-zinc-600" style:height="{height}px">Loading spend…</div>
 			{:else if failed}
-				<div class="flex items-center justify-center gap-2 text-[12.5px] text-zinc-500" style:height="{HEIGHT}px" role="status">
+				<div class="flex items-center justify-center gap-2 text-[12.5px] text-zinc-500" style:height="{height}px" role="status">
 					Couldn't load this month's spend.
 					<ToolbarButton onclick={load}>Retry</ToolbarButton>
 				</div>
 			{:else}
 				<svg
 					{width}
-					height={HEIGHT}
+					height={height}
 					role="img"
 					aria-label={view === 'daily' ? `Daily spend in ${monthName}, with the rest of the month projected` : `Running total for ${monthName} against ${lastMonthName}, projected to month end`}
 				>
 					{#each [0, 0.5, 1] as tick (tick)}
 						{@const lineY = PAD.top + plotHeight * (1 - tick)}
 						<line x1={PAD.left} y1={lineY} x2={width - PAD.right} y2={lineY} stroke={GRID} />
-						<text x={PAD.left - 8} y={lineY + 3.5} text-anchor="end" font-size="10" fill={AXIS_INK} class="tabular-nums">{fmtCostTotal(axisTop * tick)}</text>
+						<text x={PAD.left - 8} y={lineY + 3.5} text-anchor="end" font-size="10" fill={AXIS_INK} class="tabular-nums">{fmtCostTotal(axisMax * tick)}</text>
 					{/each}
 
 					{#if view === 'daily'}
 						{#each days as day, index (day.date.getTime())}
 							{@const value = day.actual ?? day.projected ?? 0}
-							{@const height = (value / axisTop) * plotHeight}
+							{@const barHeight = (value / axisMax) * plotHeight}
 							<rect
 								x={x(index) - barWidth / 2}
-								y={PAD.top + plotHeight - height}
+								y={PAD.top + plotHeight - barHeight}
 								width={barWidth}
-								{height}
+								height={barHeight}
 								rx="1.5"
 								fill={ACTUAL}
 								opacity={(day.actual === null ? 0.25 : 1) * (hovered === null || hovered === index ? 1 : 0.5)}
@@ -244,7 +249,7 @@ $effect(() => {
 
 					{#each days as day, index (day.date.getTime())}
 						{#if index === 0 || (index + 1) % 7 === 0}
-							<text x={x(index)} y={HEIGHT - 6} text-anchor="middle" font-size="10" fill={AXIS_INK}>{index + 1}</text>
+							<text x={x(index)} y={height - 6} text-anchor="middle" font-size="10" fill={AXIS_INK}>{index + 1}</text>
 						{/if}
 					{/each}
 				</svg>
