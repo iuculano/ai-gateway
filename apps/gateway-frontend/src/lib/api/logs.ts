@@ -28,27 +28,6 @@ export async function getLogResponse(id: string) {
   return response.json();
 }
 
-/**
- * Many payloads at once, fetched concurrently server-side.
- *
- * POST rather than GET because the id list is the payload. Capped at 100 by the
- * backend. Ids that resolve to nothing come back in meta.missing rather than
- * failing the call, so a partially expired page still renders.
- */
-export async function getLogRequestBatch(ids: string[]) {
-  const response = await client.logs.batch.request.$post({ json: { ids } });
-  return response.json();
-}
-
-export async function getLogResponseBatch(ids: string[]) {
-  const response = await client.logs.batch.response.$post({ json: { ids } });
-  return response.json();
-}
-
-export async function deleteLog(id: string): Promise<void> {
-  await client.logs[':id'].$delete({ param: { id } });
-}
-
 export async function countLogs() {
   const response = await client.logs.count.$get();
   return response.json();

@@ -19,11 +19,6 @@ export async function listPrompts(query: ListPromptsQuery = {}) {
   return response.json();
 }
 
-export async function getPrompt(id: string) {
-  const response = await client.prompts[':id'].$get({ param: { id } });
-  return response.json();
-}
-
 export async function createPrompt(input: CreatePromptInput) {
   const response = await client.prompts.$post({ json: input });
   return response.json();
