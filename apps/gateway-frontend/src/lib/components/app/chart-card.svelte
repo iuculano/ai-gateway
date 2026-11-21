@@ -2,26 +2,26 @@
 import type { Snippet } from 'svelte';
 import CardToolbar from './card-toolbar.svelte';
 
-/**
- * A page-level card for a chart.
- *
- * Same shell as TableCard - rounded-xl on border-track over surface-1 - so a
- * dashboard of charts and a table page read as the same surface. Panel is the
- * nested equivalent, for boxes inside an expanded row.
- */
-let {
-  title,
-  hint,
-  actions,
-  children,
-}: {
+// A page-level card for a chart. It has the same shell as TableCard, so that a
+// dashboard of charts and a table page read as the same surface. Panel is the
+// nested equivalent, for boxes inside an expanded row.
+
+interface Props {
   title: string;
-  /** Inline description beside the title; full text remains in its tooltip. */
+
+  /**
+   * A description beside the title. Its full text stays in the tooltip.
+   */
   hint?: string;
-  /** Right-aligned controls, e.g. a legend or a range toggle. */
+
+  /**
+   * Right-aligned controls, such as a legend or a range toggle.
+   */
   actions?: Snippet;
   children: Snippet;
-} = $props();
+}
+
+let { title, hint, actions, children }: Props = $props();
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">

@@ -1,5 +1,5 @@
-import type { ChatCompletionChunk } from '$lib/api/chat-completions';
-import type { ChatCompletion, ChatCompletionFinishReason, ChatCompletionUsage } from '$lib/api/types';
+import type { ChatCompletionChunk } from '#lib/api/chat-completions.ts';
+import type { ChatCompletion, ChatCompletionFinishReason, ChatCompletionUsage, LogPayload } from '#lib/api/types.ts';
 
 /**
  * A completion being rebuilt from whatever the gateway sent.
@@ -9,33 +9,43 @@ import type { ChatCompletion, ChatCompletionFinishReason, ChatCompletionUsage } 
  * would carry two response models that have to be kept saying the same thing.
  */
 
-/** One tool call, reassembled from the deltas that carried it. */
+/**
+ * One tool call, reassembled from the deltas that carried it.
+ */
 interface AssembledToolCall {
   id: string;
 
   name: string;
 
-  /** A JSON *string*, and one that arrives a fragment at a time. */
+  /**
+   * A JSON *string*, and one that arrives a fragment at a time.
+   */
   arguments: string;
 }
 
 export interface CompletionAssembly {
-  /** The provider's id for the completion. Empty until the first frame lands. */
+  /**
+   * The provider's id for the completion. Empty until the first frame lands.
+   */
   id: string;
 
-  /** As the provider named it, which is not always as the request spelled it. */
+  /**
+   * As the provider named it, which is not always as the request spelled it.
+   */
   model: string;
 
   content: string;
   refusal: string;
   toolCalls: AssembledToolCall[];
 
-  /** Null until the model stops, which on a stream is the second-to-last frame. */
+  /**
+   * Null until the model stops, which on a stream is the second-to-last frame.
+   */
   finishReason: ChatCompletionFinishReason | null;
 
   /**
    * Null until the usage frame arrives, and null forever if the provider never
-   * sends one. Distinguishing that from zero matters - a run that reports no
+   * sends one. That is not the same as zero, because a run that reports no
    * usage has not spent nothing.
    */
   usage: ChatCompletionUsage | null;
@@ -66,7 +76,7 @@ export function applyChunk(assembly: CompletionAssembly, chunk: ChatCompletionCh
   assembly.id = chunk.id;
   assembly.model = chunk.model;
 
-  // Read outside the choices loop on purpose: the gateway's trailing usage
+  // Read outside the choices loop on purpose. The gateway's trailing usage
   // frame carries an EMPTY choices array, so anything nested in that loop would
   // never see it.
   if (chunk.usage) {
@@ -146,6 +156,18 @@ export function fromCompletion(completion: ChatCompletion): CompletionAssembly {
 }
 
 /**
+ * Whether a streamed chunk carries anything the reader will see. Providers
+ * open with a chunk that only names the role, which is not a first token.
+ */
+export function producesOutput(chunk: ChatCompletionChunk): boolean {
+  return chunk.choices.some((choice) => {
+    const delta = choice.delta;
+
+    return Boolean(delta.content || delta.refusal || (delta.tool_calls?.length ?? 0) > 0);
+  });
+}
+
+/**
  * The assembly in the shape requestTurns() / responseTurns() read.
  *
  * Reusing the logs page's converter rather than writing a second one is what
@@ -157,10 +179,10 @@ export function fromCompletion(completion: ChatCompletion): CompletionAssembly {
  * The assembly to render.
  *
  * @returns
- * A completion-shaped payload. Partial on purpose: the converter reads
+ * A completion-shaped payload. Partial on purpose, because the converter reads
  * choices[].message and nothing else.
  */
-export function toResponsePayload(assembly: CompletionAssembly) {
+export function toResponsePayload(assembly: CompletionAssembly): LogPayload {
   return {
     choices: [
       {

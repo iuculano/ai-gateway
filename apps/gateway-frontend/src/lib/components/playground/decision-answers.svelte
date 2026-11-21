@@ -1,11 +1,11 @@
 <script lang="ts">
-import type { DecisionAnswer } from '$lib/api/decisions';
-import { QUESTION_TYPE_COLORS } from '$lib/data/decision-questions';
+import type { DecisionAnswer } from '#lib/api/decisions.ts';
+import { QUESTION_TYPE_COLORS } from '#lib/data/decision-questions.ts';
+import { fmtPercent } from '#lib/data/format.ts';
 
-/** The answers, one row each: the verdict up front, the distribution behind it. */
+// The answers, one row each, with the verdict up front and the distribution
+// behind it.
 let { answers }: { answers: DecisionAnswer[] } = $props();
-
-const pct = (probability: number) => `${Math.round(probability * 100)}%`;
 </script>
 
 {#snippet bar(label: string, probability: number, top: boolean)}
@@ -14,16 +14,16 @@ const pct = (probability: number) => `${Math.round(probability * 100)}%`;
 		<span class="h-1.5 overflow-hidden rounded-full bg-surface-4">
 			<span
 				class="block h-full rounded-full {top ? 'bg-emerald-500' : 'bg-zinc-600'}"
-				style:width={pct(probability)}
+				style:width={fmtPercent(probability)}
 			></span>
 		</span>
-		<span class="text-right text-zinc-500 tabular-nums">{pct(probability)}</span>
+		<span class="text-right text-zinc-500 tabular-nums">{fmtPercent(probability)}</span>
 	</div>
 {/snippet}
 
 <div class="flex flex-col divide-y divide-line">
-	<!-- Unkeyed: names are unique only because the page checks, and a duplicate
-	     key would throw rather than render. -->
+	<!-- Unkeyed, because names are unique only when the page has checked them, and
+	     a duplicate key would throw where this should render. -->
 	{#each answers as answer}
 		<div class="flex flex-col gap-2 px-3.5 py-3">
 			<div class="flex items-baseline gap-2.5">
@@ -43,14 +43,14 @@ const pct = (probability: number) => `${Math.round(probability * 100)}%`;
 						<span class={answer.probability >= 0.5 ? 'text-emerald-400' : 'text-zinc-300'}>
 							{answer.probability >= 0.5 ? 'true' : 'false'}
 						</span>
-						<span class="text-zinc-500">· {pct(answer.probability)} true</span>
+						<span class="text-zinc-500">· {fmtPercent(answer.probability)} true</span>
 					{:else if answer.type === 'choice'}
 						<span class="font-mono text-emerald-400">{answer.choice}</span>
 					{:else}
 						<span class="text-emerald-400">{answer.score.toFixed(2)}</span>
 					{/if}
 					{#if answer.type !== 'refusal' && answer.type !== 'predicate' && answer.confidence != null}
-						<span class="text-zinc-500">· {pct(answer.confidence)} confident</span>
+						<span class="text-zinc-500">· {fmtPercent(answer.confidence)} confident</span>
 					{/if}
 				</span>
 			</div>

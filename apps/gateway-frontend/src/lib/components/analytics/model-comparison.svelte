@@ -1,28 +1,21 @@
 <script lang="ts">
-import type { SeriesPoint } from '$lib/api/analytics';
-import CardToolbar from '$lib/components/app/card-toolbar.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { periodComparison } from '$lib/data/analytics-comparison';
-import { fmt, fmtCostTotal, fmtLatency, providerTone } from '$lib/data/format';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
+import CardToolbar from '#lib/components/app/card-toolbar.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { periodComparison } from '#lib/data/analytics-comparison.ts';
+import { fmtDollars, fmtLatency, fmtMoney, providerTone } from '#lib/data/format.ts';
 import {
   type ModelChangeMetric,
   type ModelSortKey,
   modelChangeRows,
   modelComparisonRows,
   sortModelRows,
-} from '$lib/data/model-comparison';
+} from '#lib/data/model-comparison.ts';
 
-let {
-  points,
-  failures,
-  loading,
-  previousPoints,
-  comparisonLabel,
-  comparisonUnavailable,
-  onretry,
-  onselect,
-}: {
+type View = 'table' | 'efficiency' | 'changes-spend' | 'changes-requests';
+
+interface Props {
   points: SeriesPoint[];
   failures: SeriesPoint[];
   loading: boolean;
@@ -30,29 +23,31 @@ let {
   comparisonLabel: string;
   comparisonUnavailable: boolean;
   onretry: () => void;
-  /** Called with a row's provider and model when its name is clicked. */
+
+  /**
+   * Called with a row's provider and model when its name is clicked.
+   */
   onselect?: (provider: string, model: string) => void;
-} = $props();
-let sortKey = $state<ModelSortKey>('requests');
-let ascending = $state(false);
-let view = $state<'table' | 'efficiency' | 'changes-spend' | 'changes-requests'>('table');
-const views = [
+}
+
+let { points, failures, loading, previousPoints, comparisonLabel, comparisonUnavailable, onretry, onselect }: Props =
+  $props();
+
+const VIEWS = [
   { id: 'table', label: 'Table' },
   { id: 'efficiency', label: 'Efficiency' },
   { id: 'changes-spend', label: 'Changes in spend' },
   { id: 'changes-requests', label: 'Changes in requests' },
-] satisfies { id: typeof view; label: string }[];
-const showingChanges = $derived(view === 'changes-spend' || view === 'changes-requests');
-const changeMetric: ModelChangeMetric = $derived(view === 'changes-requests' ? 'requests' : 'cost_total');
-const changeRows = $derived(modelChangeRows(points, previousPoints ?? [], changeMetric));
-const rows = $derived(sortModelRows(modelComparisonRows(points, failures), sortKey, ascending));
-const efficiencyColumns: { key: ModelSortKey; label: string }[] = [
+] satisfies { id: View; label: string }[];
+
+const EFFICIENCY_COLUMNS: { key: ModelSortKey; label: string }[] = [
   { key: 'model', label: 'Model' },
   { key: 'costPerMillion', label: '$ / 1M tokens' },
   { key: 'inputShare', label: 'Input / output' },
   { key: 'tokensPerRequest', label: 'Tokens / req' },
 ];
-const comparisonColumns: { key: ModelSortKey; label: string }[] = [
+
+const COMPARISON_COLUMNS: { key: ModelSortKey; label: string }[] = [
   { key: 'model', label: 'Model' },
   { key: 'requests', label: 'Requests' },
   { key: 'spend', label: 'Spend' },
@@ -60,35 +55,41 @@ const comparisonColumns: { key: ModelSortKey; label: string }[] = [
   { key: 'latency', label: 'Median latency' },
   { key: 'errorRate', label: 'Error rate' },
 ];
-const columns = $derived(view === 'efficiency' ? efficiencyColumns : comparisonColumns);
-function sort(key: ModelSortKey) {
+
+let sortKey = $state<ModelSortKey>('requests');
+let ascending = $state(false);
+let view = $state<View>('table');
+
+const showingChanges = $derived(view === 'changes-spend' || view === 'changes-requests');
+const changeMetric: ModelChangeMetric = $derived(view === 'changes-requests' ? 'requests' : 'cost_total');
+const changeRows = $derived(modelChangeRows(points, previousPoints ?? [], changeMetric));
+const rows = $derived(sortModelRows(modelComparisonRows(points, failures), sortKey, ascending));
+const columns = $derived(view === 'efficiency' ? EFFICIENCY_COLUMNS : COMPARISON_COLUMNS);
+
+function sort(key: ModelSortKey): void {
+  // A second click on a column reverses it. A first click sorts names from A
+  // and every figure from the largest.
   ascending = sortKey === key ? !ascending : key === 'model';
   sortKey = key;
 }
-const money = (value: number, maximumFractionDigits = 2) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 6 : maximumFractionDigits,
-  }).format(value);
-const changeValue = (value: number) => (changeMetric === 'cost_total' ? money(value) : value.toLocaleString());
-const preciseMoney = (value: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 12,
-  }).format(value);
-const preciseChangeValue = (value: number) =>
-  changeMetric === 'cost_total' ? preciseMoney(value) : value.toLocaleString();
+
+function changeValue(value: number): string {
+  return changeMetric === 'cost_total' ? fmtMoney(value) : value.toLocaleString();
+}
+
+/**
+ * The value in full, for the tooltip of a cell that shows it rounded.
+ */
+function preciseChangeValue(value: number): string {
+  return changeMetric === 'cost_total' ? fmtDollars(value, 12) : value.toLocaleString();
+}
 </script>
 
 <div class="overflow-hidden rounded-xl border border-track bg-surface-1">
 	<CardToolbar>
 		<h2 class="flex h-8 items-center text-[13px] font-medium text-zinc-200" title={showingChanges ? `Compared with ${comparisonLabel}. Largest absolute changes first.` : undefined}>Model comparison</h2>
 		<span class="text-[12.5px] text-zinc-500"><span class="font-medium text-zinc-200 tabular-nums">{loading || (showingChanges && comparisonUnavailable) ? '—' : (showingChanges ? changeRows.length : rows.length).toLocaleString()}</span> models</span>
-		<div class="ml-auto"><FilterTabs tabs={views} bind:value={view} /></div>
+		<div class="ml-auto"><FilterTabs tabs={VIEWS} bind:value={view} /></div>
 	</CardToolbar>
 	{#if showingChanges}
         {#if loading}
@@ -163,7 +164,7 @@ const preciseChangeValue = (value: number) =>
 								</button>
 							</td>
 							{#if view === 'efficiency'}
-                            <td class="px-1.5 py-1 text-right text-zinc-300 tabular-nums" title="Total spend divided by total tokens, multiplied by 1 million">{row.costPerMillion === null ? '—' : money(row.costPerMillion)}</td>
+                            <td class="px-1.5 py-1 text-right text-zinc-300 tabular-nums" title="Total spend divided by total tokens, multiplied by 1 million">{row.costPerMillion === null ? '—' : fmtMoney(row.costPerMillion)}</td>
                             <td class="px-1.5 py-1">
                                 {#if row.inputShare === null}
                                     <span class="block text-right text-zinc-400">—</span>
@@ -177,8 +178,8 @@ const preciseChangeValue = (value: number) =>
                             <td class="py-1 pr-4 pl-1.5 text-right text-zinc-300 tabular-nums">{row.tokensPerRequest === null ? '—' : row.tokensPerRequest.toLocaleString('en-US', { maximumFractionDigits: 1 })}</td>
                             {:else}
 							<td class="px-1.5 py-1 text-right text-zinc-300 tabular-nums">{row.requests.toLocaleString()}</td>
-							<td class="px-1.5 py-1 text-right font-mono text-[13px] font-medium text-zinc-200 tabular-nums" title={preciseMoney(row.spend)}>{money(row.spend)}</td>
-							<td class="px-1.5 py-1 text-right font-mono text-[13px] font-medium text-zinc-300 tabular-nums" title={row.averageCost === null ? undefined : preciseMoney(row.averageCost)}>{row.averageCost === null ? '—' : money(row.averageCost, 4)}</td>
+							<td class="px-1.5 py-1 text-right font-mono text-[13px] font-medium text-zinc-200 tabular-nums" title={fmtDollars(row.spend, 12)}>{fmtMoney(row.spend)}</td>
+							<td class="px-1.5 py-1 text-right font-mono text-[13px] font-medium text-zinc-300 tabular-nums" title={row.averageCost === null ? undefined : fmtDollars(row.averageCost, 12)}>{row.averageCost === null ? '—' : fmtMoney(row.averageCost, 4)}</td>
 							<td class="px-1.5 py-1 text-right text-zinc-400 tabular-nums">{fmtLatency(row.latency)}</td>
 							<td class="py-1 pr-4 pl-1.5 text-right tabular-nums {row.errorRate !== null && row.errorRate > 0 ? 'text-red-400' : 'text-zinc-400'}">{row.errorRate === null ? '—' : `${row.errorRate.toFixed(2)}%`}</td>
                             {/if}

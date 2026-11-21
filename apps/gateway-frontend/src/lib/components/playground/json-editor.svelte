@@ -1,27 +1,23 @@
 <script lang="ts">
-import { HIGHLIGHT_LIMIT, TOKEN_COLORS, tokenizeJson } from '$lib/data/json-highlight';
+import { HIGHLIGHT_LIMIT, TOKEN_COLORS, tokenizeJson } from '#lib/data/json-highlight.ts';
 
-/**
- * An editable JSON box, coloured like JsonView.
- *
- * A textarea with transparent text sits over a highlighted copy of the same
- * text. Both share one grid cell, font and padding, so the caret and selection
- * line up with the colours underneath, and the box grows with its content.
- */
-let {
-  value = $bindable(),
-  disabled = false,
-  label,
-}: {
+// An editable JSON box, coloured like JsonView. A textarea with transparent
+// text sits over a highlighted copy of the same text. Both share one grid cell,
+// font and padding, so the caret and the selection line up with the colours
+// underneath, and the box grows with its content.
+
+interface Props {
   value: string;
   disabled?: boolean;
   label: string;
-} = $props();
+}
 
-const tokens = $derived(value.length <= HIGHLIGHT_LIMIT ? tokenizeJson(value) : null);
+let { value = $bindable(), disabled = false, label }: Props = $props();
 
 const LAYER_CLASS =
   'col-start-1 row-start-1 m-0 px-[11px] py-2 font-mono text-[12.5px] leading-[1.6] break-words whitespace-pre-wrap';
+
+const tokens = $derived(value.length <= HIGHLIGHT_LIMIT ? tokenizeJson(value) : null);
 </script>
 
 <div

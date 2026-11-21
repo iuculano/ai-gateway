@@ -7,178 +7,159 @@ import {
   type SeriesPoint,
   type SessionsResponse,
   type TokensResponse,
-} from '$lib/api/analytics';
-import { alignedNow } from '$lib/components/analytics/analytics-filters.svelte';
-import SpendChart from '$lib/components/analytics/spend-chart.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { periodComparison } from '$lib/data/analytics-comparison';
-import { fmt, fmtBucket, fmtCostTotal, fmtSpend, providerTone } from '$lib/data/format';
+} from '#lib/api/analytics.ts';
+import { windowBefore, windowOf } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import SpendChart from '#lib/components/analytics/spend-chart.svelte';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { headlineComparisons, headlineFigures, unavailableComparisons } from '#lib/data/analytics-comparison.ts';
+import { fmt, fmtBucket, fmtCostTotal, fmtPercent, fmtSpend, providerTone } from '#lib/data/format.ts';
+import { percentileAt, percentileRank } from '#lib/data/percentiles.ts';
+import { tokenBand } from '#lib/data/users.ts';
+import { Latest } from '#lib/state/latest.svelte.ts';
 
-/**
- * The right-hand side of the Users tab: everyone, or one user, with the same
- * cards either way so picking a user changes the numbers, not the layout.
- *
- * Spend, models, apps and errors come from one series request, filtered to the
- * user when there is one; sessions from their own. Everyone's user count comes
- * in from the list, which already fetched it. The series for the window before
- * feeds the comparisons on the figures.
- */
-let {
-  userId,
-  actorId,
-  days,
-  interval,
-  activeUsers,
-  costPercentiles,
-}: {
-  /** One user, or everyone when unset. */
+interface Props {
   userId?: string;
-  /** The app the tab is narrowed to, if any. */
   actorId?: string;
   days: number;
   interval: AnalyticsInterval;
-  /** Everyone's user count, from the list's request. Unused for one user. */
   activeUsers: number | null;
-  /** Everyone's spend per user, p1 to p99, from the list's request. */
   costPercentiles: number[] | null;
-} = $props();
+}
+
+let { userId, actorId, days, interval, activeUsers, costPercentiles }: Props = $props();
 
 const ACCENT = '#10b981';
+const MUTED = '#52525b';
+
+// The same inks as the overview's spend chart.
+const INPUT_INK = '#60a5fa';
+const OUTPUT_INK = '#a78bfa';
+
 // Rows per list, most expensive first.
 const ROWS = 5;
 
-let totals = $state<SeriesPoint | null>(null);
-let timeline = $state<SeriesPoint[]>([]);
-let models = $state<SeriesPoint[]>([]);
-let apps = $state<SeriesPoint[]>([]);
-let statuses = $state<SeriesPoint[]>([]);
-let sessions = $state<SessionsResponse | null>(null);
-let tokenUsage = $state<TokensResponse | null>(null);
+// The list cards, with a name, a bar against the biggest, requests and spend.
+const ROW_GRID = 'grid grid-cols-[minmax(80px,1.2fr)_minmax(0,1fr)_56px_64px] items-center gap-3';
 
-// The window before, for the comparisons and the spend chart's "Why it
-// changed". Null when it couldn't be loaded; the rest still shows.
-let previous = $state<SeriesPoint | null>(null);
-let previousFailed = $state(0);
-let previousModels = $state<SeriesPoint[] | null>(null);
-let previousLoaded = $state(false);
-let loading = $state(true);
-let failed = $state(false);
-let request = 0;
+// The same with a tokens column.
+const LIST_GRID = 'grid grid-cols-[minmax(80px,1.2fr)_minmax(0,1fr)_52px_52px_60px] items-center gap-3';
 
-async function load() {
-  const current = ++request;
-  loading = true;
-  failed = false;
+// The points along the spread that the everyone view's card shows.
+const SPREAD = [
+  { label: 'Median user', percentile: 50 },
+  { label: 'p75', percentile: 75 },
+  { label: 'p90', percentile: 90 },
+  { label: 'p95', percentile: 95 },
+  { label: 'p99', percentile: 99 },
+];
 
-  const end = alignedNow();
-  const scope = {
-    start_date: new Date(end - days * 86_400_000).toISOString(),
-    end_date: new Date(end).toISOString(),
-    actor_id: actorId,
-    user_id: userId,
+interface Pane {
+  totals: SeriesPoint | null;
+  timeline: SeriesPoint[];
+  models: SeriesPoint[];
+  apps: SeriesPoint[];
+  statuses: SeriesPoint[];
+  sessions: SessionsResponse;
+  tokenUsage: TokensResponse;
+  previous: { totals: SeriesPoint | null; statuses: SeriesPoint[]; models: SeriesPoint[] } | null;
+}
+
+const pane = new Latest<Pane>();
+
+async function fetchPane(): Promise<Pane> {
+  const range = windowOf(days);
+  const scope = { ...range, actor_id: actorId, user_id: userId };
+
+  const [[total, byBucket, byModel, byApp, byStatus], sessions, tokenUsage, earlier] = await Promise.all([
+    fetchSeries({
+      ...scope,
+      interval: interval,
+      groupings: [[], ['bucket'], ['provider', 'model'], ['actor'], ['status']],
+    }),
+    fetchSessions({ ...scope, limit: ROWS }),
+    fetchTokens(scope),
+
+    // The window before, as the overview compares against it. Caught here,
+    // because a failure in it must not hide this window's figures.
+    fetchSeries({ ...scope, ...windowBefore(days), groupings: [[], ['status'], ['provider', 'model']] }).catch(
+      () => null,
+    ),
+  ]);
+
+  return {
+    totals: total[0] ?? null,
+    timeline: byBucket,
+    models: byModel.toSorted((a, b) => b.cost_total - a.cost_total),
+    apps: byApp.toSorted((a, b) => b.cost_total - a.cost_total),
+    statuses: byStatus,
+    sessions: sessions,
+    tokenUsage: tokenUsage,
+    previous: earlier && { totals: earlier[0][0] ?? null, statuses: earlier[1], models: earlier[2] },
   };
+}
 
-  // The equally long window just before, as the overview compares against.
-  const before = {
-    ...scope,
-    start_date: new Date(end - 2 * days * 86_400_000).toISOString(),
-    end_date: scope.start_date,
-  };
-
-  try {
-    const [[total, byBucket, byModel, byApp, byStatus], sessionsResult, tokensResult, earlier] = await Promise.all([
-      fetchSeries({ ...scope, interval, groupings: [[], ['bucket'], ['provider', 'model'], ['actor'], ['status']] }),
-      fetchSessions({ ...scope, limit: ROWS }),
-      fetchTokens(scope),
-      // A failure here mustn't hide the current figures.
-      fetchSeries({ ...before, groupings: [[], ['status'], ['provider', 'model']] }).catch(() => null),
-    ]);
-    if (current !== request) return;
-    previousLoaded = earlier !== null;
-    previous = earlier?.[0]?.[0] ?? null;
-    previousFailed = earlier?.[1]?.find((point) => point.status === 'failed')?.requests ?? 0;
-    previousModels = earlier?.[2] ?? null;
-    totals = total[0] ?? null;
-    timeline = byBucket;
-    models = byModel.toSorted((a, b) => b.cost_total - a.cost_total);
-    apps = byApp.toSorted((a, b) => b.cost_total - a.cost_total);
-    statuses = byStatus;
-    sessions = sessionsResult;
-    tokenUsage = tokensResult;
-  } catch {
-    if (current === request) failed = true;
-  } finally {
-    if (current === request) loading = false;
-  }
+function load(): void {
+  void pane.load(fetchPane);
 }
 
 $effect(() => {
   void [userId, actorId, days, interval];
-  void load();
+  load();
 });
+
+const loading = $derived(pane.loading);
+const failed = $derived(pane.error !== null);
+const totals = $derived(pane.value?.totals ?? null);
+const timeline = $derived(pane.value?.timeline ?? []);
+const models = $derived(pane.value?.models ?? []);
+const apps = $derived(pane.value?.apps ?? []);
+const statuses = $derived(pane.value?.statuses ?? []);
+const sessions = $derived(pane.value?.sessions ?? null);
+const tokenUsage = $derived(pane.value?.tokenUsage ?? null);
+const previous = $derived(pane.value?.previous ?? null);
+const previousModels = $derived(previous?.models ?? null);
 
 // Only the first load shows placeholders. After that the last numbers stay up,
-// dimmed, until the next ones arrive, so picking a user doesn't flash the pane.
-const first = $derived(loading && totals === null);
-const requests = $derived(totals?.requests ?? 0);
-const failedRequests = $derived(statuses.find((point) => point.status === 'failed')?.requests ?? 0);
-const errorRate = $derived(requests > 0 ? (failedRequests / requests) * 100 : 0);
-const topSessions = $derived(sessions?.top ?? []);
+// dimmed, until the next ones arrive, so that picking a user does not flash the
+// pane.
+const first = $derived(loading && pane.value === null);
+const headline = $derived(headlineFigures(totals, statuses));
+const rangeLabel = $derived(days === 1 ? 'Last 24 hours' : `Last ${days} days`);
+const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${days} days`}`);
 
 // Each figure against the window before, as on the overview.
-const comparisons = $derived.by(() => {
-  const label = comparisonLabel;
-  if (!previousLoaded) {
-    const unavailable = { text: 'Unavailable', color: '#a1a1aa', title: `Could not load ${label}.` };
-    return { spend: unavailable, requests: unavailable, tokens: unavailable, errors: unavailable };
-  }
-  // No row at all means nothing happened in the window before.
-  const previousRequests = previous?.requests ?? 0;
-  return {
-    spend: periodComparison(totals?.cost_total ?? 0, previous?.cost_total ?? 0, {
-      label,
-      lowerIsBetter: true,
-    }),
-    requests: periodComparison(requests, previousRequests, { label }),
-    tokens: periodComparison(totals?.total_tokens ?? 0, previous?.total_tokens ?? 0, { label }),
-    errors: periodComparison(
-      requests > 0 ? errorRate : null,
-      previousRequests > 0 ? (previousFailed / previousRequests) * 100 : null,
-      { label, lowerIsBetter: true },
-    ),
-  };
-});
-
-// One user's spend, placed among everyone's: the share of users who spent
-// less, read off everyone's percentiles.
-const userSpend = $derived(totals?.cost_total ?? 0);
-const spendsMoreThan = $derived(
-  costPercentiles?.length ? costPercentiles.filter((value) => value < userSpend).length : null,
+const comparisons = $derived(
+  previous
+    ? headlineComparisons(headline, headlineFigures(previous.totals, previous.statuses), comparisonLabel)
+    : unavailableComparisons(comparisonLabel),
 );
+
+// One user's spend placed among everyone's, as the share of users who spent
+// less.
+const userSpend = $derived(totals?.cost_total ?? 0);
+const spendsMoreThan = $derived(costPercentiles?.length ? percentileRank(costPercentiles, userSpend) : null);
 const comparison = $derived([
   { label: 'This user', value: userSpend, color: ACCENT },
-  { label: 'Median user', value: costPercentiles?.[49] ?? 0, color: '#52525b' },
-  { label: 'p95 user', value: costPercentiles?.[94] ?? 0, color: '#52525b' },
+  { label: 'Median user', value: percentileAt(costPercentiles ?? [], 50), color: MUTED },
+  { label: 'p95 user', value: percentileAt(costPercentiles ?? [], 95), color: MUTED },
 ]);
 const comparisonTop = $derived(Math.max(0, ...comparison.map((row) => row.value)));
-// Everyone's spend per user at a few points along the spread, against the
-// heaviest, for the everyone view's card.
-const spendLevels = $derived([
-  { label: 'Median user', value: costPercentiles?.[49] ?? 0 },
-  { label: 'p75', value: costPercentiles?.[74] ?? 0 },
-  { label: 'p90', value: costPercentiles?.[89] ?? 0 },
-  { label: 'p95', value: costPercentiles?.[94] ?? 0 },
-  { label: 'p99', value: costPercentiles?.[98] ?? 0 },
-]);
-const topModel = $derived(models[0]);
 
-// The tokens card: all over the requests a provider answered, as gateway cache
-// hits reached none. Inks as on the overview's spend chart.
-const INPUT_INK = '#60a5fa';
-const OUTPUT_INK = '#a78bfa';
+const spendLevels = $derived(
+  SPREAD.map((level) => ({ label: level.label, value: percentileAt(costPercentiles ?? [], level.percentile) })),
+);
+
+const topModel = $derived(models[0]);
+const topModelShare = $derived(topModel && userSpend > 0 ? topModel.cost_total / userSpend : null);
+const topSessions = $derived(sessions?.top ?? []);
+const topSessionSpend = $derived(topSessions[0]?.cost_total ?? 0);
+const topAppSpend = $derived(apps[0]?.cost_total ?? 0);
+
+// The tokens card covers only the requests a provider answered, since a
+// gateway cache hit reached none.
 const tokenTotal = $derived((tokenUsage?.input_tokens ?? 0) + (tokenUsage?.output_tokens ?? 0));
 const costPerMillion = $derived(tokenTotal > 0 ? ((totals?.cost_total ?? 0) / tokenTotal) * 1_000_000 : null);
 const tokenSides = $derived(
@@ -201,41 +182,15 @@ const tokenSides = $derived(
       ]
     : [],
 );
-
-/** A token amount as a band edge: '500', '4K'. */
-function tokenAmount(tokens: number) {
-  return tokens >= 1000 ? `${tokens / 1000}K` : `${tokens}`;
-}
-
-/** A token band's range: '< 1K', '1K – 4K', '64K+'. */
-function tokenBand(min: number, max: number | null) {
-  if (min === 0 && max !== null) return `< ${tokenAmount(max)}`;
-  return max === null ? `${tokenAmount(min)}+` : `${tokenAmount(min)} – ${tokenAmount(max)}`;
-}
-
-function percent(share: number) {
-  return `${Math.round(share * 100)}%`;
-}
-const topModelShare = $derived(topModel && userSpend > 0 ? topModel.cost_total / userSpend : null);
-
-// The list cards: name, a bar against the biggest, requests and spend.
-const ROW_GRID = 'grid grid-cols-[minmax(80px,1.2fr)_minmax(0,1fr)_56px_64px] items-center gap-3';
-// The same with a tokens column.
-const LIST_GRID = 'grid grid-cols-[minmax(80px,1.2fr)_minmax(0,1fr)_52px_52px_60px] items-center gap-3';
-
-const topSessionSpend = $derived(topSessions[0]?.cost_total ?? 0);
-const topAppSpend = $derived(apps[0]?.cost_total ?? 0);
-
-const rangeLabel = $derived(days === 1 ? 'Last 24 hours' : `Last ${days} days`);
-const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${days} days`}`);
 </script>
 
-<!-- No gap of its own: StatGrid already leaves the same space under it as on every tab. -->
+<!-- No gap of its own, because StatGrid already leaves the same space under it
+     as on every tab. -->
 <div class="flex min-w-0 flex-col transition-opacity" style:opacity={loading && !first ? 0.6 : 1} aria-busy={loading}>
 	<StatGrid compact columns={5}>
 		<StatCard compact label="Spend" value={first ? '—' : fmtSpend(totals?.cost_total ?? 0)} comparison={first ? undefined : comparisons.spend} />
 		{#if userId}
-			<StatCard compact label="Requests" value={first ? '—' : fmt(requests)} comparison={first ? undefined : comparisons.requests} />
+			<StatCard compact label="Requests" value={first ? '—' : fmt(headline.requests)} comparison={first ? undefined : comparisons.requests} />
 		{:else}
 			<StatCard compact label="Active users" value={activeUsers === null ? '—' : fmt(activeUsers)} />
 		{/if}
@@ -244,8 +199,8 @@ const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${da
 		<StatCard
 			compact
 			label="Error rate"
-			value={first ? '—' : `${errorRate.toFixed(2)}%`}
-			comparison={first ? undefined : comparisons.errors}
+			value={first ? '—' : `${(headline.errorRate ?? 0).toFixed(2)}%`}
+			comparison={first ? undefined : comparisons.errorRate}
 		/>
 	</StatGrid>
 
@@ -322,7 +277,7 @@ const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${da
 							</div>
 						{/each}
 						<p class="pt-1 text-[11.5px] text-zinc-500">
-							Half of users spend under {fmtSpend(costPercentiles[49] ?? 0)}; the top 1% over {fmtSpend(costPercentiles[98] ?? 0)}.
+							Half of users spend under {fmtSpend(percentileAt(costPercentiles, 50))}; the top 1% over {fmtSpend(percentileAt(costPercentiles, 99))}.
 						</p>
 					{/if}
 				</div>
@@ -371,14 +326,14 @@ const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${da
 							<span class="flex items-center gap-1.5"><span class="size-2 rounded-sm" style:background={INPUT_INK}></span>In <span class="text-zinc-200 tabular-nums">{fmt(tokenUsage.input_tokens)}</span></span>
 							<span class="flex items-center gap-1.5"><span class="size-2 rounded-sm" style:background={OUTPUT_INK}></span>Out <span class="text-zinc-200 tabular-nums">{fmt(tokenUsage.output_tokens)}</span></span>
 							<span title="Input tokens the provider served from its prompt cache">
-								<span class="text-zinc-200 tabular-nums">{percent(tokenUsage.input_tokens > 0 ? tokenUsage.cached_input_tokens / tokenUsage.input_tokens : 0)}</span> of input from prompt cache
+								<span class="text-zinc-200 tabular-nums">{fmtPercent(tokenUsage.input_tokens > 0 ? tokenUsage.cached_input_tokens / tokenUsage.input_tokens : 0)}</span> of input from prompt cache
 							</span>
 							{#if costPerMillion !== null}
 								<span><span class="text-zinc-200 tabular-nums">{fmtCostTotal(costPerMillion)}</span> per 1M tokens</span>
 							{/if}
 						</div>
 					</div>
-					<!-- How big requests and answers are: each request counted into a size band. -->
+					<!-- How big requests and answers are, with each request counted into a size band. -->
 					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						{#each tokenSides as side (side.title)}
 							<div class="flex flex-col gap-1">
@@ -392,7 +347,7 @@ const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${da
 										<div class="h-[10px] w-full">
 											<div class="h-full rounded-r-[3px]" style:width="{(band.requests / tokenUsage.requests) * 100}%" style:background={side.ink}></div>
 										</div>
-										<span class="text-right text-[11.5px] text-zinc-400 tabular-nums">{percent(band.requests / tokenUsage.requests)}</span>
+										<span class="text-right text-[11.5px] text-zinc-400 tabular-nums">{fmtPercent(band.requests / tokenUsage.requests)}</span>
 									</div>
 								{/each}
 							</div>
@@ -409,7 +364,7 @@ const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${da
 				{:else}
 					{@render columns(LIST_GRID, ['Session', '', 'Requests', 'Tokens', 'Spend'])}
 					{#each topSessions as row (row.session_id)}
-						<!-- Who took part: the one user, or how many shared it. -->
+						<!-- Who took part, as the one user or how many shared it. -->
 						{@const who = row.user_id || (row.users > 1 ? `${fmt(row.users)} users` : '')}
 						<div class={LIST_GRID}>
 							<span class="min-w-0 truncate text-[12.5px]" title={who ? `${row.session_id} · ${who}` : row.session_id}>
@@ -460,7 +415,8 @@ const comparisonLabel = $derived(`the previous ${days === 1 ? '24 hours' : `${da
 	</div>
 </div>
 
-<!-- The header over a list card's rows: the first name on the left, the rest right-aligned. -->
+<!-- The header over a list card's rows, with the first name on the left and the
+     rest right-aligned. -->
 {#snippet columns(grid: string, names: string[])}
 	<div class="{grid} pb-1 text-[11px] text-zinc-500">
 		{#each names as name, index (index)}<span class={index > 1 ? 'text-right' : ''}>{name}</span>{/each}

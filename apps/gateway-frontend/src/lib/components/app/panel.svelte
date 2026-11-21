@@ -1,25 +1,29 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * A bordered sub-section inside an expanded row - the limits and scopes blocks
- * on keys, the diff/metadata block on audit, the request and response bodies on
- * logs. All six were the same box rebuilt by hand.
- */
-let {
-  title,
-  header,
-  actions,
-  children,
-}: {
-  /** Rendered as an uppercase caption in the header bar. Omit for a bare box. */
+// A bordered sub-section inside an expanded row, such as the limits and scopes
+// blocks on keys or the request and response bodies on logs.
+
+interface Props {
+  /**
+   * Shown as an uppercase caption in the header bar. Without it, and without
+   * a header or actions, the box is bare.
+   */
   title?: string;
-  /** Replaces the caption when the left of the bar needs a control instead. */
+
+  /**
+   * Replaces the caption, when the left of the bar needs a control.
+   */
   header?: Snippet;
-  /** Right-aligned controls in the header bar, e.g. a copy button. */
+
+  /**
+   * Right-aligned controls in the header bar, such as a copy button.
+   */
   actions?: Snippet;
   children: Snippet;
-} = $props();
+}
+
+let { title, header, actions, children }: Props = $props();
 </script>
 
 <!-- A flex column so a panel that has been stretched by its grid row can hand

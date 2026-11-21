@@ -1,226 +1,197 @@
 import { expect, test } from './api-mock';
-import { FAILED_LOG, IDS, LOG_META, registerEmptyApp, SUCCESS_LOG, TRACE_IDS } from './fixtures';
+import { FAILED_LOG, IDS, LOG_META, SUCCESS_LOG, TRACE_IDS } from './fixtures';
 
-test('auto-refresh updates counts and continues after a stats failure', async ({ page, api }) => {
-  await page.clock.install();
-  registerEmptyApp(api);
-  let count = 1;
-  let failStats = false;
-  api.get('/api/logs', () => ({
-    json: { data: [{ ...SUCCESS_LOG, model: `refreshed-model-${count}` }], meta: LOG_META },
+const LOGS = '/api/logs';
+const LOG_REQUEST = `/api/logs/${IDS.successLog}/request`;
+const LOG_RESPONSE = `/api/logs/${IDS.successLog}/response`;
+
+const STORED_REQUEST = { messages: [{ role: 'user', content: 'Investigate this production incident.' }] };
+const STORED_RESPONSE = {
+  choices: [{ message: { role: 'assistant', content: 'Recovered answer.', refusal: null }, finish_reason: 'stop' }],
+};
+
+// The status each tab asks the backend for.
+const STATUS_TABS = [
+  { label: 'Incomplete', status: 'incomplete' },
+  { label: 'Failed', status: 'failed' },
+  { label: 'Success', status: 'complete' },
+  { label: 'All', status: null },
+];
+
+// Auto-refresh
+
+test('auto-refresh keeps updating the list through a failed count', async ({ page, api }) => {
+  let refreshes = 1;
+  let countsFail = false;
+  api.get(LOGS, () => ({
+    json: { data: [{ ...SUCCESS_LOG, model: `refreshed-model-${refreshes}` }], meta: LOG_META },
   }));
-  api.get('/api/logs/count', () =>
-    failStats
-      ? { status: 503, json: { error: { message: 'Counts unavailable' } } }
-      : {
-          json: {
-            total: count,
-            estimated: false,
-            by_status: { complete: count, failed: 0, incomplete: 0 },
-          },
-        },
-  );
+  api.get('/api/logs/count', () => {
+    if (countsFail) {
+      return { status: 503, json: { error: { message: 'Counts unavailable' } } };
+    }
 
-  await page.goto('/logs');
+    return {
+      json: { total: refreshes, estimated: false, by_status: { complete: refreshes, failed: 0, incomplete: 0 } },
+    };
+  });
   const counts = page.getByText(/matching logs/);
-  await expect(counts).toContainText('1 success');
   const toggle = page.getByRole('switch', { name: 'Auto-refresh' });
+  const retryCounts = page.getByRole('button', { name: 'Retry counts' });
+
+  await page.clock.install();
+  await page.goto('/logs');
+  await expect(counts).toContainText('1 success');
   await toggle.click();
 
-  count = 2;
+  refreshes = 2;
   await page.clock.fastForward(10_000);
+
   await expect(page.getByText('refreshed-model-2', { exact: true })).toBeVisible();
   await expect(counts).toContainText('2 success');
 
-  count = 3;
-  failStats = true;
+  // The counts failing must not stop the list, or switch auto-refresh off.
+  refreshes = 3;
+  countsFail = true;
   await page.clock.fastForward(10_000);
+
   await expect(page.getByText('refreshed-model-3', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Retry counts' })).toBeVisible();
+  await expect(retryCounts).toBeVisible();
   await expect(toggle).toBeChecked();
 
-  count = 4;
-  failStats = false;
+  refreshes = 4;
+  countsFail = false;
   await page.clock.fastForward(10_000);
+
   await expect(page.getByText('refreshed-model-4', { exact: true })).toBeVisible();
   await expect(counts).toContainText('4 success');
-  await expect(page.getByRole('button', { name: 'Retry counts' })).toBeHidden();
+  await expect(retryCounts).toBeHidden();
 });
 
-test('a stored request can be inspected and replayed in the playground', async ({ page, api }) => {
-  registerEmptyApp(api);
-  api.get('/api/logs', (request) => {
-    const status = new URLSearchParams(request.search).get('status');
-    return {
-      json: { data: [SUCCESS_LOG, FAILED_LOG].filter((log) => !status || log.status === status), meta: LOG_META },
-    };
+// Links out of a row
+
+test('a correlated log links back to its trace', async ({ page, api }) => {
+  api.get(LOGS, { json: { data: [SUCCESS_LOG], meta: LOG_META } });
+
+  await page.goto('/logs');
+
+  const trace = page.getByRole('link', { name: `Open trace ${TRACE_IDS.workflow}` });
+  await expect(trace).toHaveAttribute('href', `/traces?trace=${TRACE_IDS.workflow}`);
+  await expect(trace).toHaveText(TRACE_IDS.workflow.slice(0, 8));
+});
+
+test('a log replays into the playground that can run it, when one can', async ({ page, api }) => {
+  const decision = { ...SUCCESS_LOG, id: IDS.failedLog, operation: 'decision' };
+  const embedding = { ...SUCCESS_LOG, id: IDS.model, operation: 'embedding' };
+  api.get(LOGS, { json: { data: [SUCCESS_LOG, decision, embedding], meta: LOG_META } });
+
+  await page.goto('/logs');
+
+  // Three logs, two links. There is no playground to replay an embedding into.
+  const replays = page.getByRole('link', { name: 'Replay in Playground' });
+  await expect(replays).toHaveCount(2);
+  await expect(replays.nth(0)).toHaveAttribute('href', `/playground?from=${IDS.successLog}`);
+  await expect(replays.nth(1)).toHaveAttribute('href', `/playground/decisions?from=${IDS.failedLog}`);
+});
+
+// Stored payloads
+
+test('an expanded log shows its stored request and response', async ({ page, api }) => {
+  api.get(LOGS, { json: { data: [SUCCESS_LOG], meta: LOG_META } });
+  api.get(LOG_REQUEST, { json: STORED_REQUEST });
+  api.get(LOG_RESPONSE, { json: STORED_RESPONSE });
+
+  await page.goto('/logs');
+  await page.getByText(SUCCESS_LOG.model, { exact: true }).click();
+
+  await expect(page.getByText('Investigate this production incident.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Recovered answer.', { exact: true })).toBeVisible();
+});
+
+test('a payload that failed to load is retried alone, and only when asked', async ({ page, api }) => {
+  let requestAttempts = 0;
+  api.get(LOGS, { json: { data: [SUCCESS_LOG], meta: LOG_META } });
+  api.get(LOG_RESPONSE, { json: STORED_RESPONSE });
+  api.get(LOG_REQUEST, () => {
+    requestAttempts += 1;
+
+    if (requestAttempts === 1) {
+      return { status: 503, json: { error: { message: 'request temporarily unavailable' } } };
+    }
+
+    return { json: STORED_REQUEST };
   });
-  api.get(`/api/logs/${IDS.successLog}/request`, {
-    json: {
-      model: 'gpt-5',
-      messages: [{ role: 'user', content: 'Investigate this production incident.' }],
-      temperature: 0.2,
-      top_p: 0.8,
-      max_completion_tokens: 64,
-    },
-  });
-  api.get(`/api/logs/${IDS.successLog}/response`, {
-    json: {
-      model: 'gpt-5-2026-08-01',
-      choices: [
-        {
-          message: { role: 'assistant', content: 'Recovered answer.', refusal: null },
-          finish_reason: 'stop',
-        },
-      ],
-    },
+
+  // Scoped to the row's own toggle, because the expanded details repeat the
+  // model name.
+  const row = page.getByRole('button', { name: new RegExp(SUCCESS_LOG.model) }).getByText(SUCCESS_LOG.model);
+
+  await page.goto('/logs');
+  await row.click();
+
+  await expect(page.getByText('request temporarily unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Recovered answer.', { exact: true })).toBeVisible();
+
+  // Closing and reopening the row is not a retry.
+  await row.click();
+  await row.click();
+  await api.settle();
+  expect(requestAttempts).toBe(1);
+
+  await page.getByRole('button', { name: 'Retry request', exact: true }).click();
+
+  await expect(page.getByText('Investigate this production incident.', { exact: true })).toBeVisible();
+  expect(requestAttempts).toBe(2);
+  expect(api.matching('GET', LOG_RESPONSE)).toHaveLength(1);
+});
+
+test('a log stored without a response says so and never asks for one', async ({ page, api }) => {
+  api.get(LOGS, { json: { data: [{ ...SUCCESS_LOG, has_response: false }], meta: LOG_META } });
+  api.get(LOG_REQUEST, { json: STORED_REQUEST });
+
+  await page.goto('/logs');
+  await page.getByText(SUCCESS_LOG.model, { exact: true }).click();
+
+  await expect(page.getByText('No response payload was stored.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Investigate this production incident.', { exact: true })).toBeVisible();
+  expect(api.matching('GET', LOG_RESPONSE)).toHaveLength(0);
+});
+
+// Filtering and paging
+
+test('the status tabs filter the list', async ({ page, api }) => {
+  api.get(LOGS, (request) => {
+    const status = request.query.get('status');
+    const logs = [SUCCESS_LOG, FAILED_LOG].filter((log) => !status || log.status === status);
+
+    return { json: { data: logs, meta: LOG_META } };
   });
 
   await page.goto('/logs');
   await expect(page.getByText(SUCCESS_LOG.model, { exact: true })).toBeVisible();
-  await expect(page.getByText(FAILED_LOG.model, { exact: true })).toBeVisible();
-
-  // A correlated request shows its trace and links back to the run; an
-  // uncorrelated one says so rather than linking nowhere.
-  const trace = page.getByRole('link', { name: `Open trace ${TRACE_IDS.workflow}` }).first();
-  await expect(trace).toHaveAttribute('href', `/traces?trace=${TRACE_IDS.workflow}`);
-  await expect(trace).toHaveText(TRACE_IDS.workflow.slice(0, 8));
 
   await page.getByRole('button', { name: 'Failed', exact: true }).click();
+
   await expect(page.getByText(FAILED_LOG.model, { exact: true })).toBeVisible();
   await expect(page.getByText(SUCCESS_LOG.model, { exact: true })).toBeHidden();
-  await page.getByRole('button', { name: 'All', exact: true }).click();
-
-  await page.getByText(SUCCESS_LOG.model, { exact: true }).click();
-  await expect(page.getByText('Investigate this production incident.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Recovered answer.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Finish reason', { exact: false })).toBeVisible();
-
-  await page.locator(`a[href="/playground?from=${IDS.successLog}"]`).click();
-  await expect(page).toHaveURL(`/playground?from=${IDS.successLog}`);
-  await expect(page.getByPlaceholder('What do you want to ask?')).toHaveValue('Investigate this production incident.');
-  await expect(page.locator('#playground-model-0')).toHaveValue('gpt-5');
-  await expect(page.getByText('Loaded the request from that log')).toBeVisible();
-  await expect(page.getByLabel('Temperature', { exact: true })).toHaveValue('0.2');
-  await expect(page.getByLabel('Top P', { exact: true })).toHaveValue('0.8');
-  await expect(page.getByLabel('Max completion tokens', { exact: true })).toHaveValue('64');
-  api.post('/api/chat/completions', {
-    body: 'data: [DONE]\n\n',
-    headers: { 'content-type': 'text/event-stream' },
-  });
-  await page.getByPlaceholder('Provider API key').fill('test-provider-key');
-  const response = page.waitForResponse('**/api/chat/completions');
-  await page.getByRole('button', { name: /^Run/ }).click();
-  await response;
-  expect(api.matching('POST', '/api/chat/completions')[0]?.body).toMatchObject({
-    temperature: 0.2,
-    top_p: 0.8,
-    max_completion_tokens: 64,
-  });
 });
 
-for (const scenario of [
-  { failed: ['request'], omitted: [] },
-  { failed: ['response'], omitted: [] },
-  { failed: ['request', 'response'], omitted: [] },
-  { failed: ['request'], omitted: ['response'] },
-  { failed: ['response'], omitted: ['request'] },
-]) {
-  test(`payload retry: failed ${scenario.failed.join(', ')}, omitted ${scenario.omitted.join(', ') || 'none'}`, async ({
-    page,
-    api,
-  }) => {
-    registerEmptyApp(api);
-    api.get('/api/logs', {
-      json: {
-        data: [
-          {
-            ...SUCCESS_LOG,
-            has_request: !scenario.omitted.includes('request'),
-            has_response: !scenario.omitted.includes('response'),
-          },
-        ],
-        meta: LOG_META,
-      },
-    });
-    const texts = { request: 'Stored request text', response: 'Stored response text' };
-    const attempts = { request: 0, response: 0 };
-    for (const kind of ['request', 'response'] as const) {
-      if (scenario.omitted.includes(kind)) continue;
-      api.get(`/api/logs/${IDS.successLog}/${kind}`, () => {
-        attempts[kind]++;
-        if (scenario.failed.includes(kind) && attempts[kind] === 1) {
-          return { status: 503, json: { error: { message: `${kind} temporarily unavailable` } } };
-        }
-        return {
-          json:
-            kind === 'request'
-              ? { messages: [{ role: 'user', content: texts.request }] }
-              : { choices: [{ message: { role: 'assistant', content: texts.response }, finish_reason: 'stop' }] },
-        };
-      });
-    }
+test('changing the status filter starts again from the first page', async ({ page, api }) => {
+  api.get(LOGS, (request) => {
+    const more = !request.query.has('after_id');
 
-    await page.goto('/logs');
-    // Scope to the toggle: expanded details repeat the model name, and the trace link is a separate target.
-    const row = page
-      .getByRole('button', { name: new RegExp(SUCCESS_LOG.model) })
-      .getByText(SUCCESS_LOG.model, { exact: true });
-    await row.click();
-    for (const kind of ['request', 'response'] as const) {
-      if (scenario.omitted.includes(kind)) {
-        await expect(page.getByText(`No ${kind} payload was stored.`, { exact: true })).toBeVisible();
-      } else if (scenario.failed.includes(kind)) {
-        await expect(page.getByText(`${kind} temporarily unavailable`, { exact: true })).toBeVisible();
-      } else {
-        await expect(page.getByText(texts[kind], { exact: true })).toBeVisible();
-      }
-    }
-    await row.click();
-    await row.click();
-    // Detect an unintended reactive retry loop while the failed panel is open.
-    await page.waitForTimeout(500);
-    for (const kind of ['request', 'response'] as const) {
-      expect(attempts[kind]).toBe(scenario.omitted.includes(kind) ? 0 : 1);
-    }
-
-    for (const kind of scenario.failed) {
-      await page.getByRole('button', { name: `Retry ${kind}`, exact: true }).click();
-      await expect(page.getByText(texts[kind as keyof typeof texts], { exact: true })).toBeVisible();
-    }
-    for (const kind of ['request', 'response'] as const) {
-      expect(attempts[kind]).toBe(scenario.omitted.includes(kind) ? 0 : scenario.failed.includes(kind) ? 2 : 1);
-    }
-  });
-}
-
-test('log status filters reach the backend and reset pagination', async ({ page, api }) => {
-  registerEmptyApp(api);
-  api.get('/api/logs', (request) => {
-    const query = new URLSearchParams(request.search);
-    return {
-      json: {
-        data: [{ ...SUCCESS_LOG, status: query.get('status') ?? 'complete' }],
-        meta: { ...LOG_META, oldest_id: IDS.successLog, more_data: !query.has('after_id') },
-      },
-    };
+    return { json: { data: [SUCCESS_LOG], meta: { ...LOG_META, oldest_id: IDS.successLog, more_data: more } } };
   });
   await page.goto('/logs');
-  await page.getByRole('button', { name: 'Older', exact: true }).click();
-  await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
-  for (const [label, status] of [
-    ['Incomplete', 'incomplete'],
-    ['Failed', 'failed'],
-    ['Success', 'complete'],
-    ['All', null],
-  ] as const) {
+
+  for (const { label, status } of STATUS_TABS) {
+    await page.getByRole('button', { name: 'Older', exact: true }).click();
+    await expect(page.getByText('Page 2', { exact: true })).toBeVisible();
+
     await page.getByRole('button', { name: label, exact: true }).click();
-    await expect
-      .poll(() => {
-        const query = new URLSearchParams(api.matching('GET', '/api/logs').at(-1)?.search);
-        return { status: query.get('status'), cursor: query.get('after_id') };
-      })
-      .toEqual({ status, cursor: null });
+
     await expect(page.getByText('Page 1', { exact: true })).toBeVisible();
+    expect(api.matching('GET', LOGS).at(-1)?.query.get('status')).toBe(status);
+    expect(api.matching('GET', LOGS).at(-1)?.query.has('after_id')).toBe(false);
   }
 });

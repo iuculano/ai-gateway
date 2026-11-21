@@ -8,8 +8,9 @@ import type {
   PromptVersion,
   Trace,
   TraceDetail,
+  Webhook,
 } from '../../src/lib/api/types';
-import type { ApiMock, RecordedApiRequest } from './api-mock';
+import type { ApiMock, MockApiResponse, RecordedApiRequest } from './api-mock';
 
 export const IDS = {
   apiKey: '0198f100-0000-7000-8000-000000000001',
@@ -21,9 +22,12 @@ export const IDS = {
   model: '0198f100-0000-7000-8000-000000000007',
   trace: '0198f100-0000-7000-8000-000000000008',
   failedTrace: '0198f100-0000-7000-8000-000000000009',
+  webhook: '0198f100-0000-7000-8000-00000000000a',
 } as const;
 
-/** W3C ids, which are hex rather than uuids - see the trace schemas. */
+/**
+ * W3C ids, which are hex rather than uuids - see the trace schemas.
+ */
 export const TRACE_IDS = {
   workflow: 'f3a8c17d4e2b49b6a5018c9209f4d811',
   failed: '4bf92f3577b34da6a3ce929d0e0e4736',
@@ -78,6 +82,18 @@ export const PROMPT_VERSION: PromptVersion = {
   version: 1,
   created_at: CREATED_AT,
   updated_at: UPDATED_AT,
+};
+
+export const WEBHOOK: Webhook = {
+  creator_id: null,
+  id: IDS.webhook,
+  name: 'Billing webhook',
+  description: 'Original description',
+  endpoint: 'https://example.com/webhook',
+  filter: {},
+  tags: {},
+  created_at: CREATED_AT,
+  updated_at: CREATED_AT,
 };
 
 export const SUCCESS_LOG: Log = {
@@ -153,8 +169,9 @@ export const FAILED_TRACE: Trace = {
 };
 
 /**
- * The waterfall as the backend projects it: application spans and the gateway
- * log correlated to them, already ordered, with their depth resolved.
+ * The waterfall as the backend projects it, which is application spans and the
+ * gateway log correlated to them, already ordered and with their depth
+ * resolved.
  */
 export const TRACE_DETAIL: TraceDetail = {
   trace: { ...TRACE, detail_status: 'complete', window_ms: 12_180 },
@@ -261,6 +278,15 @@ export const CATALOG: CatalogProvider[] = [
   },
 ];
 
+/**
+ * A completion stream that ends at once, for tests that only inspect the
+ * request.
+ */
+export const EMPTY_COMPLETION_STREAM: MockApiResponse = {
+  body: 'data: [DONE]\n\n',
+  headers: { 'content-type': 'text/event-stream' },
+};
+
 export function emptySeries(request: RecordedApiRequest): SeriesResponse {
   const body = (request.body ?? {}) as {
     interval?: SeriesResponse['interval'];
@@ -273,11 +299,14 @@ export function emptySeries(request: RecordedApiRequest): SeriesResponse {
   };
 }
 
-/** Responses needed to visit every page with no application data. */
+/**
+ * Responses needed to visit every page with no application data. The `api`
+ * fixture registers them for every test.
+ */
 export function registerEmptyApp(api: ApiMock): void {
   api.get('/api/api-keys/count', { json: { count: 0, estimated: false } });
   api.get('/api/api-keys', { json: { data: [], meta: PAGE_META } });
-  api.get('/api/models/providers', { json: { data: [], meta: { oldest_id: null, more_data: false } } });
+  api.get('/api/models/providers', { json: { data: [], meta: PAGE_META } });
   api.get('/api/prompts', { json: { data: [], meta: PAGE_META } });
   api.post('/api/internal/actors/resolve', {
     json: { data: [{ actor_type: 'user', actor_id: IDS.actor, display: { name: 'Test user' } }] },
@@ -296,4 +325,31 @@ export function registerEmptyApp(api: ApiMock): void {
   api.get('/api/webhooks/outbox', { json: { data: [], meta: PAGE_META } });
   api.get('/api/webhooks/deliveries', { json: { data: [], meta: PAGE_META } });
   api.post('/api/analytics/series', (request) => ({ json: emptySeries(request) }));
+  api.post('/api/analytics/users', { json: { active_users: 0, cost_percentiles: [], users: [] } });
+  api.post('/api/analytics/sessions', { json: { count: 0, top: [] } });
+  api.post('/api/analytics/session-positions', { json: { positions: [] } });
+  api.post('/api/analytics/session-distribution', {
+    json: {
+      sessions: 0,
+      cost_percentiles: [],
+      request_percentiles: [],
+      seconds_percentiles: [],
+      cost_bands: [],
+      request_bands: [],
+    },
+  });
+  api.post('/api/analytics/tokens', {
+    json: {
+      requests: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_input_tokens: 0,
+      median_input_tokens: null,
+      p95_input_tokens: null,
+      median_output_tokens: null,
+      p95_output_tokens: null,
+      input_bands: [],
+      output_bands: [],
+    },
+  });
 }

@@ -4,31 +4,57 @@ const DAY = 86_400_000;
 const RATE_DAYS = 7;
 
 export interface ForecastDay {
-  /** Midnight UTC, which is how analytics buckets days. */
-  date: Date;
-  /** What was spent; null for days still to come. */
-  actual: number | null;
-  /** The run rate, for days still to come; null for days already counted. */
-  projected: number | null;
-  /** The month's running total through this day; null for days still to come. */
-  cumulative: number | null;
   /**
-   * Where the running total gets to by the end of this day at the run rate:
-   * from today (where it equals the total so far) to the month's last day
-   * (where it equals the projection). Null before today, or with no run rate.
+   * Midnight UTC, which is how analytics buckets days.
+   */
+  date: Date;
+
+  /**
+   * What was spent, or null for days still to come.
+   */
+  actual: number | null;
+
+  /**
+   * The run rate for days still to come, or null for days already counted.
+   */
+  projected: number | null;
+
+  /**
+   * The month's running total through this day, or null for days still to come.
+   */
+  cumulative: number | null;
+
+  /**
+   * Where the running total gets to by the end of this day at the run rate.
+   * It runs from today, where it equals the total so far, to the month's last
+   * day, where it equals the projection. Null before today or with no run rate.
    */
   projectedCumulative: number | null;
-  /** Last month's running total through the same day of the month; null past its end. */
+
+  /**
+   * Last month's running total through the same day of the month, or null past
+   * its end.
+   */
   lastMonthCumulative: number | null;
+}
+
+/**
+ * The month's totals, its run rate and a row for each of its days. The run
+ * rate and the projection are null when there is no full day of history to go
+ * on.
+ */
+export interface SpendForecast {
+  monthToDate: number;
+  projected: number | null;
+  lastMonth: number;
+  lastMonthToDate: number;
+  runRate: number | null;
+  days: ForecastDay[];
 }
 
 /**
  * This month's spend so far, and where it lands at month end if the last week's
  * pace holds.
- *
- * Months and days are UTC, matching the analytics buckets. The run rate averages
- * the last 7 full days, or fewer when the history is younger than that; with no
- * full day of history there's nothing to project from, so projected is null.
  *
  * @param points
  * Daily spend, from the start of last month up to now.
@@ -36,7 +62,11 @@ export interface ForecastDay {
  * @param now
  * The moment to forecast from.
  */
-export function spendForecast(points: { bucket: Date | string | null; cost_total: number }[], now: Date) {
+export function spendForecast(
+  points: { bucket: Date | string | null; cost_total: number }[],
+  now: Date,
+): SpendForecast {
+  // Months and days are UTC, matching the analytics buckets.
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();
   const monthStart = Date.UTC(year, month, 1);
@@ -46,61 +76,95 @@ export function spendForecast(points: { bucket: Date | string | null; cost_total
 
   const spendByDay = new Map<number, number>();
   let firstDay: number | null = null;
+
   for (const point of points) {
-    if (!point.bucket) continue;
+    if (!point.bucket) {
+      continue;
+    }
+
     const day = new Date(point.bucket).getTime();
     spendByDay.set(day, (spendByDay.get(day) ?? 0) + point.cost_total);
-    if (point.cost_total > 0 && (firstDay === null || day < firstDay)) firstDay = day;
+
+    if (point.cost_total > 0 && (firstDay === null || day < firstDay)) {
+      firstDay = day;
+    }
   }
 
+  // The run rate averages the last full days, or fewer when the history is
+  // younger than that.
+  const rateStart = Math.max(today - RATE_DAYS * DAY, firstDay ?? today);
   let monthToDate = 0;
   let lastMonth = 0;
   let rateSpend = 0;
-  const rateStart = Math.max(today - RATE_DAYS * DAY, firstDay ?? today);
+
   for (const [day, spend] of spendByDay) {
-    if (day >= monthStart) monthToDate += spend;
-    else if (day >= lastMonthStart) lastMonth += spend;
-    if (day >= rateStart && day < today) rateSpend += spend;
+    if (day >= monthStart) {
+      monthToDate += spend;
+    } else if (day >= lastMonthStart) {
+      lastMonth += spend;
+    }
+
+    if (day >= rateStart && day < today) {
+      rateSpend += spend;
+    }
   }
 
-  // Last month, day by day, and how far it had got by this point in the month:
-  // the days before today's date, plus the same share of that day as has gone
-  // by today, so a morning isn't compared with a whole day.
-  const lastMonthDaily = [];
-  for (let day = lastMonthStart; day < monthStart; day += DAY) lastMonthDaily.push(spendByDay.get(day) ?? 0);
+  const lastMonthDaily: number[] = [];
+
+  for (let day = lastMonthStart; day < monthStart; day += DAY) {
+    lastMonthDaily.push(spendByDay.get(day) ?? 0);
+  }
+
+  // How far last month had got by this point in the month, which is the days
+  // before today's date plus the same share of that day as has gone by today,
+  // so a morning is not compared with a whole day.
   const dayIndex = now.getUTCDate() - 1;
+  const elapsedToday = now.getTime() - today;
   let lastMonthToDate = 0;
+
   for (const [index, spend] of lastMonthDaily.entries()) {
-    if (index < dayIndex) lastMonthToDate += spend;
-    else if (index === dayIndex) lastMonthToDate += (spend * (now.getTime() - today)) / DAY;
+    if (index < dayIndex) {
+      lastMonthToDate += spend;
+    } else if (index === dayIndex) {
+      lastMonthToDate += (spend * elapsedToday) / DAY;
+    }
   }
 
   const rateDays = (today - rateStart) / DAY;
   const runRate = rateDays > 0 ? rateSpend / rateDays : null;
+
   // The rest of today counts at the run rate too, pro rata.
-  const projected = runRate === null ? null : monthToDate + (runRate * (nextMonthStart - now.getTime())) / DAY;
+  const remaining = nextMonthStart - now.getTime();
+  const projected = runRate === null ? null : monthToDate + (runRate * remaining) / DAY;
 
   const days: ForecastDay[] = [];
   let running = 0;
   let lastRunning = 0;
+
   for (let day = monthStart, index = 0; day < nextMonthStart; day += DAY, index++) {
     const actual = day <= today ? (spendByDay.get(day) ?? 0) : null;
-    running += actual ?? 0;
     const lastMonthSpend = lastMonthDaily[index];
+
+    running += actual ?? 0;
     lastRunning += lastMonthSpend ?? 0;
-    // Through the end of this day, at the run rate from now.
-    const dayEnd = Math.min(day + DAY, nextMonthStart);
+
+    let projectedCumulative: number | null = null;
+
+    if (runRate !== null && day === today) {
+      projectedCumulative = monthToDate;
+    } else if (runRate !== null && day > today) {
+      // Through the end of this day, at the run rate from now.
+      const dayEnd = Math.min(day + DAY, nextMonthStart);
+
+      projectedCumulative = monthToDate + (runRate * (dayEnd - now.getTime())) / DAY;
+    }
+
     days.push({
       date: new Date(day),
-      actual,
+      actual: actual,
       projected: day > today ? runRate : null,
       cumulative: actual === null ? null : running,
-      projectedCumulative:
-        runRate === null || day < today
-          ? null
-          : day === today
-            ? monthToDate
-            : monthToDate + (runRate * (dayEnd - now.getTime())) / DAY,
+      projectedCumulative: projectedCumulative,
       lastMonthCumulative: lastMonthSpend === undefined ? null : lastRunning,
     });
   }

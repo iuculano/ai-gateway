@@ -1,35 +1,63 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
 import { toast } from 'svelte-sonner';
+import { createDecision, type Decision, type DecisionQuestion, type DecisionRequest } from '#lib/api/decisions.ts';
+import { getLogRequest } from '#lib/api/logs.ts';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import JsonView from '#lib/components/logs/json-view.svelte';
+import DecisionAnswers from '#lib/components/playground/decision-answers.svelte';
+import ExamplePicker from '#lib/components/playground/example-picker.svelte';
+import JsonEditor from '#lib/components/playground/json-editor.svelte';
+import ModelPicker from '#lib/components/playground/model-picker.svelte';
+import PlaygroundTabs from '#lib/components/playground/playground-tabs.svelte';
+import QuestionEditor from '#lib/components/playground/question-editor.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import { Textarea } from '#lib/components/ui/textarea/index.ts';
+import {
+  type DraftQuestion,
+  decisionProblem,
+  emptyQuestion,
+  toDraft,
+  toQuestion,
+} from '#lib/data/decision-questions.ts';
+import { fmtLatency, fmtTokens } from '#lib/data/format.ts';
+import { DECISION_EXAMPLES } from '#lib/data/playground-examples.ts';
+import { fieldsOutsideForm, parseJsonObject } from '#lib/data/playground-request.ts';
 import { page } from '$app/state';
-import { createDecision, type Decision, type DecisionQuestion, type DecisionRequest } from '$lib/api/decisions';
-import { getLogRequest } from '$lib/api/logs';
-import { copyToClipboard } from '$lib/clipboard';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import JsonView from '$lib/components/logs/json-view.svelte';
-import DecisionAnswers from '$lib/components/playground/decision-answers.svelte';
-import ExamplePicker from '$lib/components/playground/example-picker.svelte';
-import JsonEditor from '$lib/components/playground/json-editor.svelte';
-import ModelPicker from '$lib/components/playground/model-picker.svelte';
-import PlaygroundTabs from '$lib/components/playground/playground-tabs.svelte';
-import QuestionEditor from '$lib/components/playground/question-editor.svelte';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import { Textarea } from '$lib/components/ui/textarea';
-import { type DraftQuestion, emptyQuestion, toDraft, toQuestion } from '$lib/data/decision-questions';
-import { fmtLatency, fmtTokens } from '$lib/data/format';
-import { DECISION_EXAMPLES } from '$lib/data/playground-examples';
 
-const FIELD_CLASS =
-  'h-9 rounded-lg border-line-strong bg-surface-3 px-[11px] text-[12.5px] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';
+type Mode = 'form' | 'json';
+type View = 'simple' | 'json';
+
+const FIELD_CLASS = `h-9 px-[11px] text-[12.5px] ${FIELD_BASE}`;
+
+// The request can be edited as a form or as raw JSON. The model stays in the
+// picker either way, and overrides any `model` written in the JSON.
+const MODE_TABS = [
+  { id: 'form', label: 'Form' },
+  { id: 'json', label: 'JSON' },
+] satisfies { id: Mode; label: string }[];
+
+const VIEW_TABS = [
+  { id: 'simple', label: 'Simple' },
+  { id: 'json', label: 'JSON' },
+] satisfies { id: View; label: string }[];
+
+// The request fields the form can show. Anything else only survives as JSON.
+const FORM_FIELDS = ['input', 'questions'];
 
 let model = $state('');
 let apiKey = $state('');
 let input = $state('');
 let questions: DraftQuestion[] = $state([emptyQuestion()]);
+
+let mode: Mode = $state('form');
+let requestJson = $state('');
 
 let running = $state(false);
 let error = $state<string | null>(null);
@@ -37,11 +65,7 @@ let decision = $state<Decision | null>(null);
 let elapsedMs = $state<number | null>(null);
 let controller: AbortController | null = null;
 
-const VIEW_TABS = [
-  { id: 'simple' as const, label: 'Simple' },
-  { id: 'json' as const, label: 'JSON' },
-];
-let view: 'simple' | 'json' = $state('simple');
+let view: View = $state('simple');
 const json = $derived(decision ? JSON.stringify(decision, null, 2) : '');
 
 onDestroy(stop);
@@ -49,82 +73,98 @@ onDestroy(stop);
 onMount(() => {
   // The logs page links here with ?from=<log id> to replay a stored request.
   const from = page.url.searchParams.get('from');
-  if (from) void loadFromLog(from);
+
+  if (from) {
+    void loadFromLog(from);
+  }
 });
 
-async function loadFromLog(id: string) {
+function formToJson(): string {
+  return JSON.stringify({ input: input, questions: questions.map(toQuestion) }, null, 2);
+}
+
+/**
+ * Rewrites the JSON from the form, when the JSON is what is on show and the
+ * form has just been filled from somewhere else.
+ */
+function syncJson(): void {
+  if (mode === 'json') {
+    requestJson = formToJson();
+  }
+}
+
+/**
+ * Loads a stored request off a log, for running it again.
+ */
+async function loadFromLog(id: string): Promise<void> {
   try {
     const payload = (await getLogRequest(id)) as Partial<DecisionRequest> | null;
 
     if (!payload?.questions?.length) {
       toast.error('That log has no stored decision request to replay.');
+
       return;
     }
 
     input = payload.input ?? '';
     questions = payload.questions.map(toDraft);
-    if (payload.model) model = payload.model;
-    if (mode === 'json') requestJson = formToJson();
 
+    if (payload.model) {
+      model = payload.model;
+    }
+
+    syncJson();
     toast.success('Loaded the request from that log');
   } catch (cause) {
     toast.error(cause instanceof Error ? cause.message : 'Could not read that log.');
   }
 }
 
-// The request can be edited as a form or as raw JSON. The model stays in the
-// picker either way and overrides any `model` written in the JSON.
-const MODE_TABS = [
-  { id: 'form' as const, label: 'Form' },
-  { id: 'json' as const, label: 'JSON' },
-];
-let mode: 'form' | 'json' = $state('form');
-let requestJson = $state('');
-
-// The request fields the form can show. Anything else only survives in JSON.
-const FORM_FIELDS = ['input', 'questions'];
-
-function formToJson(): string {
-  return JSON.stringify({ input: input, questions: questions.map(toQuestion) }, null, 2);
-}
-
-/** The JSON as an object, or null after telling the reader what's wrong. */
+/**
+ * The request JSON as an object, or null after telling the reader it is not
+ * one.
+ */
 function parseRequestJson(): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(requestJson);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Reported below.
+  const parsed = parseJsonObject(requestJson);
+
+  if (!parsed) {
+    toast.error('The request JSON must be a valid object.');
   }
 
-  toast.error('The request JSON must be a valid object.');
-  return null;
+  return parsed;
 }
 
-function setMode(next: 'form' | 'json') {
-  if (next === mode) return;
+function setMode(next: Mode): void {
+  if (next === mode) {
+    return;
+  }
 
   if (next === 'json') {
     requestJson = formToJson();
     mode = 'json';
+
     return;
   }
 
   const parsed = parseRequestJson();
-  if (!parsed) return;
 
-  try {
-    const nextQuestions = ((parsed.questions ?? []) as DecisionQuestion[]).map(toDraft);
-    input = typeof parsed.input === 'string' ? parsed.input : '';
-    questions = nextQuestions.length > 0 ? nextQuestions : [emptyQuestion()];
-  } catch {
-    toast.error("The questions in the JSON don't fit the form. Fix them or keep editing as JSON.");
+  if (!parsed) {
     return;
   }
 
-  const dropped = Object.keys(parsed).filter((key) => !FORM_FIELDS.includes(key) && key !== 'model');
+  try {
+    const drafts = ((parsed.questions ?? []) as DecisionQuestion[]).map(toDraft);
+
+    input = typeof parsed.input === 'string' ? parsed.input : '';
+    questions = drafts.length > 0 ? drafts : [emptyQuestion()];
+  } catch {
+    toast.error("The questions in the JSON don't fit the form. Fix them or keep editing as JSON.");
+
+    return;
+  }
+
+  const dropped = fieldsOutsideForm(parsed, FORM_FIELDS);
+
   if (dropped.length > 0) {
     toast.warning(`The form has no fields for ${dropped.join(', ')}, so they were dropped.`);
   }
@@ -132,97 +172,76 @@ function setMode(next: 'form' | 'json') {
   mode = 'form';
 }
 
-function applyExample(index: number) {
+function applyExample(index: number): void {
   const example = DECISION_EXAMPLES[index];
-  if (!example) return;
 
+  if (!example) {
+    return;
+  }
+
+  // Copied, so that editing a question does not edit the example it came from.
   input = example.input;
-  questions = example.questions.map((question) => ({
-    ...question,
-    options: question.options.map((option) => ({ ...option })),
-  }));
-
-  if (mode === 'json') requestJson = formToJson();
+  questions = structuredClone(example.questions);
+  syncJson();
 }
 
 /**
- * The request body, or null when the form is not ready to send.
- *
- * Checked here rather than left to the gateway's 400: its messages name schema
- * paths like questions[2].choices[0].description, and this can name the question.
+ * The form as a request body, or null after telling the reader why it cannot
+ * be sent.
  */
-function buildBody(): DecisionRequest | null {
-  if (input.trim().length === 0) {
-    toast.error('Write the input the questions are about.');
+function formRequest(): DecisionRequest | null {
+  const problem = decisionProblem(input, questions);
+
+  if (problem) {
+    toast.error(problem);
+
     return null;
-  }
-
-  const names = new Set<string>();
-
-  for (const [index, draft] of questions.entries()) {
-    const name = draft.name.trim();
-    const label = name || `Question ${index + 1}`;
-
-    if (!name || !draft.instructions.trim()) {
-      toast.error(`${label} needs a name and instructions.`);
-      return null;
-    }
-
-    // The gateway accepts duplicates, but answers come back keyed by name, so
-    // one would silently overwrite the other.
-    if (names.has(name)) {
-      toast.error(`Two questions are named ${name}.`);
-      return null;
-    }
-    names.add(name);
-
-    if (draft.type === 'predicate') continue;
-
-    if (draft.options.some((option) => !option.value.trim() || !option.description.trim())) {
-      toast.error(`Fill in every ${draft.type === 'choice' ? 'choice' : 'level'} of ${label}.`);
-      return null;
-    }
-
-    const values = draft.options.map((option) => option.value.trim());
-    if (draft.type === 'choice' && new Set(values).size !== values.length) {
-      toast.error(`${label} has two choices with the same value.`);
-      return null;
-    }
   }
 
   return { model: model.trim(), input: input, questions: questions.map(toQuestion) };
 }
 
-async function run() {
-  if (running) return;
+/**
+ * The JSON as a request body, sent as written. The gateway checks it, and its
+ * 400 says what is wrong.
+ */
+function jsonRequest(): DecisionRequest | null {
+  const parsed = parseRequestJson();
+
+  return parsed ? ({ ...parsed, model: model.trim() } as DecisionRequest) : null;
+}
+
+async function run(): Promise<void> {
+  if (running) {
+    return;
+  }
 
   if (model.trim().length === 0) {
     toast.error('Name a model to send this to.');
+
     return;
   }
 
   if (apiKey.trim().length === 0) {
     toast.error('Paste the provider API key.');
+
     return;
   }
 
-  let body: DecisionRequest | null;
-  if (mode === 'json') {
-    // Sent as written. The gateway validates it, and its 400 says what's wrong.
-    const parsed = parseRequestJson();
-    body = parsed ? ({ ...parsed, model: model.trim() } as DecisionRequest) : null;
-  } else {
-    body = buildBody();
+  const body = mode === 'json' ? jsonRequest() : formRequest();
+
+  if (!body) {
+    return;
   }
-  if (!body) return;
 
   const current = new AbortController();
+  const startedAt = performance.now();
+
   controller = current;
   running = true;
   error = null;
   decision = null;
   elapsedMs = null;
-  const startedAt = performance.now();
 
   try {
     decision = await createDecision({ 'ai-api-key': apiKey.trim() }, body, current.signal);
@@ -238,34 +257,37 @@ async function run() {
   }
 }
 
-function stop() {
+function stop(): void {
   controller?.abort();
 }
 
-function clear() {
-  if (running) return;
+function clear(): void {
+  if (running) {
+    return;
+  }
 
   input = '';
   questions = [emptyQuestion()];
-  if (mode === 'json') requestJson = formToJson();
   decision = null;
   error = null;
   elapsedMs = null;
+  syncJson();
 }
 
-function copy() {
+function copy(): void {
   if (!json) {
     toast.error('Nothing to copy yet.');
+
     return;
   }
 
   void copyToClipboard(json, 'Response copied');
 }
 
-function onKeydown(event: KeyboardEvent) {
+function onKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     event.preventDefault();
-    run();
+    void run();
   }
 }
 </script>
@@ -346,7 +368,7 @@ function onKeydown(event: KeyboardEvent) {
 						aria-label="Input"
 						disabled={running}
 						rows={4}
-						class="max-h-80 min-h-[96px] rounded-lg border-line-strong bg-surface-3 px-[11px] py-2 text-[13px] leading-[1.6] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+						class="max-h-80 min-h-[96px] px-[11px] py-2 text-[13px] leading-[1.6] {FIELD_BASE}"
 					/>
 				</div>
 			</Panel>
@@ -399,7 +421,7 @@ function onKeydown(event: KeyboardEvent) {
 							bind:question={questions[index]}
 							number={index + 1}
 							disabled={running}
-							onremove={questions.length > 1 ? () => (questions = questions.filter((_, i) => i !== index)) : undefined}
+							onremove={questions.length > 1 ? () => (questions = questions.toSpliced(index, 1)) : undefined}
 						/>
 					{/each}
 

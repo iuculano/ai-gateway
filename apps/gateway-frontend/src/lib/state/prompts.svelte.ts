@@ -5,49 +5,60 @@ import {
   createPromptVersion,
   deletePrompt,
   deletePromptVersion,
+  type ListPromptsQuery,
+  listPrompts,
   listPromptVersions,
   type UpdatePromptInput,
   type UpdatePromptVersionInput,
   updatePrompt,
   updatePromptVersion,
-} from '$lib/api/prompts';
-import type { Prompt, PromptVersionSummary } from '$lib/api/types';
-import { PromptList } from './prompt-list.svelte';
+} from '#lib/api/prompts.ts';
+import type { Prompt, PromptVersionSummary } from '#lib/api/types.ts';
+import { PagedList } from '#lib/state/paged-list.svelte.ts';
 
-const PAGE_SIZE = 50;
+export type PromptStatus = NonNullable<ListPromptsQuery['status']>;
 
-/** One prompt's version list. */
+/**
+ * One prompt's version list.
+ */
 interface VersionsState {
   rows: PromptVersionSummary[];
   loading: boolean;
   error: string | null;
 }
 
+const PAGE_SIZE = 20;
+const VERSIONS_PAGE_SIZE = 50;
+
 const EMPTY_VERSIONS: VersionsState = { rows: [], loading: false, error: null };
 
 /**
- * The prompts page's data: the prompts themselves, and the versions under
- * whichever ones have been opened.
- *
- * Versions are keyed by prompt id and fetched on demand rather than up front.
- * A page of 20 prompts is 20 more requests if they are all loaded eagerly, and
- * the list is only ever read for the row the user has actually expanded or is
- * previewing.
- *
- * Mutations go to the API first; local state only changes on success.
+ * The prompts page's data, which is the prompts themselves and the versions
+ * under whichever of them have been opened. Changes go to the API first, and
+ * what is held here only changes once they have succeeded.
  */
 class PromptsState {
-  readonly list = new PromptList();
+  /**
+   * Which prompts the list is narrowed to.
+   */
+  status: PromptStatus = $state('all');
+
+  readonly list = new PagedList<Prompt>(
+    (after) => listPrompts({ limit: PAGE_SIZE, status: this.status, after_id: after }),
+    'Failed to load prompts.',
+  );
 
   /**
-   * Version lists, by prompt id.
-   *
-   * A plain object rather than a Map: `$state` deep-proxies objects and arrays,
-   * so assigning into it is reactive, and a Map is not without SvelteMap.
+   * Version lists by prompt id, fetched when a prompt is opened and not up
+   * front. A page of prompts would otherwise be a request each for lists that
+   * are only read for the row the reader has opened or is previewing.
    */
   versions: Record<string, VersionsState> = $state({});
 
-  /** The version list for a prompt, or an empty one if it has not been fetched. */
+  /**
+   * The version list for a prompt, or an empty one when it has not been
+   * fetched.
+   */
   versionsFor(id: string): VersionsState {
     return this.versions[id] ?? EMPTY_VERSIONS;
   }
@@ -57,51 +68,67 @@ class PromptsState {
   }
 
   /**
-   * Re-reads the prompts, and any version list already on screen.
-   *
-   * The version lists are refetched rather than dropped: discarding them would
-   * collapse the open row's panel to a spinner on every refresh.
+   * Narrows the list to one status, starting from its first page.
+   */
+  async filterByStatus(status: PromptStatus): Promise<void> {
+    this.status = status;
+
+    await this.list.restart();
+  }
+
+  /**
+   * Reads the prompts again, and any version list already on show.
    */
   async refresh(): Promise<void> {
+    // The version lists are read again and not dropped, because dropping them
+    // would collapse the open row's panel to a spinner on every refresh.
     const opened = Object.keys(this.versions);
 
     await Promise.all([this.list.load(), ...opened.map((id) => this.loadVersions(id))]);
   }
 
-  /** Fetches a prompt's versions once; later calls are no-ops. */
+  /**
+   * Fetches a prompt's versions once. Later calls do nothing.
+   */
   async ensureVersions(id: string): Promise<void> {
-    if (this.versions[id]) return;
-
-    await this.loadVersions(id);
+    if (!this.versions[id]) {
+      await this.loadVersions(id);
+    }
   }
 
   async loadVersions(id: string): Promise<void> {
     const existing = this.versions[id];
-    if (existing?.loading) return;
 
-    this.versions[id] = { rows: existing?.rows ?? [], loading: true, error: null };
+    if (existing?.loading) {
+      return;
+    }
+
+    const rows = existing?.rows ?? [];
+
+    this.versions[id] = { rows: rows, loading: true, error: null };
 
     try {
-      const page = await listPromptVersions(id, { limit: PAGE_SIZE });
+      const page = await listPromptVersions(id, { limit: VERSIONS_PAGE_SIZE });
+
       this.versions[id] = { rows: page.data, loading: false, error: null };
     } catch (error) {
-      this.versions[id] = {
-        rows: existing?.rows ?? [],
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load versions.',
-      };
+      const message = error instanceof Error ? error.message : 'Failed to load versions.';
+
+      this.versions[id] = { rows: rows, loading: false, error: message };
     }
   }
 
   async create(input: CreatePromptInput): Promise<Prompt> {
     const created = await createPrompt(input);
-    await this.list.firstPage();
+
+    await this.list.restart();
 
     return created;
   }
 
   async update(id: string, input: UpdatePromptInput): Promise<Prompt> {
     const updated = await updatePrompt(id, input);
+
     this.list.rows = this.list.rows.map((prompt) => (prompt.id === id ? updated : prompt));
     await this.list.load();
 
@@ -110,25 +137,25 @@ class PromptsState {
 
   /**
    * Deletes a prompt and everything under it.
-   *
-   * The cached version list goes too - prompt_versions.prompt_id cascades, so
-   * keeping it would be showing versions of a prompt that no longer exists.
    */
   async remove(id: string): Promise<void> {
     await deletePrompt(id);
 
+    // The cached versions go too. They are deleted along with the prompt, so
+    // keeping them would show versions of something that no longer exists.
     this.list.rows = this.list.rows.filter((prompt) => prompt.id !== id);
     delete this.versions[id];
+
     await this.list.load();
-    if (this.list.rows.length === 0 && this.list.pageIndex > 0) await this.list.previousPage();
+
+    // Deleting the last row of a later page leaves that page empty.
+    if (this.list.rows.length === 0 && this.list.pageIndex > 0) {
+      await this.list.previousPage();
+    }
   }
 
   /**
-   * Adds a version, and reflects the activation the server may have performed.
-   *
-   * The first version of a prompt is activated on creation by the service, so
-   * the prompt row is patched locally to match rather than left showing
-   * "unversioned" until the next refresh.
+   * Adds a version to a prompt.
    */
   async addVersion(id: string, input: CreatePromptVersionInput): Promise<PromptVersionSummary> {
     const created = await createPromptVersion(id, input);
@@ -136,9 +163,15 @@ class PromptsState {
 
     this.versions[id] = { ...existing, rows: [created, ...existing.rows] };
 
+    // The service makes a prompt's first version its active one. The row is
+    // patched to match, so that it does not read as unversioned until the next
+    // refresh.
     const wasUnversioned = this.list.rows.find((prompt) => prompt.id === id)?.active_version == null;
+
     if (wasUnversioned) {
-      this.patch(id, { active_version: created.version });
+      this.list.rows = this.list.rows.map((prompt) =>
+        prompt.id === id ? { ...prompt, active_version: created.version } : prompt,
+      );
       await this.list.load();
     }
 
@@ -159,17 +192,15 @@ class PromptsState {
     await deletePromptVersion(id, version);
 
     const existing = this.versionsFor(id);
+
     this.versions[id] = { ...existing, rows: existing.rows.filter((row) => row.version !== version) };
   }
 
-  /** Points the prompt at a different version. */
+  /**
+   * Points a prompt at a different version.
+   */
   async setActiveVersion(id: string, version: number): Promise<void> {
     await this.update(id, { active_version: version });
-  }
-
-  /** Local-only patch of a prompt row, for state the server already applied. */
-  private patch(id: string, fields: Partial<Prompt>): void {
-    this.list.rows = this.list.rows.map((prompt) => (prompt.id === id ? { ...prompt, ...fields } : prompt));
   }
 }
 

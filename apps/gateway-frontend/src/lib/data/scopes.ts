@@ -1,19 +1,19 @@
-/** The scopes an API key can be granted, as offered in the dashboard UI. */
+/**
+ * The scopes an API key can be granted, as offered in the dashboard UI.
+ */
 export interface ScopeOption {
   id: string;
   label: string;
   desc: string;
 }
 
-// Ids must match the backend's scope names exactly
-// (apps/gateway-backend/src/authorization.ts SCOPES) - the API rejects keys
-// granting scopes it doesn't know. Kept in the same order the backend declares
-// them so the two lists can be diffed by eye.
+// Ids must match the backend's scope names exactly, because the API rejects a
+// key that grants a scope it does not know. A unit test compares this list
+// with SCOPES in apps/gateway-backend/src/authorization.ts.
 //
-// Note that actors:read and api-keys:write are additionally gated on
-// actorTypes: ['user'], so granting them to a key buys that key nothing - every
-// route they guard rejects api-key actors. They stay listed because the same
-// options drive the UI for user-held permissions.
+// `actors:read` and `api-keys:write` are also limited to user actors, so
+// granting them to a key buys that key nothing. They stay listed because the
+// same options drive the UI for permissions a user holds.
 export const SCOPE_OPTIONS: ScopeOption[] = [
   { id: 'actors:read', label: 'Actors · Read', desc: 'Resolve user and API key names' },
   { id: 'api-keys:read', label: 'API keys · Read', desc: 'List and inspect API keys' },

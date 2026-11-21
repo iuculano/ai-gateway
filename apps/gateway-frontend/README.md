@@ -21,7 +21,10 @@ The application can be configure via environment variables.
 | Variable                   | Default                 | Description                    |
 | -------------------------- | ----------------------- | ------------------------------ |
 | `PORT`                     | `8081`                  | HTTP server port               |
+| `ORIGIN`                   | `https://` + `Host`     | Public origin of the site      |
 | `BACKEND_URL`              | `http://localhost:8080` | Gateway backend URL            |
+| `ADDRESS_HEADER`           | Optional                | Header a proxy in front of the site puts the client address in |
+| `XFF_DEPTH`                | `1`                     | Proxies in front of the site, when that header is `X-Forwarded-For` |
 | `ZITADEL_ISSUER`           | Required                | OIDC issuer URL                |
 | `ZITADEL_CLIENT_ID`        | Required                | OIDC client ID                 |
 | `OIDC_REFRESH_ENABLED`     | `false`                 | Request refresh tokens         |
@@ -31,3 +34,12 @@ The application can be configure via environment variables.
 | `REDIS_PASSWORD`           | Optional                | Redis password                 |
 | `SESSION_IDLE_SECONDS`     | `28800`                 | Session idle lifetime          |
 | `SESSION_ABSOLUTE_SECONDS` | `604800`                | Maximum session lifetime       |
+
+Set `ORIGIN` whenever the site is served over plain HTTP, for example
+`ORIGIN=http://localhost:8081` for a local production build. Without it the
+server assumes `https`, so the OIDC redirect URI is wrong, and signing out and
+requests without a body, such as deletes, are rejected as cross-site.
+
+The site tells the backend which address each request came from, for the audit
+log. Behind a proxy that address is the proxy's unless `ADDRESS_HEADER` is set,
+and the backend only believes it when the site is in its `TRUSTED_PROXIES`.

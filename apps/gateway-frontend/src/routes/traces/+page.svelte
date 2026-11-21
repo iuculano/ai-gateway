@@ -10,22 +10,19 @@ import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 import WorkflowIcon from '@lucide/svelte/icons/workflow';
 import WrenchIcon from '@lucide/svelte/icons/wrench';
 import { onMount } from 'svelte';
+import { getTrace, listTraces } from '#lib/api/traces.ts';
+import type { Trace, TraceDetail, TraceSource, TraceStatus } from '#lib/api/types.ts';
+import CardToolbar from '#lib/components/app/card-toolbar.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import RefreshButton from '#lib/components/app/refresh-button.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { fmtCost, fmtLatency, fmtTokens, fmtTs } from '#lib/data/format.ts';
+import { filterTraces, nodeColor, nodeSpan, type TraceFilter, tagPairs, traceLegend } from '#lib/data/traces.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 import { page } from '$app/state';
-import { getTrace, listTraces } from '$lib/api/traces';
-import type { Trace, TraceDetail, TraceNode, TraceSource, TraceStatus } from '$lib/api/types';
-import CardToolbar from '$lib/components/app/card-toolbar.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmtCost, fmtLatency, fmtTokens, fmtTs } from '$lib/data/format';
-import { dashboard } from '$lib/state/dashboard.svelte';
-
-type TraceFilter = 'all' | 'errors' | 'slow';
 
 const PAGE_SIZE = 25;
-
-/** Above this, a run is worth surfacing on its own tab. */
-const SLOW_THRESHOLD_MS = 8_000;
 
 const FILTERS = [
   { id: 'all' as const, label: 'All traces' },
@@ -39,55 +36,14 @@ const SOURCE_LABELS: Record<TraceSource, string> = {
   provider_attempt: 'Provider attempt',
 };
 
-const SOURCE_COLORS: Record<TraceSource, string> = {
-  application_span: '#a78bfa',
-  gateway_log: '#10b981',
-  provider_attempt: '#38bdf8',
-};
-
-/**
- * One palette for the waterfall bars and the map.
- *
- * Colouring by source alone made a large agent run almost entirely violet - one
- * colour for nine tenths of the marks, which is the same as no colour. What
- * actually varies inside an application trace is kind, so that is what the
- * colour spends itself on.
- *
- * The two gateway-owned sources keep their own colours regardless of kind,
- * because that distinction is about trust rather than shape: a gateway log is
- * a record Relay stands behind, and it should not change appearance depending
- * on what the customer's span happened to be called.
- *
- * `custom` is deliberately the quiet one. Steps and outbound fetches are the
- * glue, and letting them recede is what makes the model and tool calls legible.
- */
-const LEGEND_COLORS: Record<string, string> = {
-  error: '#ef4444',
-  workflow: '#a78bfa',
-  llm: '#60a5fa',
-  tool: '#fbbf24',
-  retrieval: '#f472b6',
-  embedding: '#22d3ee',
-  rerank: '#c084fc',
-  custom: '#8a8f98',
-  gateway_log: SOURCE_COLORS.gateway_log,
-  provider_attempt: SOURCE_COLORS.provider_attempt,
-};
-
-const LEGEND_LABELS: Record<string, string> = {
-  error: 'Error',
-  workflow: 'Workflow',
-  llm: 'Model call',
-  tool: 'Tool',
-  retrieval: 'Retrieval',
-  embedding: 'Embedding',
-  rerank: 'Rerank',
-  custom: 'Other',
-  gateway_log: 'Gateway log',
-  provider_attempt: 'Provider attempt',
-};
-
 const TICKS = [0, 0.25, 0.5, 0.75, 1];
+
+// One row per depth level, in the map's own coordinate space.
+const MAP_ROW = 8;
+
+// The map is drawn 1000 units wide and stretched to the card, because only its
+// proportions have to be accurate.
+const MAP_WIDTH = 1000;
 
 let filter: TraceFilter = $state('all');
 let traces = $state<Trace[]>([]);
@@ -101,36 +57,37 @@ let detailError = $state<string | null>(null);
 let selectedNodeId = $state<string | null>(null);
 let copied = $state(false);
 
-/** Shown by default; the choice is kept as you move between traces. */
+// Shown by default, and the choice is kept while moving between traces.
 let showMap = $state(true);
 
 /**
  * Loads the newest page of runs and opens the first of them.
  *
- * One page, no cursor: the waterfall beside the list is the point of this
- * screen, and paging the list is only worth adding once there is a time range
- * to page within.
+ * @param preferred
+ * A trace to open in place of the newest one.
  */
-async function loadTraces(preferred?: string) {
+async function loadTraces(preferred?: string): Promise<void> {
   loading = true;
   error = null;
 
+  // One page with no cursor. The waterfall beside the list is the point of
+  // this screen, and paging the list is only worth adding once there is a time
+  // range to page within.
   try {
     const result = await listTraces({ limit: PAGE_SIZE });
     traces = result.data;
 
-    // `preferred` wins over the newest run so a link from the logs table opens
-    // the trace it named, and it is loaded by id rather than looked up in the
-    // page above - the run may be far older than the twenty-five shown there.
+    // A preferred trace is loaded by id and not looked up in the page above,
+    // because a link from the logs table may name a run far older than the
+    // twenty-five listed.
     const first = preferred ?? result.data[0]?.trace_id;
+
     if (first) {
       await loadDetail(first);
     } else {
       selectedTraceId = null;
       detail = null;
     }
-
-    error = null;
   } catch (err) {
     error = err instanceof Error ? err.message : 'Failed to load traces.';
   } finally {
@@ -140,27 +97,31 @@ async function loadTraces(preferred?: string) {
 
 /**
  * Loads one run's waterfall.
- *
- * Every write checks that the trace it was started for is still the selected
- * one - clicking down a list faster than the requests come back would otherwise
- * leave whichever response landed last on screen.
  */
-async function loadDetail(traceId: string) {
+async function loadDetail(traceId: string): Promise<void> {
   selectedTraceId = traceId;
   detailLoading = true;
   detailError = null;
 
+  // Every write below checks that this trace is still the selected one.
+  // Clicking down the list faster than the requests come back would otherwise
+  // leave whichever response landed last on screen.
   try {
     const result = await getTrace(traceId);
-    if (selectedTraceId !== traceId) return;
+
+    if (selectedTraceId !== traceId) {
+      return;
+    }
 
     detail = result;
 
-    // Open on the first failure, which is what the run is being read for when
+    // Opens on the first failure, which is what the run is being read for when
     // there is one.
     selectedNodeId = result.nodes.find((node) => node.status === 'error')?.id ?? result.nodes[0]?.id ?? null;
   } catch (err) {
-    if (selectedTraceId !== traceId) return;
+    if (selectedTraceId !== traceId) {
+      return;
+    }
 
     detail = null;
     detailError = err instanceof Error ? err.message : 'Failed to load this trace.';
@@ -171,184 +132,87 @@ async function loadDetail(traceId: string) {
   }
 }
 
-// Load once on mount - NOT $effect, which would re-run on every state change
-// the load itself makes.
+// Loaded once on mount and not in an effect, which would run again on every
+// state change the load itself makes.
 onMount(() => {
   // The logs table links here with ?trace=<id> to follow one request back to
   // the run it belonged to.
   loadTraces(page.url.searchParams.get('trace') ?? undefined);
 });
 
-/** jsonb, so it arrives as an open object rather than as a typed map. */
-function tagPairs(tags: unknown): [string, string][] {
-  return Object.entries((tags ?? {}) as Record<string, unknown>).map(([key, value]) => [key, String(value)]);
-}
-
-const filteredTraces = $derived.by(() => {
-  const query = dashboard.search.trim().toLowerCase();
-
-  return traces.filter((trace) => {
-    if (filter === 'errors' && trace.error_count === 0) return false;
-    if (filter === 'slow' && (trace.duration_ms ?? 0) < SLOW_THRESHOLD_MS) return false;
-
-    if (query) {
-      const tags = tagPairs(trace.tags)
-        .map(([key, value]) => `${key}=${value}`)
-        .join(' ');
-      const searchable = `${trace.name ?? ''} ${trace.trace_id} ${trace.status} ${tags}`.toLowerCase();
-      if (!searchable.includes(query)) return false;
-    }
-
-    return true;
-  });
-});
-
+const filteredTraces = $derived(filterTraces(traces, filter, dashboard.search));
 const nodes = $derived(detail?.nodes ?? []);
 const selectedNode = $derived(nodes.find((node) => node.id === selectedNodeId) ?? nodes[0] ?? null);
+const legend = $derived(traceLegend(nodes));
 
-// Zero while a trace is still open and nothing has reported an end. Every
-// reader of this guards against it rather than dividing by it.
+// Zero while a trace is still open and nothing has reported an end.
 const windowMs = $derived(detail?.trace.window_ms ?? 0);
 const totalSpans = $derived(nodes.filter((node) => node.source === 'application_span').length);
+const mapDepth = $derived(nodes.reduce((deepest, node) => Math.max(deepest, node.depth), 0) + 1);
+const mapHeight = $derived(mapDepth * MAP_ROW);
 
 function traceStatusClass(status: TraceStatus): string {
-  if (status === 'failed') return 'border-red-500/20 bg-red-500/10 text-red-400';
-  if (status === 'partial') return 'border-amber-500/20 bg-amber-500/10 text-amber-400';
+  if (status === 'failed') {
+    return 'border-red-500/20 bg-red-500/10 text-red-400';
+  }
+
+  if (status === 'partial') {
+    return 'border-amber-500/20 bg-amber-500/10 text-amber-400';
+  }
+
   return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400';
 }
 
 function traceStatusDot(status: TraceStatus): string {
-  if (status === 'failed') return '#ef4444';
-  if (status === 'partial') return '#f59e0b';
+  if (status === 'failed') {
+    return '#ef4444';
+  }
+
+  if (status === 'partial') {
+    return '#f59e0b';
+  }
+
   return '#10b981';
 }
 
 /**
- * Only an error is worth colouring differently.
- *
- * 'unset' is not a warning: OpenTelemetry defaults every span to it and the
- * specification discourages setting OK explicitly, so almost every real
- * application span arrives unset. Colouring those amber painted a healthy run
- * as though half of it had gone wrong. Detail that genuinely has not arrived is
- * what the trace's 'Partial detail' badge is for.
- */
-/**
- * Which key entry a node belongs to.
- *
- * Colour and legend both come from this, so the two cannot drift apart - an
- * errored span is counted under Error because that is how it is drawn.
- */
-function nodeKey(node: TraceNode): string {
-  if (node.status === 'error') return 'error';
-  return node.source === 'application_span' ? node.kind : node.source;
-}
-
-function nodeColor(node: TraceNode): string {
-  return LEGEND_COLORS[nodeKey(node)] ?? LEGEND_COLORS.custom;
-}
-
-function nodeLeft(node: TraceNode): number {
-  if (windowMs === 0) return 0;
-  return Math.min(100, (node.start_offset_ms / windowMs) * 100);
-}
-
-function nodeWidth(node: TraceNode): number {
-  if (windowMs === 0) return 1.2;
-
-  const left = nodeLeft(node);
-  return Math.max(1.2, Math.min(100 - left, (node.duration_ms / windowMs) * 100));
-}
-
-/** One row per depth level, in the map's own coordinate space. */
-const MAP_ROW = 8;
-
-const mapDepth = $derived(nodes.reduce((deepest, node) => Math.max(deepest, node.depth), 0) + 1);
-const mapHeight = $derived(mapDepth * MAP_ROW);
-
-/**
- * The whole run at a glance: time across, nesting down.
- *
- * Drawn in a fixed 1000-unit width and stretched to whatever the card is,
- * because the only thing that has to be accurate is the proportions. A span
- * lasting a few milliseconds inside a three-minute trace would round to nothing,
- * so every one is given a minimum width - the point is that no work is invisible.
- */
-/**
- * The key, built from what this trace actually contains.
- *
- * Provider attempts are kept even at zero: the node contract has them, Relay
- * does not emit them yet, and an entry reading 0 says that far better than a
- * silently missing row would.
- */
-const legend = $derived.by(() => {
-  const counts = new Map<string, number>([['provider_attempt', 0]]);
-
-  for (const node of nodes) {
-    const key = nodeKey(node);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-
-  return [...counts.entries()]
-    .map(([key, count]) => ({
-      key,
-      count,
-      label: LEGEND_LABELS[key] ?? key,
-      color: LEGEND_COLORS[key] ?? LEGEND_COLORS.custom,
-    }))
-    .sort((left, right) => right.count - left.count);
-});
-
-function mapLeft(node: TraceNode): number {
-  return windowMs === 0 ? 0 : (node.start_offset_ms / windowMs) * 1000;
-}
-
-function mapWidth(node: TraceNode): number {
-  if (windowMs === 0) return 1;
-
-  return Math.max(0.9, Math.min(1000 - mapLeft(node), (node.duration_ms / windowMs) * 1000));
-}
-
-/**
- * Arrow keys walk the waterfall; selection follows focus.
- *
- * Tab already reaches every row - they are buttons - but reaching one is not
- * the same as reading it, so focusing a row selects it. That makes the detail
- * panel and the map's highlight track the keyboard without a second keystroke.
- *
- * The rows are found through the DOM rather than kept in an array of bindings.
- * With a keyed each and a list replaced wholesale every time another trace is
- * opened, an index-keyed ref array is a stale-entry bug waiting to happen, and
- * the siblings are right there.
+ * Moves focus along the waterfall with the arrow, Home and End keys.
  */
 function moveFocus(event: KeyboardEvent): void {
   const current = event.currentTarget;
-  if (!(current instanceof HTMLButtonElement)) return;
+  if (!(current instanceof HTMLButtonElement)) {
+    return;
+  }
 
+  // The rows are found through the DOM and not kept in an array of bindings.
+  // The list is replaced wholesale whenever another trace is opened, so an
+  // array of references by index would go stale, and the siblings are right
+  // there.
   const rows = [...(current.parentElement?.querySelectorAll<HTMLButtonElement>(':scope > button') ?? [])];
   const index = rows.indexOf(current);
-  if (index === -1) return;
+  const targets: Record<string, number> = {
+    ArrowDown: index + 1,
+    ArrowUp: index - 1,
+    Home: 0,
+    End: rows.length - 1,
+  };
+  const target = rows[targets[event.key] ?? -1];
 
-  const target =
-    event.key === 'ArrowDown'
-      ? index + 1
-      : event.key === 'ArrowUp'
-        ? index - 1
-        : event.key === 'Home'
-          ? 0
-          : event.key === 'End'
-            ? rows.length - 1
-            : -1;
+  if (index === -1 || !target || target === current) {
+    return;
+  }
 
-  if (target < 0 || target >= rows.length || target === index) return;
-
-  // Otherwise the arrow key scrolls the container as well as moving focus, and
-  // the row lands somewhere other than where the scroll left it.
+  // Focusing a row selects it, so the detail panel and the map follow the
+  // keyboard. Without preventDefault the arrow key would scroll the container
+  // as well as moving focus.
   event.preventDefault();
-  rows[target]?.focus();
+  target.focus();
 }
 
-async function copyTraceId() {
-  if (!detail) return;
+async function copyTraceId(): Promise<void> {
+  if (!detail) {
+    return;
+  }
 
   try {
     await navigator.clipboard.writeText(detail.trace.trace_id);
@@ -373,10 +237,7 @@ async function copyTraceId() {
 	description="Follow one application run across model calls, tools, retrievals, and provider attempts."
 >
 	{#snippet actions()}
-		<ToolbarButton disabled={loading} onclick={() => loadTraces()}>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Refresh
-		</ToolbarButton>
+		<RefreshButton disabled={loading} onclick={() => loadTraces()} />
 		<ToolbarButton>
 			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
 			Export
@@ -589,12 +450,13 @@ async function copyTraceId() {
 			</div>
 
 			{#if showMap && nodes.length > 0}
-				<!-- The whole run in eighty pixels: time across, nesting down, one mark
-				     per span. For a three-hundred-span agent run the waterfall below can
-				     only ever show a window; this is the shape of the thing. -->
+				<!-- The whole run in eighty pixels, with time across, nesting down and
+				     one mark per span. For an agent run of three hundred spans the
+				     waterfall below can only ever show a window, and this is the shape
+				     of the whole. -->
 				<div class="border-b border-line bg-surface-2 px-5 py-3">
 					<svg
-						viewBox="0 0 1000 {mapHeight}"
+						viewBox="0 0 {MAP_WIDTH} {mapHeight}"
 						preserveAspectRatio="none"
 						class="block w-full"
 						style:height={`${mapHeight}px`}
@@ -602,10 +464,11 @@ async function copyTraceId() {
 						aria-label="Overview of {nodes.length} spans across {mapDepth} levels of nesting"
 					>
 						{#each nodes as node (node.id)}
+							{@const span = nodeSpan(node, windowMs, MAP_WIDTH, 0.9)}
 							<rect
-								x={mapLeft(node)}
+								x={span.left}
 								y={node.depth * MAP_ROW}
-								width={mapWidth(node)}
+								width={span.width}
 								height={MAP_ROW - 2}
 								rx="0.8"
 								fill={nodeColor(node)}
@@ -646,9 +509,10 @@ async function copyTraceId() {
 						<span class="text-right text-[10.5px] font-medium tracking-[.04em] text-zinc-600 uppercase">Time</span>
 					</div>
 
-					<!-- Scrolls inside the card rather than moving the page: a long agent run is
-					     dozens of spans, and the axis the bars are measured against sits above
-					     this, so scrolling the whole page would take it off screen. -->
+					<!-- Scrolls inside the card and does not move the page. A long agent
+					     run is dozens of spans, and the axis the bars are measured against
+					     sits above this, so scrolling the whole page would take it off
+					     screen. -->
 					<div class="max-h-[clamp(260px,40vh,620px)] overflow-y-auto">
 					{#if nodes.length === 0}
 						<div class="px-5 py-12 text-center">
@@ -658,6 +522,7 @@ async function copyTraceId() {
 					{/if}
 
 					{#each nodes as node (node.id)}
+						{@const span = nodeSpan(node, windowMs, 100, 1.2)}
 						<button
 							type="button"
 							aria-pressed={selectedNode?.id === node.id}
@@ -703,7 +568,7 @@ async function copyTraceId() {
 								{/each}
 								<span
 									class="absolute top-[5px] h-[18px] min-w-[3px] rounded-[4px] opacity-85 shadow-[0_0_0_1px_rgba(255,255,255,.08)_inset]"
-									style={`left:${nodeLeft(node)}%;width:${nodeWidth(node)}%;background:${nodeColor(node)}`}
+									style={`left:${span.left}%;width:${span.width}%;background:${nodeColor(node)}`}
 								></span>
 							</div>
 

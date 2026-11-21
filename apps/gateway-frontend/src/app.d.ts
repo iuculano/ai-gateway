@@ -1,22 +1,14 @@
-// See https://svelte.dev/docs/kit/types#app.d.ts
-// for information about these interfaces
-
-import type { Session } from '$lib/server/session';
+import type { Session } from '#lib/server/session.ts';
 
 declare global {
   namespace App {
     interface Locals {
       /**
-       * Resolved once per request in hooks.server.ts, renewed if needed.
-       *
-       * Null means unauthenticated. Anything past the hook's own guard can rely
-       * on this being set for a protected route.
+       * Resolved once per request in hooks.server.ts, and renewed there if it
+       * needs it. Null means nobody is signed in, which the hook only lets
+       * through on a public route.
        */
       session: Session | null;
     }
-    // interface Error {}
-    // interface PageData {}
-    // interface PageState {}
-    // interface Platform {}
   }
 }

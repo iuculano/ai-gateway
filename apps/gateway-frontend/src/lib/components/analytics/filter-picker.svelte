@@ -1,27 +1,25 @@
 <script lang="ts">
-import { Input } from '$lib/components/ui/input';
+import { Input } from '#lib/components/ui/input/index.ts';
 
-let {
-  id,
-  label,
-  options,
-  value = $bindable(''),
-  allLabel,
-  class: fieldClass = '',
-}: {
+interface Props {
   id: string;
   label: string;
   options: string[];
   value: string;
-  /** What the blank option reads as; "All <label>s" unless given. */
   allLabel?: string;
   class?: string;
-} = $props();
+}
+
+let { id, label, options, value = $bindable(''), allLabel, class: fieldClass = '' }: Props = $props();
 
 let open = $state(false);
 let query = $state('');
 let highlighted = $state(0);
+
 const blankLabel = $derived(allLabel ?? `All ${label.toLowerCase()}s`);
+
+// The blank option first, then whatever matches what was typed. The value in
+// force is always offered, even when the options no longer include it.
 const matches = $derived([
   { value: '', label: blankLabel },
   ...[...new Set(value ? [value, ...options] : options)]
@@ -29,32 +27,65 @@ const matches = $derived([
     .map((option) => ({ value: option, label: option })),
 ]);
 
-function choose(next: string) {
+function show(): void {
+  open = true;
+  query = '';
+  highlighted = 0;
+}
+
+function showIfClosed(): void {
+  if (!open) {
+    show();
+  }
+}
+
+function choose(next: string): void {
   value = next;
   open = false;
   query = '';
 }
 
-function move(index: number) {
+function move(index: number): void {
   highlighted = (index + matches.length) % matches.length;
   document.getElementById(`${id}-option-${highlighted}`)?.scrollIntoView({ block: 'nearest' });
 }
 
-function onKeydown(event: KeyboardEvent) {
+function onInput(event: Event & { currentTarget: HTMLInputElement }): void {
+  query = event.currentTarget.value;
+  open = true;
+
+  // Typing lands on the first real match, past the blank option.
+  highlighted = query.trim() && matches.length > 1 ? 1 : 0;
+}
+
+function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault();
     open = false;
-  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+
+    return;
+  }
+
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
-    if (!open) {
-      query = '';
-      highlighted = 0;
-      open = true;
-    } else move(highlighted + (event.key === 'ArrowDown' ? 1 : -1));
-  } else if (event.key === 'Enter' && open) {
+
+    if (open) {
+      move(highlighted + (event.key === 'ArrowDown' ? 1 : -1));
+    } else {
+      show();
+    }
+
+    return;
+  }
+
+  if (event.key === 'Enter' && open) {
     event.preventDefault();
+
     const option = matches[highlighted];
-    if (option) choose(option.value);
+
+    if (option) {
+      choose(option.value);
+    }
   }
 }
 </script>
@@ -73,9 +104,9 @@ function onKeydown(event: KeyboardEvent) {
 		autocomplete="off"
 		spellcheck={false}
 		class="h-8 w-full rounded-lg border-line-strong bg-surface-3 px-2.5 text-[12.5px] text-zinc-300"
-		onfocus={() => { open = true; query = ''; highlighted = 0; }}
-		onclick={() => { if (!open) { open = true; query = ''; highlighted = 0; } }}
-		oninput={(event) => { query = event.currentTarget.value; open = true; highlighted = query.trim() && matches.length > 1 ? 1 : 0; }}
+		onfocus={show}
+		onclick={showIfClosed}
+		oninput={onInput}
 		onblur={() => (open = false)}
 		onkeydown={onKeydown}
 	/>

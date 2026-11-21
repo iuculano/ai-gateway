@@ -1,44 +1,46 @@
-import type { ChatCompletionRequest, GatewayHeaders } from '$lib/api/chat-completions';
-import { createChatCompletion, streamChatCompletion } from '$lib/api/chat-completions';
-import { applyChunk, type CompletionAssembly, emptyAssembly, fromCompletion } from '$lib/data/completion';
+import {
+  type ChatCompletionRequest,
+  createChatCompletion,
+  type GatewayHeaders,
+  streamChatCompletion,
+} from '#lib/api/chat-completions.ts';
+import {
+  applyChunk,
+  type CompletionAssembly,
+  emptyAssembly,
+  fromCompletion,
+  producesOutput,
+} from '#lib/data/completion.ts';
 
 /**
  * One model's half of a playground request.
  *
- * Extracted from the page so single and compare modes cannot drift: comparing
- * two models is the same operation as running one, done twice, and the moment
- * the two have separate implementations they start reporting timings measured
- * differently or handling an abort differently.
- *
- * The body is supplied per send rather than held, because in compare mode one
- * body is shared by every run and only `model` differs. Substituting it here is
- * what makes "the same request, to several models" true by construction rather
- * than by the caller remembering to do it.
+ * Comparing two models is the same operation as running one, done twice, so
+ * single and compare modes both run through this. The request body is handed
+ * over on each send and not held, because in compare mode one body is shared by
+ * every run and only the model differs.
  */
 export class PlaygroundRun {
-  /** The model this run sends to. Overrides whatever the shared body carries. */
+  /**
+   * The model this run sends to, which replaces whatever the shared body names.
+   */
   model = $state('');
 
   /**
-   * The upstream provider credential this run spends.
-   *
-   * Per run, not per page: comparing an OpenAI model against an Azure
-   * deployment needs two different keys, and a single shared field could only
-   * ever satisfy one of them.
-   *
-   * In memory and nowhere else. localStorage would survive a reload and leave a
-   * provider key readable by anything that ever runs script on this origin.
+   * The provider credential this run spends. Each run has its own, because
+   * comparing models from two providers needs two keys. It is held in memory
+   * and nowhere else, since anything stored in the browser would outlive the
+   * page and be readable by any script on this origin.
    */
   apiKey = $state('');
 
   assembly = $state<CompletionAssembly>(emptyAssembly());
 
   /**
-   * The response as it arrived on the wire: a completion object for a whole
-   * response, or the `data:` payloads one per line for a streamed one.
-   *
-   * A string rather than an array of frames that gets joined. Appending to a
-   * string is cheap; rebuilding a join of a thousand frames per token is not.
+   * The response as it arrived, which is a completion object for a whole
+   * response and the `data:` payloads, one to a line, for a streamed one. It is
+   * a string and not a list of frames, because adding to a string is cheap and
+   * joining a thousand frames again on every token is not.
    */
   wire = $state('');
 
@@ -54,7 +56,9 @@ export class PlaygroundRun {
     this.model = model;
   }
 
-  /** Clears the last response, keeping the model. */
+  /**
+   * Clears the last response, keeping the model.
+   */
   reset(): void {
     this.assembly = emptyAssembly();
     this.wire = '';
@@ -69,58 +73,39 @@ export class PlaygroundRun {
   }
 
   /**
-   * Sends one request and records what came back.
-   *
-   * Never throws. In compare mode several of these are in flight at once and
-   * one provider refusing a key must not take the others down with it - every
-   * failure lands on the run it belongs to, which is also where a reader will
-   * look for it.
+   * Sends one request and records what came back. It never throws, because in
+   * compare mode several runs are out at once and one provider refusing a key
+   * must not take the others down with it.
    *
    * @param headers
-   * The gateway's `ai-*` controls. `ai-api-key` is replaced with this run's own.
+   * The gateway's `ai-*` controls. `ai-api-key` is replaced with this run's
+   * own.
    *
    * @param body
    * The shared request. `model` is replaced with this run's own.
    *
    * @param stream
-   * Whether to consume the response as server-sent events.
+   * Whether to read the response as server-sent events.
    */
   async send(headers: GatewayHeaders, body: ChatCompletionRequest, stream: boolean): Promise<void> {
-    if (this.running) return;
+    if (this.running) {
+      return;
+    }
 
     const controller = new AbortController();
-    this.#controller = controller;
-    const signal = controller.signal;
-
-    this.running = true;
-    this.reset();
-
     const request: ChatCompletionRequest = { ...body, model: this.model.trim() };
     const sent: GatewayHeaders = { ...headers, 'ai-api-key': this.apiKey.trim() };
     const startedAt = performance.now();
 
+    this.#controller = controller;
+    this.running = true;
+    this.reset();
+
     try {
       if (stream) {
-        const opened = await streamChatCompletion(sent, request, signal);
-        this.traceId = opened.traceId;
-
-        for await (const { chunk, raw } of opened.chunks) {
-          // Measured on the first frame that carries OUTPUT, not on the first
-          // frame full stop: providers open with a role-only delta, and timing
-          // that would report a first token the reader cannot see yet.
-          const produced = chunk.choices.some(
-            (choice) => choice.delta.content || choice.delta.refusal || (choice.delta.tool_calls?.length ?? 0) > 0,
-          );
-
-          if (produced && this.firstTokenMs === null) {
-            this.firstTokenMs = performance.now() - startedAt;
-          }
-
-          applyChunk(this.assembly, chunk);
-          this.wire += `${raw}\n`;
-        }
+        await this.#readStream(sent, request, controller.signal, startedAt);
       } else {
-        const result = await createChatCompletion(sent, request, signal);
+        const result = await createChatCompletion(sent, request, controller.signal);
 
         this.traceId = result.traceId;
         this.assembly = fromCompletion(result.completion);
@@ -128,18 +113,40 @@ export class PlaygroundRun {
       }
 
       this.elapsedMs = performance.now() - startedAt;
-    } catch (err) {
-      // Stopping is not failing. The fetch rejects the same way either way, so
-      // the signal is what separates a deliberate abort from a real error - and
-      // whatever streamed in before the stop stays on screen.
-      if (signal.aborted) {
+    } catch (error) {
+      // Stopping is not failing. The fetch rejects the same way for both, so
+      // the signal is what tells a deliberate stop from a real error, and
+      // whatever streamed in before the stop stays on show.
+      if (controller.signal.aborted) {
         this.elapsedMs = performance.now() - startedAt;
       } else {
-        this.error = err instanceof Error ? err.message : 'The request failed.';
+        this.error = error instanceof Error ? error.message : 'The request failed.';
       }
     } finally {
       this.running = false;
       this.#controller = null;
+    }
+  }
+
+  async #readStream(
+    headers: GatewayHeaders,
+    request: ChatCompletionRequest,
+    signal: AbortSignal,
+    startedAt: number,
+  ): Promise<void> {
+    const opened = await streamChatCompletion(headers, request, signal);
+
+    this.traceId = opened.traceId;
+
+    for await (const { chunk, raw } of opened.chunks) {
+      // Timed on the first chunk that carries output, and not on the first
+      // chunk of all, which the reader cannot see anything of yet.
+      if (this.firstTokenMs === null && producesOutput(chunk)) {
+        this.firstTokenMs = performance.now() - startedAt;
+      }
+
+      applyChunk(this.assembly, chunk);
+      this.wire += `${raw}\n`;
     }
   }
 }

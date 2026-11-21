@@ -16,11 +16,6 @@ export async function listWebhooks(query: ListWebhooksQuery = {}) {
   return response.json();
 }
 
-export async function getWebhook(id: string) {
-  const response = await client.webhooks[':id'].$get({ param: { id } });
-  return response.json();
-}
-
 export async function createWebhook(input: CreateWebhookInput) {
   const response = await client.webhooks.$post({ json: input });
   return response.json();

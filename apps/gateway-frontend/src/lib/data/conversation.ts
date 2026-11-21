@@ -1,12 +1,13 @@
-import type { LogPayload } from '$lib/api/types';
+import type { LogPayload } from '#lib/api/types.ts';
+import { asRecord } from '#lib/data/log-payloads.ts';
 
 /**
  * Turns a stored log payload back into the conversation it represents.
  *
  * The panels show the raw JSON by default, which is the right thing when the
  * question is "what exactly went over the wire". It is the wrong thing when the
- * question is "what did the user ask and what did the model say" - the answer to
- * that is four or five lines buried in a body that is mostly parameters.
+ * question is "what did the user ask and what did the model say" - the answer
+ * to that is four or five lines buried in a body that is mostly parameters.
  *
  * Everything here is deliberately defensive. These payloads come back from
  * object storage as `unknown`, they were written by an older version of the
@@ -19,11 +20,14 @@ export type TurnRole = 'system' | 'developer' | 'user' | 'assistant' | 'tool';
 export interface Turn {
   role: TurnRole;
 
-  /** Flattened text content. Empty when the turn carried none - see `note`. */
+  /**
+   * Flattened text content. Empty when the turn carried none - see `note`.
+   */
   text: string;
 
   /**
-   * What the text alone cannot show: attached images, tool calls, a refusal.
+   * What the text alone cannot show, such as attached images, tool calls or a
+   * refusal.
    *
    * Without this a pure tool-call turn renders as a blank bubble, which reads
    * as "the model said nothing" rather than "the model called get_weather".
@@ -38,7 +42,7 @@ const ROLES: TurnRole[] = ['system', 'developer', 'user', 'assistant', 'tool'];
  * composer so a role is the same colour wherever it appears.
  *
  * Roles are always labelled as well. The colour only makes the alternation easy
- * to scan; it never carries the meaning on its own.
+ * to scan, and never carries the meaning on its own.
  */
 export const ROLE_COLORS: Record<TurnRole, string> = {
   system: '#a1a1aa',
@@ -47,10 +51,6 @@ export const ROLE_COLORS: Record<TurnRole, string> = {
   assistant: '#10b981',
   tool: '#c084fc',
 };
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
 
 function isRole(value: unknown): value is TurnRole {
   return typeof value === 'string' && (ROLES as string[]).includes(value);
@@ -89,8 +89,8 @@ function flatten(content: unknown): { text: string; images: number } {
 }
 
 /**
- * Renders tool calls the way a reader wants them: name and arguments, not the
- * call id, which is only meaningful to the protocol.
+ * Renders tool calls the way a reader wants them, as a name and arguments. The
+ * call id is left out because it only means something to the protocol.
  */
 function describeToolCalls(value: unknown): string | undefined {
   if (!Array.isArray(value) || value.length === 0) {
@@ -102,7 +102,7 @@ function describeToolCalls(value: unknown): string | undefined {
     const name = typeof fn.name === 'string' ? fn.name : 'unknown';
 
     // Arguments arrive as a JSON *string*. Re-parsing and re-printing collapses
-    // the provider's whitespace so a long call stays on one line; anything that
+    // the provider's whitespace so a long call stays on one line. Anything that
     // will not parse is shown as sent rather than hidden.
     let args = typeof fn.arguments === 'string' ? fn.arguments : '';
     try {
@@ -155,11 +155,12 @@ function toTurn(message: unknown): Turn | null {
 }
 
 /**
- * The conversation as it was SENT - every message in the request body, in order.
+ * The conversation as it was SENT - every message in the request body, in
+ * order.
  *
- * System and tool turns are included rather than filtered: a reader asking why
- * the model answered the way it did is usually asking about the system prompt or
- * a tool result, and hiding those makes the transcript quietly misleading.
+ * System and tool turns are included rather than filtered. A reader asking why
+ * the model answered the way it did is usually asking about the system prompt
+ * or a tool result, and hiding those makes the transcript quietly misleading.
  */
 export function requestTurns(payload: LogPayload): Turn[] {
   const messages = asRecord(payload).messages;
@@ -173,8 +174,9 @@ export function requestTurns(payload: LogPayload): Turn[] {
 /**
  * The conversation as it came BACK - the assistant message from each choice.
  *
- * `n` is pinned to 1 by the request schema, so this is one turn in practice, but
- * it maps over choices anyway rather than assuming the first is the only one.
+ * `n` is pinned to 1 by the request schema, so this is one turn in practice,
+ * but it maps over choices anyway rather than assuming the first is the only
+ * one.
  */
 export function responseTurns(payload: LogPayload): Turn[] {
   const choices = asRecord(payload).choices;
@@ -185,11 +187,14 @@ export function responseTurns(payload: LogPayload): Turn[] {
   return choices.map((choice) => toTurn(asRecord(choice).message)).filter((turn): turn is Turn => turn !== null);
 }
 
-/** The transcript as plain text, for the panel's copy button. */
+/**
+ * The transcript as plain text, for the panel's copy button.
+ */
 export function turnsToText(turns: Turn[]): string {
   return turns
     .map((turn) => {
       const body = [turn.text, turn.note ? `[${turn.note}]` : ''].filter(Boolean).join('\n');
+
       return `${turn.role}:\n${body}`;
     })
     .join('\n\n');

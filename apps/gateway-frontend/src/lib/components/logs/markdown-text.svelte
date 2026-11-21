@@ -1,11 +1,13 @@
 <script lang="ts">
-import { renderMarkdown } from '$lib/data/markdown';
+import { renderMarkdown } from '#lib/data/markdown.ts';
 
 let { text }: { text: string } = $props();
+
 const html = $derived(renderMarkdown(text));
 </script>
 
-<!-- Raw HTML is disabled in the parser; only parser-generated markup is rendered. -->
+<!-- Raw HTML is switched off in the parser, so only markup the parser itself
+     produced is rendered. -->
 <div class="markdown min-w-0 max-w-full overflow-x-auto text-[12.5px] leading-[1.6] break-words text-zinc-300">
   {@html html}
 </div>

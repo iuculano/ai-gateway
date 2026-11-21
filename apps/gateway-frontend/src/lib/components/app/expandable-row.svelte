@@ -1,37 +1,35 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * A clickable table row that opens a detail panel underneath.
- *
- * Shared so the three tables cannot disagree on row rhythm again - they were
- * py-3/gap-3.5 on keys and py-[11px]/gap-3 on the other two, with the expanded
- * panel indented 54px on one and 58px on the others.
- *
- * The height is FIXED rather than padding-driven. Padding plus content meant a
- * row was as tall as whatever it happened to hold - 40px on logs and audit,
- * 50px anywhere with an h-7 action button - so one shared component produced two
- * row rhythms depending on the page. min-h-10 with slim padding puts every row
- * at 40px and still clears a 28px button.
- *
- * `cols` must be the same value handed to the TableCard above it, so the
- * header and the rows stay in one grid.
- */
-let {
-  cols,
-  expanded,
-  ontoggle,
-  cells,
-  details,
-}: {
+// A clickable table row that opens a detail panel underneath, shared so that
+// every table has the same row rhythm.
+//
+// The height is fixed and not driven by padding. With padding a row is as tall
+// as whatever it holds, so one with an action button comes out taller than one
+// without. A minimum of 40px with slim padding puts every row at one height and
+// still clears a 28px button.
+
+interface Props {
+  /**
+   * The same grid template that was handed to the TableCard above, so that the
+   * header and the rows stay in one grid.
+   */
   cols: string;
   expanded: boolean;
   ontoggle: () => void;
-  /** The row's own cells, in column order after the chevron. */
+
+  /**
+   * The row's own cells, in column order after the chevron.
+   */
   cells: Snippet;
-  /** The panel revealed underneath. */
+
+  /**
+   * The panel revealed underneath.
+   */
   details: Snippet;
-} = $props();
+}
+
+let { cols, expanded, ontoggle, cells, details }: Props = $props();
 </script>
 
 <div class="border-b border-hairline last:border-b-0">

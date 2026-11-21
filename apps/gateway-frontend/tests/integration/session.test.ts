@@ -1,140 +1,89 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test';
+import { redis } from '@repo/redis';
 import type { Cookies } from '@sveltejs/kit';
+import { createSession, destroySession, getValidSession, refreshSession } from '../../src/lib/server/session';
+import { clearSessions, type FakeCookies, FakeIdp, fakeCookies } from './fakes';
+
+// The real session module against a real Valkey, with only the identity
+// provider faked. What is worth testing here is coordination, such as one token
+// call per expiry and a rotated token stored before it is used, and none of
+// that survives being rebuilt in a double.
+
+let idp: FakeIdp;
+let logged: Mock<typeof console.error>;
 
 /**
- * Exercises the real session module against a real Valkey.
- *
- * The behaviour worth testing here is coordination - one token call per expiry,
- * a rotated token persisted before it is used, a failed refresh taking the
- * session with it - and none of that survives being reimplemented in a double.
- * So the module under test is the actual one, with only the IDP faked.
+ * Stores a session whose access token expires at a chosen offset from now.
  */
-
-const OIDC_PATH = new URL('../../src/lib/server/oidc.ts', import.meta.url).pathname;
-
-let refreshCalls = 0;
-let refreshDelayMs = 0;
-let refreshFails = false;
-let issued = 0;
-
-mock.module(OIDC_PATH, () => ({
-  refreshTokens: async () => {
-    refreshCalls += 1;
-
-    // A real token endpoint is a network round-trip. Without some latency every
-    // "concurrent" call would resolve before the next one started and the lock
-    // would never actually be contended.
-    if (refreshDelayMs) {
-      await new Promise((resolve) => setTimeout(resolve, refreshDelayMs));
-    }
-
-    if (refreshFails) {
-      throw new Error('invalid_grant');
-    }
-
-    issued += 1;
-    return {
-      accessToken: `access-${issued}`,
-      expiresIn: 3600,
-      refreshToken: `refresh-${issued}`,
-      idToken: `id-${issued}`,
-      idTokenClaims: {},
-    };
-  },
-  revokeRefreshToken: async () => {},
-  buildEndSessionUrl: async () => null,
-}));
-
-const { createSession, getValidSession, refreshSession, destroySession } = await import('../../src/lib/server/session');
-const { redis, connectRedis } = await import('@repo/redis');
-
-/** Enough of SvelteKit's Cookies for the session module, backed by a map. */
-function fakeCookies(): Cookies & { jar: Map<string, string> } {
-  const jar = new Map<string, string>();
-
-  return {
-    jar,
-    get: (name: string) => jar.get(name),
-    set: (name: string, value: string) => {
-      jar.set(name, value);
-    },
-    delete: (name: string) => {
-      jar.delete(name);
-    },
-    getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
-    serialize: () => '',
-  } as unknown as Cookies & { jar: Map<string, string> };
-}
-
-const baseUser = { name: 'Test', email: 'test@example.com', username: 'test' };
-
-/** Writes a session whose access token expires at a chosen offset from now. */
-async function seed(cookies: Cookies, expiresInMs: number, options: { refreshToken?: string; ageMs?: number } = {}) {
+async function seed(
+  cookies: Cookies,
+  expiresInMs: number,
+  options: { refreshToken?: string; ageMs?: number } = {},
+): Promise<void> {
   await createSession(cookies, {
     accessToken: 'access-0',
     expiresAt: Date.now() + expiresInMs,
     refreshToken: 'refreshToken' in options ? options.refreshToken : 'refresh-0',
     idToken: 'id-0',
     createdAt: Date.now() - (options.ageMs ?? 0),
-    user: baseUser,
+    user: { name: 'Test', email: 'test@example.com', username: 'test' },
   });
 }
 
+/**
+ * How many seconds the store will keep the session a cookie points at.
+ */
+function storedSeconds(cookies: FakeCookies): Promise<number> {
+  return redis.ttl(`relay:session:${cookies.jar.get('relay_session')}`);
+}
+
 beforeEach(() => {
-  refreshCalls = 0;
-  refreshDelayMs = 0;
-  refreshFails = false;
-  issued = 0;
+  idp = new FakeIdp();
+  logged = spyOn(console, 'error').mockImplementation(() => {});
 });
 
-afterAll(async () => {
-  await connectRedis();
-
-  // Only this suite's keys. flushDb() would empty whatever database the
-  // environment happens to point at, which is a loaded gun aimed at a
-  // concurrently running suite the moment somebody reuses a URL.
-  const keys = await redis.keys('relay:session:*');
-  if (keys.length > 0) {
-    await redis.del(keys);
-  }
+afterEach(() => {
+  idp.stop();
+  logged.mockRestore();
 });
+
+afterAll(clearSessions);
 
 describe('getValidSession', () => {
-  test('returns a healthy session without touching the IDP', async () => {
+  test('returns a healthy session without touching the identity provider', async () => {
     const cookies = fakeCookies();
     await seed(cookies, 60 * 60 * 1000);
 
     const session = await getValidSession(cookies);
 
     expect(session?.accessToken).toBe('access-0');
-    expect(refreshCalls).toBe(0);
+    expect(idp.tokenRequests).toHaveLength(0);
   });
 
   test('renews inside the skew window, before the token has actually expired', async () => {
     const cookies = fakeCookies();
 
     // Still valid by the clock, but not for long enough to survive the trip to
-    // the backend - the case a bare `expiresAt > now` check gets wrong.
+    // the backend, which is the case a bare comparison with now gets wrong.
     await seed(cookies, 10_000);
 
     const session = await getValidSession(cookies);
 
-    expect(refreshCalls).toBe(1);
+    expect(idp.tokenRequests).toHaveLength(1);
     expect(session?.accessToken).toBe('access-1');
   });
 
-  test('persists the rotated refresh token rather than the spent one', async () => {
+  test('renews with the rotated refresh token the next time, and not the spent one', async () => {
     const cookies = fakeCookies();
     await seed(cookies, -1000);
 
-    const session = await getValidSession(cookies);
+    await getValidSession(cookies);
+    await refreshSession(cookies);
 
-    expect(session?.refreshToken).toBe('refresh-1');
-
-    // And it survives a re-read: a rotated token held only in memory is a
-    // session that dies on the next process.
-    const reread = await getValidSession(cookies);
-    expect(reread?.refreshToken).toBe('refresh-1');
+    // The second renewal reads the session back from the store, so this also
+    // shows that the rotated token was written there.
+    const presented = idp.tokenRequests.map((request) => request.get('refresh_token'));
+    expect(presented).toEqual(['refresh-0', 'refresh-1']);
   });
 
   test('ends the session when there is no refresh token to renew with', async () => {
@@ -144,7 +93,7 @@ describe('getValidSession', () => {
     const session = await getValidSession(cookies);
 
     expect(session).toBeNull();
-    expect(refreshCalls).toBe(0);
+    expect(idp.tokenRequests).toHaveLength(0);
     expect(cookies.jar.size).toBe(0);
   });
 
@@ -157,13 +106,13 @@ describe('getValidSession', () => {
     const session = await getValidSession(cookies);
 
     expect(session).toBeNull();
-    expect(refreshCalls).toBe(0);
+    expect(idp.tokenRequests).toHaveLength(0);
   });
 
   test('ends the session when the refresh is rejected', async () => {
     const cookies = fakeCookies();
     await seed(cookies, -1000);
-    refreshFails = true;
+    idp.trouble = 'refuses';
 
     const session = await getValidSession(cookies);
 
@@ -171,80 +120,122 @@ describe('getValidSession', () => {
     expect(cookies.jar.size).toBe(0);
   });
 
-  /**
-   * The regression this whole design exists for.
-   *
-   * A dashboard page load fires several requests at once. Rotation means the
-   * second refresh presents a token the first already spent, so without the
-   * lock the IDP answers invalid_grant and the session dies at the exact moment
-   * it was supposed to be renewed. It never reproduces by hand.
-   */
+  test('uses the session another server renewed between this one reading it and taking the lock', async () => {
+    const cookies = fakeCookies();
+    await seed(cookies, -1000);
+    const key = `relay:session:${cookies.jar.get('relay_session')}`;
+    const renewed = { accessToken: 'access-elsewhere', expiresAt: Date.now() + 3_600_000, createdAt: Date.now() };
+
+    // The first write this request makes is its attempt on the lock. The other
+    // server's renewal is slipped in just ahead of it, lock already released.
+    const set = redis.set.bind(redis);
+    const attempt = spyOn(redis, 'set').mockImplementationOnce(async (...lock) => {
+      await set(key, JSON.stringify(renewed), { EX: 3600 });
+
+      return set(...lock);
+    });
+
+    const session = await getValidSession(cookies);
+    attempt.mockRestore();
+
+    // Refreshing here would present a token the other server already spent,
+    // and the refusal would end the session.
+    expect(session?.accessToken).toBe('access-elsewhere');
+    expect(idp.tokenRequests).toHaveLength(0);
+  });
+
+  // The regression the lock exists for. A page load fires several requests at
+  // once, and rotation means a second refresh presents a token the first has
+  // already spent, which the provider refuses. It never reproduces by hand.
   test('concurrent callers produce exactly one token call', async () => {
     const cookies = fakeCookies();
     await seed(cookies, -1000);
-    refreshDelayMs = 150;
+    idp.delayMs = 150;
 
     const results = await Promise.all(Array.from({ length: 8 }, () => getValidSession(cookies)));
 
-    expect(refreshCalls).toBe(1);
+    expect(idp.tokenRequests).toHaveLength(1);
 
-    // Every caller has to come away usable, not just the one that won the lock.
+    // Every caller has to come away usable, and not only the one that won the
+    // lock.
     for (const session of results) {
       expect(session?.accessToken).toBe('access-1');
     }
   });
 });
 
-describe('sessions written before the refresh fields existed', () => {
-  test('are usable, and are not mistaken for having outlived the cap', async () => {
+// A provider that cannot be asked says nothing about the refresh token, so none
+// of this may end the session.
+describe('when the identity provider cannot be asked', () => {
+  test('the session is kept, and renewed once the provider is back', async () => {
     const cookies = fakeCookies();
-    await connectRedis();
+    await seed(cookies, -1000);
 
-    // Exactly the shape this app stored before refresh tokens: no createdAt, no
-    // refreshToken. A NaN cap calculation here would reject a live session, and
-    // a NaN TTL would fail the write outright rather than merely be wrong.
-    const id = 'legacy-session-id';
-    cookies.set('relay_session', id, { path: '/' });
-    await redis.set(
-      `relay:session:${id}`,
-      JSON.stringify({ accessToken: 'legacy', expiresAt: Date.now() + 60 * 60 * 1000, user: baseUser }),
-      { EX: 3600 },
-    );
+    idp.trouble = 'unavailable';
+    const during = await getValidSession(cookies);
+    idp.trouble = null;
+    const after = await getValidSession(cookies);
+
+    // Nothing to go on with while the provider was away, since the token had
+    // already expired.
+    expect(during).toBeNull();
+    expect(after?.accessToken).toBe('access-1');
+    expect(logged).toHaveBeenCalledTimes(1);
+  });
+
+  test('the request goes on with the token it has while that still works', async () => {
+    const cookies = fakeCookies();
+    await seed(cookies, 10_000);
+    idp.trouble = 'unavailable';
 
     const session = await getValidSession(cookies);
 
-    expect(session?.accessToken).toBe('legacy');
-    expect(refreshCalls).toBe(0);
+    expect(session?.accessToken).toBe('access-0');
   });
 
-  test('end when their access token does, having nothing to renew with', async () => {
+  test('callers that waited on the renewal are let go as soon as it fails', async () => {
     const cookies = fakeCookies();
-    await connectRedis();
+    await seed(cookies, 10_000);
+    idp.trouble = 'unavailable';
+    idp.delayMs = 150;
+    const started = Date.now();
 
-    const id = 'legacy-expired-id';
-    cookies.set('relay_session', id, { path: '/' });
-    await redis.set(
-      `relay:session:${id}`,
-      JSON.stringify({ accessToken: 'legacy', expiresAt: Date.now() - 1000, user: baseUser }),
-      { EX: 3600 },
-    );
+    const results = await Promise.all(Array.from({ length: 8 }, () => getValidSession(cookies)));
 
-    expect(await getValidSession(cookies)).toBeNull();
-    expect(refreshCalls).toBe(0);
+    // Left to wait out the lock, they would be here for eight seconds.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(idp.tokenRequests).toHaveLength(1);
+
+    for (const session of results) {
+      expect(session?.accessToken).toBe('access-0');
+    }
   });
+
+  // Slow on purpose. The only way to see the deadline is to wait it out.
+  test('a provider that never answers is given up on', async () => {
+    const cookies = fakeCookies();
+    await seed(cookies, 10_000);
+    idp.trouble = 'silent';
+    const started = Date.now();
+
+    const session = await getValidSession(cookies);
+
+    expect(Date.now() - started).toBeLessThan(6_000);
+    expect(session?.accessToken).toBe('access-0');
+  }, 10_000);
 });
 
 describe('refreshSession', () => {
-  test('renews regardless of what the stored expiry claims', async () => {
+  test('renews whatever the stored expiry claims', async () => {
     const cookies = fakeCookies();
 
-    // The reactive path: the backend rejected a token this process believes is
-    // healthy, so the stored expiry is not the thing to consult.
+    // The backend refused a token this process believes is healthy, so the
+    // stored expiry is not the thing to go by.
     await seed(cookies, 60 * 60 * 1000);
 
     const session = await refreshSession(cookies);
 
-    expect(refreshCalls).toBe(1);
+    expect(idp.tokenRequests).toHaveLength(1);
     expect(session?.accessToken).toBe('access-1');
   });
 
@@ -252,21 +243,61 @@ describe('refreshSession', () => {
     const cookies = fakeCookies();
     await seed(cookies, 60 * 60 * 1000, { refreshToken: undefined });
 
-    expect(await refreshSession(cookies)).toBeNull();
-    expect(refreshCalls).toBe(0);
+    const session = await refreshSession(cookies);
+
+    expect(session).toBeNull();
+    expect(idp.tokenRequests).toHaveLength(0);
   });
 });
 
 describe('destroySession', () => {
-  test('returns what it cleared, so logout can revoke it', async () => {
+  test('ends the session for anyone still holding its cookie, and returns what it held', async () => {
     const cookies = fakeCookies();
     await seed(cookies, 60 * 60 * 1000);
+    const copied = fakeCookies();
+    copied.jar.set('relay_session', cookies.jar.get('relay_session') ?? '');
 
     const session = await destroySession(cookies);
 
+    // What comes back is what lets signing out revoke the refresh token.
     expect(session?.refreshToken).toBe('refresh-0');
     expect(session?.idToken).toBe('id-0');
     expect(cookies.jar.size).toBe(0);
-    expect(await getValidSession(cookies)).toBeNull();
+    expect(await getValidSession(copied)).toBeNull();
+  });
+});
+
+// The windows are the ones setup.ts configures, an hour idle and a day at most.
+describe('how long a session is kept', () => {
+  test('for the idle window, while its cap is far off', async () => {
+    const cookies = fakeCookies();
+    await seed(cookies, 5 * 60 * 1000);
+
+    const seconds = await storedSeconds(cookies);
+
+    expect(seconds).toBeGreaterThan(3590);
+    expect(seconds).toBeLessThanOrEqual(3600);
+  });
+
+  test('never past its absolute cap', async () => {
+    const cookies = fakeCookies();
+
+    // Ten minutes short of a day old.
+    await seed(cookies, 5 * 60 * 1000, { ageMs: (24 * 60 - 10) * 60 * 1000 });
+
+    const seconds = await storedSeconds(cookies);
+
+    expect(seconds).toBeGreaterThan(590);
+    expect(seconds).toBeLessThanOrEqual(600);
+  });
+
+  test('only as long as its token lasts, when it cannot be renewed', async () => {
+    const cookies = fakeCookies();
+    await seed(cookies, 30 * 60 * 1000, { refreshToken: undefined });
+
+    const seconds = await storedSeconds(cookies);
+
+    expect(seconds).toBeGreaterThan(1790);
+    expect(seconds).toBeLessThanOrEqual(1800);
   });
 });

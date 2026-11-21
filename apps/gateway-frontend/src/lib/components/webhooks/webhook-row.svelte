@@ -1,66 +1,40 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import { resolveActorNames } from '$lib/api/actors';
-import type { Webhook } from '$lib/api/types';
-import ConfirmDialog from '$lib/components/app/confirm-dialog.svelte';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import { fmtTs, formatDate, pairSummary, timeAgo } from '$lib/data/format';
-import type { WebhookActivity } from '$lib/data/webhooks';
-import { webhooks as store } from '$lib/state/webhooks.svelte';
+import { resolveActorNames } from '#lib/api/actors.ts';
+import type { Webhook } from '#lib/api/types.ts';
+import ConfirmDialog from '#lib/components/app/confirm-dialog.svelte';
+import DetailGrid, { type DetailItem } from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import { fmtTs, formatDate, pairSummary, timeAgo, toneFor } from '#lib/data/format.ts';
+import type { WebhookActivity } from '#lib/data/webhooks.ts';
+import { webhooks as store } from '#lib/state/webhooks.svelte.ts';
 
-let {
-  webhook,
-  cols,
-  activity,
-  expanded,
-  ontoggle,
-  onedit,
-}: {
+interface Props {
   webhook: Webhook;
   cols: string;
-  /** Counters over the loaded outbox and delivery windows - see buildActivity. */
+
+  /**
+   * Counts over the outbox entries and deliveries that are loaded, and not
+   * over the endpoint's whole history.
+   */
   activity: WebhookActivity;
   expanded: boolean;
   ontoggle: () => void;
   onedit: () => void;
-} = $props();
+}
 
-const TONES = ['#10b981', '#60a5fa', '#c084fc', '#f59e0b', '#34d399'];
+let { webhook, cols, activity, expanded, ontoggle, onedit }: Props = $props();
+
+let creatorName: string | null = $state(null);
+let busy = $state(false);
+let confirmDeleteOpen = $state(false);
 
 const w = $derived(webhook);
-
-// Same deterministic tone as the keys table, so an endpoint keeps its colour
-// across renders and sorts.
-const tone = $derived(TONES[[...w.id].reduce((acc, char) => acc + char.charCodeAt(0), 0) % TONES.length]);
-
+const tone = $derived(toneFor(w.id));
 const filterRules = $derived(Object.entries(w.filter ?? {}));
 const created = $derived(fmtTs(w.created_at));
 const updated = $derived(fmtTs(w.updated_at));
-
-let creatorName: string | null = $state(null);
-
-$effect(() => {
-  const creatorId = w.creator_id;
-  creatorName = null;
-  if (!expanded || !creatorId) return;
-
-  let cancelled = false;
-  const creator = { actor_type: 'user', actor_id: creatorId };
-  resolveActorNames([creator])
-    .then((name) => {
-      if (!cancelled) creatorName = name(creator);
-    })
-    .catch(() => {
-      // Keep the creator ID visible if name resolution is unavailable.
-    });
-
-  return () => {
-    cancelled = true;
-  };
-});
 
 const detailItems: DetailItem[] = $derived([
   {
@@ -77,10 +51,46 @@ const detailItems: DetailItem[] = $derived([
   { label: 'Last attempt', value: timeAgo(activity.lastAttemptAt), mono: false },
 ]);
 
-let busy = $state(false);
-let confirmDeleteOpen = $state(false);
+// The name behind the creator's id, looked up once the row is opened. When it
+// cannot be resolved, the id stays on show.
+$effect(() => {
+  const creatorId = w.creator_id;
 
-async function remove() {
+  creatorName = null;
+
+  if (!expanded || !creatorId) {
+    return;
+  }
+
+  const creator = { actor_type: 'user', actor_id: creatorId };
+  let cancelled = false;
+
+  resolveActorNames([creator])
+    .then((name) => {
+      if (!cancelled) {
+        creatorName = name(creator);
+      }
+    })
+    .catch(() => {});
+
+  return () => {
+    cancelled = true;
+  };
+});
+
+// The row itself is a button, so its own buttons keep their clicks from
+// toggling it.
+function edit(event: MouseEvent): void {
+  event.stopPropagation();
+  onedit();
+}
+
+function askDelete(event: MouseEvent): void {
+  event.stopPropagation();
+  confirmDeleteOpen = true;
+}
+
+async function remove(): Promise<void> {
   busy = true;
 
   try {
@@ -98,14 +108,13 @@ async function remove() {
 <ExpandableRow {cols} {expanded} {ontoggle}>
 	{#snippet cells()}
 		<span class="inline-flex min-w-0 items-center gap-[9px]">
-			<!-- A tone dot rather than an initials block. The 32px avatar was the
-			     tallest thing in the row and set the row height on its own; this keeps
-			     the same deterministic colour at the height logs' rows run at. -->
+			<!-- A dot in the webhook's own colour and not an initials block, which
+			     would be the tallest thing in the row and set its height. -->
 			<span class="size-[7px] flex-none rounded-full" style:background={tone}></span>
 			<span class="overflow-hidden text-[13px] font-medium text-ellipsis whitespace-nowrap">{w.name}</span>
 		</span>
 
-		<!-- Lifted out from under the name, where it made every row two lines tall. -->
+		<!-- Beside the name and not under it, which would make every row two lines tall. -->
 		<span class="overflow-hidden text-[12.5px] text-ellipsis whitespace-nowrap text-zinc-500">
 			{w.description ?? '—'}
 		</span>
@@ -115,7 +124,7 @@ async function remove() {
 		</code>
 
 		<!-- An endpoint with no rules receives every log, which is worth saying
-		     outright - a blank cell reads as missing configuration. -->
+		     outright, because a blank cell reads as missing configuration. -->
 		{#if filterRules.length === 0}
 			<span class="text-[12.5px] text-zinc-600">All events</span>
 		{:else}
@@ -138,10 +147,7 @@ async function remove() {
 				type="button"
 				class="h-7 rounded-md border border-line-strong bg-surface-3 px-2.5 text-[11.5px] font-semibold text-zinc-300 hover:bg-surface-4 disabled:opacity-50"
 				disabled={busy}
-				onclick={(event) => {
-					event.stopPropagation();
-					onedit();
-				}}
+				onclick={edit}
 			>
 				Edit
 			</button>
@@ -149,10 +155,7 @@ async function remove() {
 				type="button"
 				class="h-7 rounded-md border border-red-500/30 bg-red-500/8 px-2.5 text-[11.5px] font-semibold text-red-400 hover:bg-red-500/15 disabled:opacity-50"
 				disabled={busy}
-				onclick={(event) => {
-					event.stopPropagation();
-					confirmDeleteOpen = true;
-				}}
+				onclick={askDelete}
 			>
 				Delete
 			</button>
@@ -169,13 +172,12 @@ async function remove() {
 						No rules — every log recorded in this organization is queued for this endpoint.
 					</div>
 				{:else}
-					<!-- One grid for the whole list rather than a flex row per pair. The
-					     three columns are shared, so the `=` signs and the values line up
-					     down the panel however long the individual keys are - as separate
-					     flex rows each pair started wherever its own key ended.
+					<!-- One grid for the whole list and not a flex row per pair. The three
+					     columns are shared, so the equals signs and the values line up down
+					     the panel however long the keys are.
 
-					     The separators are per-cell borders because a flat grid has no row
-					     element left to hang the old gap-px hairline on. -->
+					     The separators are borders on each cell, because a flat grid has no
+					     row element to hang a hairline on. -->
 					<div class="grid grid-cols-[max-content_max-content_1fr] bg-surface-2">
 						{#each filterRules as [key, value], index (key)}
 							{@const divider = index > 0 ? 'border-t border-line' : ''}
@@ -190,9 +192,9 @@ async function remove() {
 				{/if}
 			</Panel>
 
-			<!-- Counted over the rows currently paged in, and captioned as such:
-			     neither list endpoint returns a total, so a bare figure here would
-			     read as the endpoint's lifetime history. -->
+			<!-- Counted over the rows that are paged in, and captioned as such.
+			     Neither list endpoint returns a total, so a bare figure here would
+			     read as the endpoint's whole history. -->
 			<Panel title="Activity">
 				<div class="flex grow items-center gap-8 px-3.5 py-[13px]">
 					<div>

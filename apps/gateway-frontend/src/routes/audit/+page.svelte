@@ -1,25 +1,24 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listAuditLogs } from '$lib/api/audit-logs';
-import type { ListMeta } from '$lib/api/types';
-import AutoRefreshToggle from '$lib/components/app/auto-refresh-toggle.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import PageHeader from '$lib/components/app/page-header.svelte';
-import TableCard from '$lib/components/app/table-card.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import AuditRow from '$lib/components/audit/audit-row.svelte';
-import { toAuditEvent } from '$lib/data/audit';
-import type { AuditCategory, AuditEvent } from '$lib/data/types';
-import { AutoRefresh } from '$lib/state/auto-refresh.svelte';
-import { dashboard } from '$lib/state/dashboard.svelte';
+import { listAuditLogs } from '#lib/api/audit-logs.ts';
+import AutoRefreshToggle from '#lib/components/app/auto-refresh-toggle.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import RefreshButton from '#lib/components/app/refresh-button.svelte';
+import TableCard from '#lib/components/app/table-card.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import AuditRow from '#lib/components/audit/audit-row.svelte';
+import { type AuditCategory, type AuditEvent, auditSummary, toAuditEvent } from '#lib/data/audit.ts';
+import { AppendList } from '#lib/state/append-list.svelte.ts';
+import { AutoRefresh } from '#lib/state/auto-refresh.svelte.ts';
+import { dashboard } from '#lib/state/dashboard.svelte.ts';
 
 type CatFilter = 'all' | AuditCategory;
 
 const PAGE_SIZE = 50;
 
-// Shared with AuditRow so the header and the rows sit in one grid.
-// The Occurred column is 150px to match the logs table, which renders the same
-// 'Aug 19 · 03:38:08' cell from the same helper. At 118px it clipped.
+// Shared with AuditRow, so that the header and the rows sit in one grid. The
+// Occurred column is as wide as the logs table's, which draws the same cell.
 const COLS = '24px 150px minmax(110px,1fr) 84px minmax(150px,1.4fr) 104px 112px 86px';
 
 const COLUMNS = [
@@ -42,156 +41,88 @@ const CAT_META: Record<AuditCategory, { label: string; color: string }> = {
   security: { label: 'Security', color: '#f87171' },
 };
 
-// The categories keep their colour coding as dots inside the shared segmented
-// control - same shape as the other pages, without losing the signal.
-const TABS: { id: CatFilter; label: string; color?: string }[] = [
-  { id: 'all', label: 'All' },
-  ...(Object.entries(CAT_META) as [AuditCategory, { label: string; color: string }][]).map(([id, meta]) => ({
-    id,
-    label: meta.label,
-    color: meta.color,
-  })),
-];
+// The categories keep their colours as dots inside the shared segmented
+// control.
+const TABS: { id: CatFilter; label: string; color?: string }[] = [{ id: 'all', label: 'All' }];
 
-let cat: CatFilter = $state('all');
-let expandedEvent: string | null = $state(null);
-
-let events: AuditEvent[] = $state([]);
-let meta: ListMeta | null = $state(null);
-let loading = $state(false);
-let loadingMore = $state(false);
-let error: string | null = $state(null);
-
-/** True once loadMore has appended. Auto-refresh re-reads the first page only. */
-let appended = $state(false);
-
-async function load() {
-  if (loading) return;
-  loading = true;
-  error = null;
-
-  try {
-    const result = await listAuditLogs({ limit: PAGE_SIZE });
-    events = result.data.map(toAuditEvent);
-    meta = result.meta;
-    appended = false;
-  } catch (err) {
-    error = err instanceof Error ? err.message : 'Failed to load the audit log.';
-  } finally {
-    loading = false;
-  }
-}
-
-async function loadMore() {
-  if (loadingMore || !meta?.more_data || !meta.oldest_id) return;
-  loadingMore = true;
-
-  try {
-    const result = await listAuditLogs({
-      limit: PAGE_SIZE,
-      after_id: meta.oldest_id,
-    });
-    events = [...events, ...result.data.map(toAuditEvent)];
-    meta = result.meta;
-    appended = true;
-  } catch (err) {
-    error = err instanceof Error ? err.message : 'Failed to load more events.';
-  } finally {
-    loadingMore = false;
-  }
-}
-
-/**
- * Re-reads the newest page without disturbing the table.
- *
- * Sets neither `loading` nor `error`, so the rows stay put and no banner opens
- * over a table that is still readable. It throws, and AutoRefresh switches
- * itself off on the way past.
- */
-async function refresh() {
-  if (loading || loadingMore) return;
-
-  const result = await listAuditLogs({ limit: PAGE_SIZE });
-
-  events = result.data.map(toAuditEvent);
-  meta = result.meta;
-  appended = false;
+for (const [id, category] of Object.entries(CAT_META)) {
+  TABS.push({ id: id as AuditCategory, label: category.label, color: category.color });
 }
 
 const auto = new AutoRefresh();
 
-$effect(() => auto.schedule(!appended, refresh));
+const list = new AppendList<AuditEvent>(fetchEvents, 'Failed to load the audit log.');
 
-// Load once on mount - NOT $effect, which would re-run whenever the load
-// mutates loading state and hammer the endpoint on any error.
-onMount(() => {
-  load();
-});
+let cat: CatFilter = $state('all');
+let expandedEvent: string | null = $state(null);
 
-// Summary stats are computed over the loaded window, not the whole table.
-const todayIso = new Date().toISOString().slice(0, 10);
-const eventsToday = $derived(events.filter((e) => e.createdAt.startsWith(todayIso)).length);
-const activeActors = $derived(new Set(events.filter((e) => e.actorId).map((e) => e.actorId)).size);
-const failures = $derived(events.filter((e) => e.status === 'failure').length);
+// Worked out over the events that are loaded, and not over the whole log.
+const summary = $derived(auditSummary(list.rows, new Date()));
 
 const filtered = $derived.by(() => {
-  const q = dashboard.search.trim().toLowerCase();
-  return events.filter((e) => {
-    if (cat !== 'all' && e.cat !== cat) return false;
-    if (q && !`${e.actorName} ${e.action} ${e.targetLabel || ''} ${e.ip}`.toLowerCase().includes(q)) return false;
-    return true;
+  const query = dashboard.search.trim().toLowerCase();
+
+  return list.rows.filter((event) => {
+    if (cat !== 'all' && event.cat !== cat) {
+      return false;
+    }
+
+    const searched = `${event.actorLabel} ${event.event} ${event.targetLabel || ''} ${event.ip}`.toLowerCase();
+
+    return !query || searched.includes(query);
   });
+});
+
+async function fetchEvents(
+  after?: string,
+): Promise<{ data: AuditEvent[]; meta: Awaited<ReturnType<typeof listAuditLogs>>['meta'] }> {
+  const page = await listAuditLogs({ limit: PAGE_SIZE, after_id: after });
+
+  return { data: page.data.map(toAuditEvent), meta: page.meta };
+}
+
+$effect(() => auto.schedule(!list.appended, () => list.refresh()));
+
+// Loaded once on mount and not in an effect, which would run again whenever
+// the load changed its own state.
+onMount(() => {
+  void list.load();
 });
 </script>
 
 <PageHeader
 	title="Audit log"
 	description="A chronological record of security and account activity across your organization."
->
-	{#snippet actions()}
-		<ToolbarButton>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M2 6h12M5.5 1.5v3M10.5 1.5v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-			Last 7 days
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="ml-0.5"><path d="M5 6.5L8 9.5L11 6.5" stroke="#71717a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-		</ToolbarButton>
-		<ToolbarButton>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Export
-		</ToolbarButton>
-	{/snippet}
-</PageHeader>
+/>
 
 <TableCard
 	cols={COLS}
 	columns={COLUMNS}
-	{loading}
-	{error}
+	loading={list.loading}
+	error={list.error}
 	isEmpty={filtered.length === 0}
 	loadingLabel="Loading audit log…"
-	emptyTitle={events.length === 0 ? 'No audit events recorded yet' : 'No events match your filters'}
-	onretry={load}
-	showFooter={meta?.more_data ?? false}
+	emptyTitle={list.rows.length === 0 ? 'No audit events recorded yet' : 'No events match your filters'}
+	onretry={() => list.load()}
+	showFooter={list.hasMore}
 >
 	{#snippet toolbar()}
 		<FilterTabs tabs={TABS} bind:value={cat} />
 		<span class="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap text-[12.5px] text-zinc-500">
 			<span class="font-medium text-zinc-100 tabular-nums">{filtered.length.toLocaleString()}</span>
-			of <span class="font-medium text-zinc-200 tabular-nums">{events.length.toLocaleString()}</span> events{meta?.more_data ? ' loaded' : ''}
+			of <span class="font-medium text-zinc-200 tabular-nums">{list.rows.length.toLocaleString()}</span> events{list.hasMore ? ' loaded' : ''}
 			<span class="mx-1 text-zinc-600">·</span>
-			<span class="font-medium text-emerald-400 tabular-nums">{eventsToday.toLocaleString()}</span> events today
+			<span class="font-medium text-emerald-400 tabular-nums">{summary.today.toLocaleString()}</span> events today
 			<span class="mx-1 text-zinc-600">·</span>
-			<span class="font-medium text-blue-400 tabular-nums">{activeActors.toLocaleString()}</span> active actors
+			<span class="font-medium text-blue-400 tabular-nums">{summary.actors.toLocaleString()}</span> active actors
 			<span class="mx-1 text-zinc-600">·</span>
-			<span class="font-medium text-red-400 tabular-nums">{failures.toLocaleString()}</span> denied / flagged
+			<span class="font-medium text-red-400 tabular-nums">{summary.failures.toLocaleString()}</span> denied / flagged
 		</span>
 
 		<span class="ml-auto"></span>
-		<AutoRefreshToggle {auto} active={!appended} pausedLabel="paused past page 1" />
+		<AutoRefreshToggle {auto} active={!list.appended} pausedLabel="paused past page 1" />
 
-		<ToolbarButton disabled={loading} onclick={load}>
-			<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			Refresh
-		</ToolbarButton>
+		<RefreshButton disabled={list.loading} onclick={() => list.load()} />
 	{/snippet}
 
 	{#each filtered as event (event.id)}
@@ -206,8 +137,8 @@ const filtered = $derived.by(() => {
 	{/each}
 
 	{#snippet footer()}
-		<ToolbarButton disabled={loadingMore} onclick={loadMore}>
-			{loadingMore ? 'Loading…' : 'Load older events'}
+		<ToolbarButton disabled={list.loadingMore} onclick={() => list.loadMore()}>
+			{list.loadingMore ? 'Loading…' : 'Load older events'}
 		</ToolbarButton>
 	{/snippet}
 </TableCard>

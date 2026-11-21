@@ -1,6 +1,8 @@
 export type TokenKind = 'key' | 'string' | 'number' | 'keyword' | 'punctuation';
 
-/** One colour per token kind, shared by every JSON view and editor. */
+/**
+ * One colour per token kind, shared by every JSON view and editor.
+ */
 export const TOKEN_COLORS: Record<TokenKind, string> = {
   key: '#60a5fa',
   string: '#34d399',
@@ -21,7 +23,7 @@ export interface JsonToken {
  * punctuation and is emitted from the gaps.
  *
  * Strings come first so that digits or the word `null` INSIDE one are never
- * matched separately; the scan is left to right, and a string's opening quote
+ * matched separately. The scan is left to right, and a string's opening quote
  * always precedes its contents.
  */
 const TOKEN = /"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b/g;
@@ -73,8 +75,9 @@ export function tokenizeJson(json: string): JsonToken[] {
   const tokens: JsonToken[] = [];
   let cursor = 0;
 
-  // Reset explicitly: the regex is module-level and /g carries lastIndex across
-  // calls, which would make every panel after the first start mid-document.
+  // Reset explicitly, because the regex is module-level and /g carries
+  // lastIndex across calls, which would make every panel after the first start
+  // mid-document.
   TOKEN.lastIndex = 0;
 
   let match = TOKEN.exec(json);

@@ -1,67 +1,39 @@
 <script lang="ts">
-import type { CatalogModel, CatalogProvider } from '$lib/api/types';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import { fmtContext, fmtPricePerMillion, providerTone, timeAgo } from '$lib/data/format';
+import type { CatalogProvider } from '#lib/api/types.ts';
+import DetailGrid, { type DetailItem } from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import { largestContext, priceRange, syncState } from '#lib/data/catalog.ts';
+import { fmtContext, providerTone, timeAgo } from '#lib/data/format.ts';
 import ModelTable from './model-table.svelte';
 
-let {
-  provider,
-  cols,
-  expanded,
-  ontoggle,
-}: {
-  /** Already narrowed to the page's filters - the counts below describe what is shown. */
+interface Props {
+  /**
+   * Already narrowed to the page's filters, so the counts describe what is
+   * shown.
+   */
   provider: CatalogProvider;
   cols: string;
   expanded: boolean;
   ontoggle: () => void;
-} = $props();
+}
 
-// Known providers get their display name and brand colour locally; everything
-// else falls back to a generated label and neutral colour.
+let { provider, cols, expanded, ontoggle }: Props = $props();
+
+const SYNC_TONES = {
+  never: { label: 'Not synced', color: '#71717a', glow: 'transparent' },
+  stale: { label: 'Stale', color: '#f59e0b', glow: 'rgba(245,158,11,.5)' },
+  synced: { label: 'Synced', color: '#10b981', glow: 'rgba(16,185,129,.6)' },
+};
+
 const tone = $derived(providerTone(provider.id));
-
 const models = $derived(provider.models);
 const deprecatedCount = $derived(models.filter((model) => model.status === 'deprecated').length);
 const unpricedCount = $derived(models.filter((model) => model.cost_input === null).length);
-
-/**
- * The span of published input and output prices across a provider's models.
- *
- * Unpriced models are excluded rather than counted as zero, which would drag
- * every range down to '$0.00 – …' the moment one image model appeared.
- */
-function priceRange(pick: (model: CatalogModel) => number | null): string {
-  const values = models.map(pick).filter((value): value is number => value !== null);
-  if (values.length === 0) return 'Unpriced';
-
-  const low = Math.min(...values);
-  const high = Math.max(...values);
-
-  return low === high ? fmtPricePerMillion(low) : `${fmtPricePerMillion(low)} – ${fmtPricePerMillion(high)}`;
-}
-
-const inputRange = $derived(priceRange((model) => model.cost_input));
-const outputRange = $derived(priceRange((model) => model.cost_output));
-
-const maxContext = $derived(
-  models.reduce<number | null>((best, model) => Math.max(best ?? 0, model.context_limit ?? 0) || null, null),
-);
-
-/** A provider is stale after three missed hourly syncs. */
-const sync = $derived.by(() => {
-  if (provider.synced_at === null) {
-    return { label: 'Not synced', color: '#71717a', glow: 'transparent' };
-  }
-
-  const age = Date.now() - new Date(provider.synced_at).getTime();
-  return age > 3 * 60 * 60 * 1000
-    ? { label: 'Stale', color: '#f59e0b', glow: 'rgba(245,158,11,.5)' }
-    : { label: 'Synced', color: '#10b981', glow: 'rgba(16,185,129,.6)' };
-});
+const inputRange = $derived(priceRange(models.map((model) => model.cost_input)));
+const outputRange = $derived(priceRange(models.map((model) => model.cost_output)));
+const maxContext = $derived(largestContext(models));
+const sync = $derived(SYNC_TONES[syncState(provider.synced_at, Date.now())]);
 
 const detailItems: DetailItem[] = $derived([
   { label: 'Provider id', value: provider.id },
@@ -81,8 +53,8 @@ const detailItems: DetailItem[] = $derived([
 			{models.length}
 		</span>
 
-		<!-- Ranges rather than an average: what a caller wants from this row is the
-		     floor and the ceiling of what a request to this provider can cost. -->
+		<!-- Ranges and not an average, because what a caller wants from this row is
+		     the floor and the ceiling of what a request to this provider can cost. -->
 		<span class="text-[13px] whitespace-nowrap text-zinc-400 tabular-nums">{inputRange}</span>
 		<span class="text-[13px] whitespace-nowrap text-zinc-400 tabular-nums">{outputRange}</span>
 		<span class="text-[13px] text-zinc-400 tabular-nums">{fmtContext(maxContext)}</span>
@@ -102,9 +74,9 @@ const detailItems: DetailItem[] = $derived([
 
 		<Panel title="Models">
 			{#snippet actions()}
-				<!-- Counted here rather than shown as columns in the row above: these
-				     are properties of the list, and they are what a reader is about to
-				     scan for once the list is open. -->
+				<!-- Counted here and not shown as columns in the row above. These are
+				     properties of the list, and they are what a reader is about to scan
+				     for once the list is open. -->
 				<span class="text-[11.5px] text-zinc-600">
 					{models.length} total
 					{#if deprecatedCount > 0}

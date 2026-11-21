@@ -1,18 +1,14 @@
 <script lang="ts">
-import { fetchSeries, type SeriesPoint } from '$lib/api/analytics';
-import { listApiKeys } from '$lib/api/api-keys';
-import { listAllProviders } from '$lib/api/models';
-import {
-  alignedNow,
-  alignedPreviousEnd,
-  getAnalyticsFilters,
-} from '$lib/components/analytics/analytics-filters.svelte';
-import FilterPicker from '$lib/components/analytics/filter-picker.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { fmt, fmtCost, fmtSpend, providerTone } from '$lib/data/format';
+import { fetchSeries, type SeriesPoint } from '#lib/api/analytics.ts';
+import { listApiKeys } from '#lib/api/api-keys.ts';
+import { listAllProviders } from '#lib/api/models.ts';
+import { getAnalyticsFilters, windowBefore, windowOf } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import FilterPicker from '#lib/components/analytics/filter-picker.svelte';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { fmt, fmtCost, fmtSpend, providerTone } from '#lib/data/format.ts';
 import {
   cacheSaved,
   cheapestSwitch,
@@ -22,90 +18,97 @@ import {
   type ModelPrice,
   rankKeys,
   usageByModel,
-} from '$lib/data/savings';
+} from '#lib/data/savings.ts';
+import { Latest } from '#lib/state/latest.svelte.ts';
 
-const MAX_ROWS = 8;
+interface Savings {
+  points: SeriesPoint[];
+  windowStart: Date;
+  previousPoints: SeriesPoint[];
 
-const filters = getAnalyticsFilters();
-
-let points = $state<SeriesPoint[]>([]);
-let previousPoints = $state<SeriesPoint[]>([]);
-// Without the window before, a key's change is unknown, not 'New'.
-let previousFailed = $state(false);
-let prices = $state<ModelPrice[]>([]);
-let keys = $state<KeySummary[]>([]);
-let keysFailed = $state(false);
-let windowStart = $state(new Date());
-let loading = $state(true);
-let failed = $state(false);
-let loadRequest = 0;
-
-// Blank compares each model with the cheapest the organization already uses.
-let target = $state('');
-
-/** Every API key, page by page, for names and the idle check. */
-async function listAllKeys() {
-  let page = await listApiKeys('all', { limit: 250 });
-  const data: KeySummary[] = [...page.data];
-  while (page.meta.more_data && page.meta.oldest_id) {
-    page = await listApiKeys('all', { limit: 250, after_id: page.meta.oldest_id });
-    data.push(...page.data);
-  }
-  return data;
+  /**
+   * Without the window before, a key's change is unknown and not new.
+   */
+  previousFailed: boolean;
+  prices: ModelPrice[];
+  keys: KeySummary[];
+  keysFailed: boolean;
 }
 
-async function load() {
-  const request = ++loadRequest;
-  loading = true;
-  failed = false;
+const MAX_ROWS = 8;
+const KEYS_PAGE_SIZE = 250;
 
-  const end = alignedNow();
-  const duration = filters.range.days * 86_400_000;
-  const start = end - duration;
-  const previousEnd = alignedPreviousEnd(start);
+const DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-  try {
-    const [[series], [previous, catalog, allKeys]] = await Promise.all([
-      fetchSeries({
-        start_date: new Date(start).toISOString(),
-        end_date: new Date(end).toISOString(),
-        groupings: [['actor', 'provider', 'model']],
-      }),
-      // None of these should hide the spend if they fail.
-      Promise.allSettled([
-        fetchSeries({
-          start_date: new Date(previousEnd - duration).toISOString(),
-          end_date: new Date(previousEnd).toISOString(),
-          groupings: [['actor']],
-        }),
-        listAllProviders(),
-        listAllKeys(),
-      ]),
-    ]);
-    if (request !== loadRequest) return;
-    points = series ?? [];
-    windowStart = new Date(start);
-    previousPoints = previous.status === 'fulfilled' ? (previous.value[0] ?? []) : [];
-    previousFailed = previous.status === 'rejected';
-    prices = catalog.status === 'fulfilled' ? catalog.value.data.flatMap((provider) => provider.models) : [];
-    keys = allKeys.status === 'fulfilled' ? allKeys.value : [];
-    keysFailed = allKeys.status === 'rejected';
-  } catch {
-    if (request === loadRequest) failed = true;
-  } finally {
-    if (request === loadRequest) loading = false;
+const filters = getAnalyticsFilters();
+const savings = new Latest<Savings>();
+
+// Left blank, each model is compared with the cheapest one already in use.
+let target = $state('');
+
+/**
+ * Every API key, page by page, for their names and the idle check.
+ */
+async function listAllKeys(): Promise<KeySummary[]> {
+  let page = await listApiKeys('all', { limit: KEYS_PAGE_SIZE });
+  const keys: KeySummary[] = [...page.data];
+
+  while (page.meta.more_data && page.meta.oldest_id) {
+    page = await listApiKeys('all', { limit: KEYS_PAGE_SIZE, after_id: page.meta.oldest_id });
+    keys.push(...page.data);
   }
+
+  return keys;
+}
+
+async function fetchSavings(): Promise<Savings> {
+  const range = windowOf(filters.range.days);
+
+  const [[series], [previous, catalog, allKeys]] = await Promise.all([
+    fetchSeries({ ...range, groupings: [['actor', 'provider', 'model']] }),
+
+    // Settled on their own, so that none of these hides the spend by failing.
+    Promise.allSettled([
+      fetchSeries({ ...windowBefore(filters.range.days), groupings: [['actor']] }),
+      listAllProviders(),
+      listAllKeys(),
+    ]),
+  ]);
+
+  return {
+    points: series ?? [],
+    windowStart: new Date(range.start_date),
+    previousPoints: previous.status === 'fulfilled' ? (previous.value[0] ?? []) : [],
+    previousFailed: previous.status === 'rejected',
+    prices: catalog.status === 'fulfilled' ? catalog.value.data.flatMap((provider) => provider.models) : [],
+    keys: allKeys.status === 'fulfilled' ? allKeys.value : [],
+    keysFailed: allKeys.status === 'rejected',
+  };
+}
+
+function load(): void {
+  void savings.load(fetchSavings);
 }
 
 $effect(() => {
   void filters.range.id;
-  void load();
+  load();
 });
+
+const loading = $derived(savings.loading);
+const failed = $derived(savings.error !== null);
+const points = $derived(savings.value?.points ?? []);
+const previousPoints = $derived(savings.value?.previousPoints ?? []);
+const prices = $derived(savings.value?.prices ?? []);
+const keys = $derived(savings.value?.keys ?? []);
+const keysFailed = $derived(savings.value?.keysFailed ?? false);
+const windowStart = $derived(savings.value?.windowStart ?? new Date());
 
 const usage = $derived(usageByModel(points));
 const totalSpend = $derived(usage.reduce((sum, row) => sum + row.cost, 0));
 
-// Chat models only: an embedding model has no cheaper chat stand-in to suggest.
+// Chat models only, because an embedding model has no cheaper chat model to
+// stand in for it.
 const chatPrices = $derived(prices.filter((price) => price.type === 'chat'));
 const priceOf = $derived(new Map(chatPrices.map((price) => [`${price.provider}/${price.name}`, price])));
 const targetOptions = $derived(
@@ -114,35 +117,54 @@ const targetOptions = $derived(
     .map((price) => `${price.provider}/${price.name}`)
     .sort(),
 );
-const usedPrices = $derived(
-  usage.flatMap((row) => {
-    const price = priceOf.get(`${row.provider}/${row.model}`);
-    return price ? [price] : [];
-  }),
-);
 
-// Models the catalog lists only as embeddings or decisions are left out by
-// priceOf, so they never get a chat model suggested.
-const whatIfRows = $derived(
-  usage
-    .filter((row) => row.cost > 0 && priceOf.has(`${row.provider}/${row.model}`))
-    .slice(0, MAX_ROWS)
-    .map((row) => {
-      const picked = priceOf.get(target);
-      if (!picked) return { row, ...(cheapestSwitch(row, usedPrices) ?? { price: null, cost: null }) };
-      return { row, price: picked, cost: costAt(row, picked) };
-    }),
-);
-const whatIfSaving = $derived(
-  whatIfRows.reduce((sum, { row, cost }) => (cost !== null && cost < row.cost ? sum + row.cost - cost : sum), 0),
-);
+const usedPrices = $derived.by(() => {
+  const used: ModelPrice[] = [];
+
+  for (const row of usage) {
+    const price = priceOf.get(`${row.provider}/${row.model}`);
+
+    if (price) {
+      used.push(price);
+    }
+  }
+
+  return used;
+});
+
+// A model the catalog lists only as an embedding or a decision model has no
+// chat price, so it is left out and never gets a chat model suggested.
+const whatIfRows = $derived.by(() => {
+  const picked = priceOf.get(target);
+  const priced = usage.filter((row) => row.cost > 0 && priceOf.has(`${row.provider}/${row.model}`));
+
+  return priced.slice(0, MAX_ROWS).map((row) => {
+    if (picked) {
+      return { row: row, price: picked, cost: costAt(row, picked) };
+    }
+
+    return { row: row, ...(cheapestSwitch(row, usedPrices) ?? { price: null, cost: null }) };
+  });
+});
+
+const whatIfSaving = $derived.by(() => {
+  let saving = 0;
+
+  for (const { row, cost } of whatIfRows) {
+    if (cost !== null && cost < row.cost) {
+      saving += row.cost - cost;
+    }
+  }
+
+  return saving;
+});
 
 // A model answered only from the cache has no cost to estimate from, so it
 // stays listed with its saving unknown.
 const cacheRows = $derived(
   usage
     .filter((row) => row.gatewayCacheHits > 0)
-    .map((row) => ({ row, saved: cacheSaved(row) }))
+    .map((row) => ({ row: row, saved: cacheSaved(row) }))
     .sort((a, b) => (b.saved ?? -1) - (a.saved ?? -1)),
 );
 const cacheTotal = $derived(cacheRows.reduce((sum, { saved }) => sum + (saved ?? 0), 0));
@@ -152,16 +174,26 @@ const keyName = $derived(new Map(keys.map((key) => [key.id, key.name])));
 const keySpend = $derived(rankedKeys.reduce((sum, key) => sum + key.cost, 0));
 const idle = $derived(idleKeys(keys, points, windowStart, new Date()));
 
-/** A window-on-window change, or 'New' for a key that spent nothing before. */
-function change(cost: number, previous: number) {
-  if (previousFailed) return '—';
-  if (previous <= 0) return 'New';
+/**
+ * How a key's spend moved against the window before, or 'New' for a key that
+ * spent nothing then.
+ */
+function change(cost: number, previous: number): string {
+  if (savings.value?.previousFailed) {
+    return '—';
+  }
+
+  if (previous <= 0) {
+    return 'New';
+  }
+
   const percent = Math.round(((cost - previous) / previous) * 100);
+
   return `${percent > 0 ? '+' : ''}${percent}%`;
 }
 
-function date(value: string) {
-  return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+function date(value: string): string {
+  return DATE.format(new Date(value));
 }
 </script>
 

@@ -1,25 +1,20 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/**
- * The one secondary button used in page headers and table toolbars.
- *
- * Every page had its own near-miss of this - h-[34px] in two headers, h-8 in
- * the keys toolbar, h-[30px] for the retry buttons. One height now, matching
- * FilterTabs' outer height so a toolbar row lines up.
- */
-let {
-  variant = 'ghost',
-  disabled = false,
-  onclick,
-  children,
-}: {
-  /** 'primary' is the page's single call to action; everything else is ghost. */
+// The one secondary button used in page headers and table toolbars. Its height
+// matches the outer height of FilterTabs, so that a toolbar row lines up.
+
+interface Props {
+  /**
+   * 'primary' is the page's single call to action. Everything else is ghost.
+   */
   variant?: 'ghost' | 'primary';
   disabled?: boolean;
   onclick?: (event: MouseEvent) => void;
   children: Snippet;
-} = $props();
+}
+
+let { variant = 'ghost', disabled = false, onclick, children }: Props = $props();
 
 const CLASSES = {
   ghost:

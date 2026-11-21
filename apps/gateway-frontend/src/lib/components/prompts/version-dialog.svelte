@@ -1,49 +1,53 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import { getPromptVersion } from '$lib/api/prompts';
-import * as Dialog from '$lib/components/ui/dialog';
-import { Label } from '$lib/components/ui/label';
-import { Textarea } from '$lib/components/ui/textarea';
-import { extractVariables } from '$lib/data/prompts';
-import { prompts } from '$lib/state/prompts.svelte';
+import { getPromptVersion } from '#lib/api/prompts.ts';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
+import * as Dialog from '#lib/components/ui/dialog/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import { Textarea } from '#lib/components/ui/textarea/index.ts';
+import { extractVariables } from '#lib/data/prompts.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
 
-/**
- * The template editor, for a new version or an existing one.
- *
- * Creating never overwrites: a new version is appended and numbered by the
- * server. Editing rewrites the version in place, which is why the two are
- * visually distinct rather than the same "save" - editing v3 changes what
- * everything already pointing at v3 will render.
- */
-let {
-  open = $bindable(false),
-  promptId,
-  promptName,
-  version = null,
-}: {
+// The template editor, for a new version or an existing one.
+//
+// Making one never overwrites anything, since a new version is appended and
+// numbered by the server. Editing rewrites a version in place and changes what
+// everything already pointing at it will render, which is why the two look
+// different and are not the same save.
+
+interface Props {
   open?: boolean;
   promptId: string;
   promptName: string;
-  /** The version to edit, or null to append a new one. */
-  version?: number | null;
-} = $props();
 
-const editing = $derived(version !== null);
+  /**
+   * The version to edit, or null to append a new one.
+   */
+  version?: number | null;
+}
+
+let { open = $bindable(false), promptId, promptName, version = null }: Props = $props();
 
 let template = $state('');
 let loading = $state(false);
 let saving = $state(false);
 
-// Reads `version` and `promptId` as well as `open`: reopening on a different
-// row must not leave the previous template in the box.
+const editing = $derived(version !== null);
+const variables = $derived(extractVariables(template));
+
+// The version and the prompt are read here as well as `open`, so that reopening
+// on a different row does not leave the previous template in the box.
 $effect(() => {
-  if (!open) return;
+  if (!open) {
+    return;
+  }
 
   template = '';
   saving = false;
 
   if (version === null) {
     loading = false;
+
     return;
   }
 
@@ -62,11 +66,10 @@ $effect(() => {
     });
 });
 
-const variables = $derived(extractVariables(template));
-
-async function save() {
+async function save(): Promise<void> {
   if (!template.trim()) {
     toast.error('The template cannot be empty.');
+
     return;
   }
 
@@ -75,6 +78,7 @@ async function save() {
   try {
     if (version === null) {
       const created = await prompts.addVersion(promptId, { prompt: template });
+
       toast.success(`Version ${created.version} created`);
     } else {
       await prompts.editVersion(promptId, version, { prompt: template });
@@ -120,7 +124,7 @@ async function save() {
 					rows={14}
 					spellcheck={false}
 					placeholder={'You are a support agent. Today is {{ aig.date }}.\n\nAnswer the question from {{ customer_name }}.'}
-					class="min-h-[260px] resize-y rounded-lg border-line-strong bg-surface-3 px-[13px] py-[11px] font-mono text-[13px] leading-relaxed focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3"
+					class="min-h-[260px] resize-y px-[13px] py-[11px] font-mono text-[13px] leading-relaxed {FIELD_BASE}"
 				/>
 				<p class="mt-[7px] text-[11.5px] leading-normal text-zinc-600">
 					Wrap a variable in <code class="font-mono text-zinc-500">{'{{ braces }}'}</code>. Names under

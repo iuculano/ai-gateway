@@ -1,6 +1,6 @@
 <script lang="ts">
-import PageHeader from '$lib/components/app/page-header.svelte';
-import SineScroller from '$lib/components/app/sine-scroller.svelte';
+import PageHeader from '#lib/components/app/page-header.svelte';
+import SineScroller from '#lib/components/app/sine-scroller.svelte';
 </script>
 
 <PageHeader title="Overview" description="Nothing lives here yet." />

@@ -1,7 +1,5 @@
 <script lang="ts">
 import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
-import { goto } from '$app/navigation';
-import { page } from '$app/state';
 import {
   fetchSeries,
   fetchSessionDistribution,
@@ -9,113 +7,120 @@ import {
   fetchSessions,
   type SeriesPoint,
   type SessionDistributionResponse,
-  type SessionPositionsResponse,
-  type SessionsResponse,
-} from '$lib/api/analytics';
-import { listLogs } from '$lib/api/logs';
-import { alignedNow, getAnalyticsFilters } from '$lib/components/analytics/analytics-filters.svelte';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import StatCard from '$lib/components/app/stat-card.svelte';
-import StatGrid from '$lib/components/app/stat-grid.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import { Input } from '$lib/components/ui/input';
-import { fmt, fmtCost, fmtSpend, providerTone } from '$lib/data/format';
+} from '#lib/api/analytics.ts';
+import { listLogs } from '#lib/api/logs.ts';
+import { getAnalyticsFilters, windowOf } from '#lib/components/analytics/analytics-filters.svelte.ts';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import StatCard from '#lib/components/app/stat-card.svelte';
+import StatGrid from '#lib/components/app/stat-grid.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { fmt, fmtClock, fmtCost, fmtElapsed, fmtPercent, fmtSpend, providerTone } from '#lib/data/format.ts';
+import { percentileRank } from '#lib/data/percentiles.ts';
+import {
+  binPositions,
+  costBand,
+  costGrowth,
+  heavySessions,
+  type Position,
+  participants,
+  requestBand,
+  type Session,
+  type SessionSort,
+  sessionMeasure,
+  sessionSpread,
+} from '#lib/data/sessions.ts';
+import { AppendList } from '#lib/state/append-list.svelte.ts';
+import { Latest } from '#lib/state/latest.svelte.ts';
+import { goto } from '$app/navigation';
+import { page } from '$app/state';
 
-/**
- * Sessions from the session_id tag, laid out like the Users tab. The list is on
- * the left and everyone's figures, or one session's, on the right.
- *
- * Figures cover the selected window, so a session that started before it
- * shows only its part inside it. The picked session lives in ?session=.
- */
+// Sessions from the session_id tag, laid out like the Users tab. The list is on
+// the left and everyone's figures, or one session's, on the right.
+//
+// Figures cover the selected window, so a session that started before it shows
+// only its part inside it. The picked session lives in ?session=.
 
 const ACCENT = '#10b981';
 const INPUT_INK = '#60a5fa';
 const GRID = '#1f1f23';
 const AXIS_INK = '#52525b';
-// Sessions per page of the list.
+
+// Sessions per page of the list, and requests per page of one session's list.
 const PAGE = 50;
-// Requests per page of one session's list.
 const REQUEST_PAGE = 50;
-// Past this many positions the chart groups them, so bars stay wide enough to read and hover.
+
+// Past this many positions the chart groups them.
 const MAX_BARS = 60;
 
-type Session = SessionsResponse['top'][number];
-type Position = SessionPositionsResponse['positions'][number];
-type SessionLog = Awaited<ReturnType<typeof listLogs>>['data'][number];
+// The chart's drawing area.
+const HEIGHT = 190;
+const PAD = { top: 14, right: 46, bottom: 24, left: 50 };
+const plotHeight = HEIGHT - PAD.top - PAD.bottom;
 
-/** One bar of the chart, for a position or a run of them, averaged per request. */
-interface PositionBar {
-  first: number;
-  last: number;
-  /** Average cost of a request at these positions. */
-  cost: number;
-  /** Average input tokens, i.e. the history sent. */
-  input: number;
-  /** Sessions that got as far as the first of these positions. */
-  sessions: number;
-}
+type SessionLog = Awaited<ReturnType<typeof listLogs>>['data'][number];
 
 const filters = getAnalyticsFilters();
 const days = $derived(filters.range.days);
 const sessionId = $derived(page.url.searchParams.get('session') ?? undefined);
 
-/** The window every request asks about, rounded so repeats hit the server's cache. */
-function rangeOf() {
-  const end = alignedNow();
-  return {
-    start_date: new Date(end - days * 86_400_000).toISOString(),
-    end_date: new Date(end).toISOString(),
-  };
-}
+// The list
 
-// The list ---------------------------------------------------------------------
-
-let sort = $state<'spend' | 'requests' | 'length'>('spend');
+let sort = $state<SessionSort>('spend');
 const sorts = [
   { id: 'spend', label: 'Spend' },
   { id: 'requests', label: 'Requests' },
   { id: 'length', label: 'Length' },
-] satisfies { id: typeof sort; label: string }[];
+] satisfies { id: SessionSort; label: string }[];
 
-let sessions = $state<Session[]>([]);
-let sessionCount = $state<number | null>(null);
-let listLoading = $state(true);
-let listFailed = $state(false);
-let loadingMore = $state(false);
-let listRequest = 0;
-// The window the list was loaded for. Later pages reuse it, so a page fetched
-// after the window moves on can't skip or repeat sessions.
-let listRange = { start_date: '', end_date: '' };
+interface SessionList {
+  sessions: Session[];
+  count: number;
 
-async function loadList() {
-  const current = ++listRequest;
-  listLoading = true;
-  listFailed = false;
-  try {
-    const range = rangeOf();
-    const response = await fetchSessions({ ...range, limit: PAGE, sort });
-    if (current !== listRequest) return;
-    listRange = range;
-    sessions = response.top;
-    sessionCount = response.count;
-  } catch {
-    if (current === listRequest) listFailed = true;
-  } finally {
-    if (current === listRequest) listLoading = false;
-  }
+  /**
+   * The window the list was loaded for. Later pages reuse it, so that a page
+   * fetched after the window moves on cannot skip or repeat sessions.
+   */
+  range: { start_date: string; end_date: string };
 }
 
-/** The next page of sessions, added to the end of the list. */
-async function loadMore() {
-  const current = listRequest;
+const list = new Latest<SessionList>();
+let loadingMore = $state(false);
+
+async function fetchList(): Promise<SessionList> {
+  const range = windowOf(days);
+  const response = await fetchSessions({ ...range, limit: PAGE, sort: sort });
+
+  return { sessions: response.top, count: response.count, range: range };
+}
+
+function loadList(): void {
+  void list.load(fetchList);
+}
+
+/**
+ * Adds the next page of sessions to the end of the list.
+ */
+async function loadMore(): Promise<void> {
+  const shown = list.value;
+
+  if (!shown) {
+    return;
+  }
+
   loadingMore = true;
+
   try {
-    const response = await fetchSessions({ ...listRange, limit: PAGE, offset: sessions.length, sort });
-    if (current === listRequest) sessions = [...sessions, ...response.top];
+    const response = await fetchSessions({ ...shown.range, limit: PAGE, offset: shown.sessions.length, sort: sort });
+
+    // A list loaded again in the meantime has no place for this page.
+    if (list.value === shown) {
+      list.value = { ...shown, sessions: [...shown.sessions, ...response.top] };
+    }
   } catch {
-    // The list keeps what it has and the button stays, so it can be tried again.
+    // The list keeps what it has and the button stays, so it can be tried
+    // again.
   } finally {
     loadingMore = false;
   }
@@ -123,201 +128,156 @@ async function loadMore() {
 
 $effect(() => {
   void [days, sort];
-  void loadList();
+  loadList();
 });
 
-/** A session's figure for the chosen order. */
-function measure(session: Session) {
-  return sort === 'spend' ? session.cost_total : sort === 'requests' ? session.requests : session.seconds;
-}
+const listLoading = $derived(list.loading);
+const listFailed = $derived(list.error !== null);
+const sessions = $derived(list.value?.sessions ?? []);
+const sessionCount = $derived(list.value?.count ?? null);
 
-const topMeasure = $derived(sessions[0] ? measure(sessions[0]) : 0);
+const topMeasure = $derived(sessions[0] ? sessionMeasure(sessions[0], sort) : 0);
 const unlisted = $derived(sessionId !== undefined && !sessions.some((session) => session.session_id === sessionId));
 
-/** This tab's URL with a session picked, or everyone. */
-function sessionsHref(id: string | null) {
+/**
+ * This tab's URL with a session picked, or with everyone.
+ */
+function sessionsHref(id: string | null): string {
   return id ? `/analytics/sessions?session=${encodeURIComponent(id)}` : '/analytics/sessions';
 }
 
 let lookup = $state('');
 
-function openSession(event: SubmitEvent) {
+function openSession(event: SubmitEvent): void {
   event.preventDefault();
+
   const id = lookup.trim();
-  if (id) void goto(sessionsHref(id), { noScroll: true });
+  if (id) {
+    void goto(sessionsHref(id), { reset: false });
+  }
 }
 
-// Everyone's spread, also what one session is compared against ---------------------
+// Everyone's spread, which is also what one session is compared against
 
-let distribution = $state<SessionDistributionResponse | null>(null);
-let distributionFailed = $state(false);
-let distributionRequest = 0;
+const spreadOfAll = new Latest<SessionDistributionResponse>();
 
-async function loadDistribution() {
-  const current = ++distributionRequest;
-  distributionFailed = false;
-  try {
-    const response = await fetchSessionDistribution(rangeOf());
-    if (current === distributionRequest) distribution = response;
-  } catch {
-    if (current === distributionRequest) distributionFailed = true;
-  }
+function fetchDistribution(): Promise<SessionDistributionResponse> {
+  return fetchSessionDistribution(windowOf(days));
+}
+
+function loadDistribution(): void {
+  void spreadOfAll.load(fetchDistribution);
 }
 
 $effect(() => {
   void days;
-  void loadDistribution();
+  loadDistribution();
 });
 
-// The pane, with everyone's cost by position or one session ------------------------
+const distribution = $derived(spreadOfAll.value);
+const distributionFailed = $derived(spreadOfAll.error !== null);
 
-let positions = $state<Position[]>([]);
-let picked = $state<Session | null>(null);
-let models = $state<SeriesPoint[]>([]);
-let paneLoading = $state(true);
-let paneFailed = $state(false);
-let paneRequest = 0;
+// The pane, with everyone's cost by position or one session's
 
-async function loadPane() {
-  const current = ++paneRequest;
-  paneLoading = true;
-  paneFailed = false;
-  const range = rangeOf();
-  try {
-    if (sessionId === undefined) {
-      const response = await fetchSessionPositions(range);
-      if (current !== paneRequest) return;
-      positions = response.positions;
-      picked = null;
-      models = [];
-    } else {
-      const scope = { ...range, session_id: sessionId };
-      const [found, response, [byModel]] = await Promise.all([
-        fetchSessions({ ...scope, limit: 1 }),
-        fetchSessionPositions(scope),
-        fetchSeries({ ...scope, groupings: [['provider', 'model']] }),
-      ]);
-      if (current !== paneRequest) return;
-      picked = found.top[0] ?? null;
-      positions = response.positions;
-      models = (byModel ?? []).toSorted((a, b) => b.cost_total - a.cost_total);
-    }
-  } catch {
-    if (current === paneRequest) paneFailed = true;
-  } finally {
-    if (current === paneRequest) paneLoading = false;
+interface Pane {
+  positions: Position[];
+
+  /**
+   * The session picked, or null for everyone and for a session with nothing
+   * in the window.
+   */
+  picked: Session | null;
+  models: SeriesPoint[];
+}
+
+const pane = new Latest<Pane>();
+let chartWidth = $state(900);
+let hoveredBar = $state<number | null>(null);
+
+async function fetchPane(): Promise<Pane> {
+  const range = windowOf(days);
+
+  if (sessionId === undefined) {
+    const response = await fetchSessionPositions(range);
+
+    return { positions: response.positions, picked: null, models: [] };
   }
+
+  const scope = { ...range, session_id: sessionId };
+  const [found, response, [byModel]] = await Promise.all([
+    fetchSessions({ ...scope, limit: 1 }),
+    fetchSessionPositions(scope),
+    fetchSeries({ ...scope, groupings: [['provider', 'model']] }),
+  ]);
+
+  return {
+    positions: response.positions,
+    picked: found.top[0] ?? null,
+    models: (byModel ?? []).toSorted((a, b) => b.cost_total - a.cost_total),
+  };
+}
+
+function loadPane(): void {
+  void pane.load(fetchPane);
+}
+
+function retryPane(): void {
+  loadPane();
+  loadDistribution();
 }
 
 $effect(() => {
   void [sessionId, days];
   hoveredBar = null;
-  void loadPane();
+  loadPane();
 });
 
-// One session's requests, newest first, from the logs. They aren't limited to
-// the window, because they're the session's own record.
-let requestLogs = $state<SessionLog[]>([]);
-let olderId = $state<string | null>(null);
-let requestsLoading = $state(false);
-let requestsFailed = $state(false);
-let requestsRequest = 0;
+const paneLoading = $derived(pane.loading);
+const paneFailed = $derived(pane.error !== null);
+const positions = $derived(pane.value?.positions ?? []);
+const picked = $derived(pane.value?.picked ?? null);
+const models = $derived(pane.value?.models ?? []);
 
-async function loadRequests(more = false) {
-  if (sessionId === undefined) return;
-  const current = more ? requestsRequest : ++requestsRequest;
-  requestsLoading = true;
-  requestsFailed = false;
-  try {
-    const response = await listLogs({
-      tags: `session_id:${sessionId}`,
-      limit: REQUEST_PAGE,
-      ...(more && olderId ? { after_id: olderId } : {}),
-    });
-    if (current !== requestsRequest) return;
-    requestLogs = more ? [...requestLogs, ...response.data] : response.data;
-    olderId = response.meta.more_data ? response.meta.oldest_id : null;
-  } catch {
-    if (current === requestsRequest) requestsFailed = true;
-  } finally {
-    if (current === requestsRequest) requestsLoading = false;
-  }
+// One session's requests, newest first, from the logs. They are not limited to
+// the window, because they are the session's own record.
+const requests = new AppendList<SessionLog>(fetchRequests, 'Failed to load requests.');
+
+function fetchRequests(after?: string): ReturnType<typeof listLogs> {
+  return listLogs({ tags: `session_id:${sessionId}`, limit: REQUEST_PAGE, after_id: after });
 }
 
 $effect(() => {
-  void sessionId;
-  requestLogs = [];
-  olderId = null;
-  void loadRequests();
+  // Emptied first, so that one session's requests are never shown under
+  // another's name.
+  requests.rows = [];
+  requests.meta = null;
+
+  if (sessionId !== undefined) {
+    void requests.load();
+  }
 });
 
-// Derived figures ----------------------------------------------------------------
+// Derived figures
 
-/**
- * Groups positions into at most MAX_BARS bars. Sums are added up before
- * dividing, so a bar is the true average of the requests it covers.
- *
- * @param rows
- * One row per position, in order.
- */
-function binPositions(rows: Position[]): PositionBar[] {
-  const size = Math.max(1, Math.ceil(rows.length / MAX_BARS));
-  const bars: PositionBar[] = [];
-  for (let start = 0; start < rows.length; start += size) {
-    const chunk = rows.slice(start, start + size);
-    let cost = 0;
-    let input = 0;
-    let requests = 0;
-    for (const row of chunk) {
-      cost += row.cost_total;
-      input += row.input_tokens;
-      requests += row.requests;
-    }
-    const first = chunk[0] as Position;
-    bars.push({
-      first: first.position,
-      last: (chunk.at(-1) as Position).position,
-      cost: requests > 0 ? cost / requests : 0,
-      input: requests > 0 ? input / requests : 0,
-      sessions: first.sessions,
-    });
-  }
-  return bars;
-}
+const bars = $derived(binPositions(positions, MAX_BARS));
 
-const bars = $derived(binPositions(positions));
 // The last position also takes every request past it, when there are any.
 const tail = $derived(positions.at(-1));
 const capped = $derived(tail !== undefined && tail.requests > tail.sessions);
 
-/** A position on the axis or in the tooltip. A capped last one reads '1,000+'. */
-function positionLabel(position: number) {
+/**
+ * A position on the axis or in the tooltip. A capped last one reads '1,000+'.
+ */
+function positionLabel(position: number): string {
   return capped && position === tail?.position ? `${fmt(position)}+` : fmt(position);
 }
 
-// How much more a later request costs than the first, across everyone.
-const firstCost = $derived(positions[0] ? positions[0].cost_total / positions[0].requests : 0);
-const twentiethCost = $derived.by(() => {
-  const row = positions.find((position) => position.position === 20);
-  return row ? row.cost_total / row.requests : null;
-});
-
-// Everyone's typical and heavy session, once there are sessions to place.
-const spread = $derived(
-  distribution?.sessions
-    ? {
-        medianCost: distribution.cost_percentiles[49] ?? 0,
-        p95Cost: distribution.cost_percentiles[94] ?? 0,
-        medianRequests: Math.round(distribution.request_percentiles[49] ?? 0),
-        medianSeconds: distribution.seconds_percentiles[49] ?? 0,
-      }
-    : null,
-);
+const twentiethGrowth = $derived(costGrowth(positions, 20));
+const spread = $derived(sessionSpread(distribution));
 const pickedSpend = $derived(picked?.cost_total ?? 0);
+
 // The share of sessions that cost less, read off everyone's p1 to p99.
-const costsMoreThan = $derived(
-  spread ? (distribution?.cost_percentiles ?? []).filter((value) => value < pickedSpend).length : null,
-);
+const costsMoreThan = $derived(spread ? percentileRank(distribution?.cost_percentiles ?? [], pickedSpend) : null);
 const comparison = $derived([
   { label: 'This session', value: pickedSpend, color: ACCENT },
   { label: 'Median session', value: spread?.medianCost ?? 0, color: '#52525b' },
@@ -326,81 +286,19 @@ const comparison = $derived([
 const comparisonTop = $derived(Math.max(0, ...comparison.map((row) => row.value)));
 
 const bandSessions = $derived(distribution?.sessions ?? 0);
-// What the band cards show instead of bands, while there are none to show.
-const bandsNote = $derived(
-  distribution === null
-    ? distributionFailed
-      ? "Couldn't load sessions."
-      : 'Loading…'
-    : bandSessions === 0
-      ? 'No sessions in this window.'
-      : null,
-);
 const bandSpend = $derived((distribution?.cost_bands ?? []).reduce((sum, band) => sum + band.cost_total, 0));
-// How much of the spend the sessions over $1 are.
-const heavy = $derived.by(() => {
-  let sessionsOver = 0;
-  let spendOver = 0;
-  for (const band of distribution?.cost_bands ?? []) {
-    if (band.min < 1) continue;
-    sessionsOver += band.sessions;
-    spendOver += band.cost_total;
-  }
-  return { sessions: sessionsOver, spend: spendOver };
-});
+const heavy = $derived(heavySessions(distribution?.cost_bands ?? []));
 const singleRequest = $derived(distribution?.request_bands[0]?.sessions ?? 0);
 const topModelSpend = $derived(models[0]?.cost_total ?? 0);
 
-/** Who took part, as the one user or how many shared it. */
-function who(session: Session) {
-  return session.user_id || (session.users > 1 ? `${fmt(session.users)} users` : '—');
-}
+// What the band cards show in place of bands, while there are none to show.
+const bandsNote = $derived.by(() => {
+  if (distribution === null) {
+    return distributionFailed ? "Couldn't load sessions." : 'Loading…';
+  }
 
-/** A length in seconds at the coarsest units that still read, such as '4m 12s'. */
-function duration(seconds: number) {
-  const whole = Math.round(seconds);
-  if (whole < 60) return `${whole}s`;
-  const minutes = Math.floor(whole / 60);
-  if (minutes < 60) return `${minutes}m ${whole % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-/** A spend band's edge, in cents under a dollar and dollars above. */
-function bandMoney(dollars: number) {
-  return dollars < 1 ? `${Math.round(dollars * 100)}¢` : `$${dollars}`;
-}
-
-/** A spend band's range, such as '1¢ – 10¢' or '$10+'. */
-function costBand(min: number, max: number | null) {
-  if (max === null) return `${bandMoney(min)}+`;
-  return min === 0 ? `< ${bandMoney(max)}` : `${bandMoney(min)} – ${bandMoney(max)}`;
-}
-
-/** A request-count band's range, such as '2 – 5' or '21+'. */
-function requestBand(min: number, max: number | null) {
-  if (max === null) return `${min}+`;
-  return min === max ? `${min}` : `${min} – ${max}`;
-}
-
-function percent(share: number) {
-  return `${Math.round(share * 100)}%`;
-}
-
-function clock(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-}
-
-// The chart's drawing area.
-const HEIGHT = 190;
-const PAD = { top: 14, right: 46, bottom: 24, left: 50 };
-const plotHeight = HEIGHT - PAD.top - PAD.bottom;
-let chartWidth = $state(900);
-let hoveredBar = $state<number | null>(null);
+  return bandSessions === 0 ? 'No sessions in this window.' : null;
+});
 </script>
 
 <div class="grid grid-cols-1 gap-[var(--analytics-gap)] lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -423,7 +321,7 @@ let hoveredBar = $state<number | null>(null);
 			     back to everyone. flex-none, or the scrolling list squeezes it. -->
 			<a
 				href={sessionsHref(null)}
-				data-sveltekit-noscroll
+				data-sveltekit-reset="false"
 				aria-current={sessionId === undefined ? 'page' : undefined}
 				class="flex h-9 flex-none items-center justify-between gap-3 rounded-lg border px-3 {sessionId === undefined
 					? 'border-line-strong bg-seg text-zinc-50 shadow-[0_1px_2px_rgba(0,0,0,.3)]'
@@ -436,7 +334,7 @@ let hoveredBar = $state<number | null>(null);
 			{#if unlisted && sessionId}
 				<a
 					href={sessionsHref(sessionId)}
-					data-sveltekit-noscroll
+					data-sveltekit-reset="false"
 					aria-current="page"
 					class="mt-1 flex items-center justify-between gap-3 rounded-md bg-surface-6 px-2.5 py-2"
 				>
@@ -459,18 +357,18 @@ let hoveredBar = $state<number | null>(null);
 					{@const on = session.session_id === sessionId}
 					<a
 						href={sessionsHref(session.session_id)}
-						data-sveltekit-noscroll
+						data-sveltekit-reset="false"
 						aria-current={on ? 'page' : undefined}
 						class="flex flex-col gap-1 rounded-md px-2.5 py-1.5 {on ? 'bg-surface-6' : 'hover:bg-surface-4'}"
 					>
 						<span class="flex items-baseline justify-between gap-3">
 							<span class="truncate font-mono text-[12px] {on ? 'text-zinc-100' : 'text-zinc-300'}" title={session.session_id}>{session.session_id}</span>
 							<span class="flex-none text-[12px] text-zinc-300 tabular-nums">
-								{sort === 'spend' ? fmtSpend(session.cost_total) : sort === 'requests' ? `${fmt(session.requests)} req` : duration(session.seconds)}
+								{sort === 'spend' ? fmtSpend(session.cost_total) : sort === 'requests' ? `${fmt(session.requests)} req` : fmtElapsed(session.seconds)}
 							</span>
 						</span>
 						<span class="h-[2px] w-full rounded-full bg-surface-4">
-							<span class="block h-full rounded-full bg-emerald-500/70" style:width={`${topMeasure > 0 ? (measure(session) / topMeasure) * 100 : 0}%`}></span>
+							<span class="block h-full rounded-full bg-emerald-500/70" style:width={`${topMeasure > 0 ? (sessionMeasure(session, sort) / topMeasure) * 100 : 0}%`}></span>
 						</span>
 					</a>
 				{:else}
@@ -496,9 +394,9 @@ let hoveredBar = $state<number | null>(null);
 			<StatGrid compact columns={5}>
 				<StatCard compact label="Spend" value={picked ? fmtSpend(picked.cost_total) : '—'} />
 				<StatCard compact label="Requests" value={picked ? fmt(picked.requests) : '—'} />
-				<StatCard compact label="Length" value={picked ? duration(picked.seconds) : '—'} />
+				<StatCard compact label="Length" value={picked ? fmtElapsed(picked.seconds) : '—'} />
 				<StatCard compact label="Tokens used" value={picked ? fmt(picked.tokens) : '—'} />
-				<StatCard compact label="Users" value={picked ? who(picked) : '—'} />
+				<StatCard compact label="Users" value={picked ? participants(picked) : '—'} />
 			</StatGrid>
 
 			{#if paneFailed}
@@ -529,9 +427,9 @@ let hoveredBar = $state<number | null>(null);
 						<div class="sticky top-0 grid grid-cols-[64px_minmax(0,1fr)_56px_48px_60px_72px] gap-3 bg-surface-1 pb-1 text-[11px] text-zinc-500">
 							<span>At</span><span>Model</span><span class="text-right">In</span><span class="text-right">Out</span><span class="text-right">Cost</span><span>Log</span>
 						</div>
-						{#each requestLogs as log (log.id)}
+						{#each requests.rows as log (log.id)}
 							<div class="grid grid-cols-[64px_minmax(0,1fr)_56px_48px_60px_72px] items-center gap-3 rounded-[4px] py-0.5 hover:bg-surface-6">
-								<span class="text-[12.5px] whitespace-nowrap text-zinc-500 tabular-nums" title={new Date(log.created_at).toLocaleString()}>{clock(log.created_at)}</span>
+								<span class="text-[12.5px] whitespace-nowrap text-zinc-500 tabular-nums" title={new Date(log.created_at).toLocaleString()}>{fmtClock(log.created_at)}</span>
 								<span class="flex min-w-0 items-center gap-[7px]" title="{log.provider}/{log.model}">
 									<span class="size-[7px] flex-none rounded-full" style:background={providerTone(log.provider).color}></span>
 									<code class="truncate font-mono text-[12px] text-zinc-200"><span class="text-zinc-500">{log.provider}/</span>{log.model}</code>
@@ -543,12 +441,12 @@ let hoveredBar = $state<number | null>(null);
 							</div>
 						{:else}
 							<p class="py-4 text-[12.5px] text-zinc-500">
-								{requestsLoading ? 'Loading requests…' : requestsFailed ? "Couldn't load this session's requests." : 'No logged requests for this session.'}
+								{requests.loading ? 'Loading requests…' : requests.error ? "Couldn't load this session's requests." : 'No logged requests for this session.'}
 							</p>
 						{/each}
-						{#if olderId}
+						{#if requests.hasMore}
 							<div class="py-1">
-								<ToolbarButton onclick={() => loadRequests(true)} disabled={requestsLoading}>{requestsLoading ? 'Loading…' : 'Show older'}</ToolbarButton>
+								<ToolbarButton onclick={() => requests.loadMore()} disabled={requests.loadingMore}>{requests.loadingMore ? 'Loading…' : 'Show older'}</ToolbarButton>
 							</div>
 						{/if}
 					</div>
@@ -611,7 +509,7 @@ let hoveredBar = $state<number | null>(null);
 				<StatCard compact label="Median session" value={spread ? fmtSpend(spread.medianCost) : '—'} />
 				<StatCard compact label="p95 session" value={spread ? fmtSpend(spread.p95Cost) : '—'} />
 				<StatCard compact label="Median requests" value={spread ? fmt(spread.medianRequests) : '—'} />
-				<StatCard compact label="Median length" value={spread ? duration(spread.medianSeconds) : '—'} />
+				<StatCard compact label="Median length" value={spread ? fmtElapsed(spread.medianSeconds) : '—'} />
 			</StatGrid>
 
 			{#if paneFailed || distributionFailed}
@@ -623,9 +521,9 @@ let hoveredBar = $state<number | null>(null);
 					<ChartCard title="Cost by request" hint="What the nth request of a session costs, on average. History is resent each time, so later requests cost more.">
 						{#snippet actions()}{@render positionLegend()}{/snippet}
 						{@render positionChart()}
-						{#if twentiethCost !== null && firstCost > 0}
+						{#if twentiethGrowth !== null}
 							<p class="pt-1 pb-1 text-[12px] text-zinc-500">
-								The 20th request of a session costs <span class="text-zinc-200 tabular-nums">{(twentiethCost / firstCost).toFixed(1)}×</span> the first, on average.
+								The 20th request of a session costs <span class="text-zinc-200 tabular-nums">{twentiethGrowth.toFixed(1)}×</span> the first, on average.
 							</p>
 						{/if}
 					</ChartCard>
@@ -643,13 +541,13 @@ let hoveredBar = $state<number | null>(null);
 								<div class="grid grid-cols-[72px_minmax(0,1fr)_104px_56px] items-center gap-3">
 									<span class="text-[12.5px] text-zinc-300 tabular-nums">{costBand(band.min, band.max)}</span>
 									{@render bar(band.sessions, bandSessions)}
-									<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmt(band.sessions)} · {percent(band.sessions / bandSessions)}</span>
-									<span class="text-right text-[12.5px] text-zinc-300 tabular-nums">{bandSpend > 0 ? percent(band.cost_total / bandSpend) : '—'}</span>
+									<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmt(band.sessions)} · {fmtPercent(band.sessions / bandSessions)}</span>
+									<span class="text-right text-[12.5px] text-zinc-300 tabular-nums">{bandSpend > 0 ? fmtPercent(band.cost_total / bandSpend) : '—'}</span>
 								</div>
 							{/each}
 							{#if heavy.sessions > 0 && bandSpend > 0}
 								<p class="pt-1 text-[11.5px] text-zinc-500">
-									The {percent(heavy.sessions / bandSessions)} of sessions over $1 are {percent(heavy.spend / bandSpend)} of spend.
+									The {fmtPercent(heavy.sessions / bandSessions)} of sessions over $1 are {fmtPercent(heavy.spend / bandSpend)} of spend.
 								</p>
 							{/if}
 						{/if}
@@ -665,11 +563,11 @@ let hoveredBar = $state<number | null>(null);
 								<div class="grid grid-cols-[72px_minmax(0,1fr)_104px] items-center gap-3">
 									<span class="text-[12.5px] text-zinc-300 tabular-nums">{requestBand(band.min, band.max)}</span>
 									{@render bar(band.sessions, bandSessions)}
-									<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmt(band.sessions)} · {percent(band.sessions / bandSessions)}</span>
+									<span class="text-right text-[12.5px] text-zinc-400 tabular-nums">{fmt(band.sessions)} · {fmtPercent(band.sessions / bandSessions)}</span>
 								</div>
 							{/each}
 							<p class="pt-1 text-[11.5px] text-zinc-500">
-								{percent(singleRequest / bandSessions)} of sessions are a single request.
+								{fmtPercent(singleRequest / bandSessions)} of sessions are a single request.
 							</p>
 						{/if}
 					</div>
@@ -682,12 +580,7 @@ let hoveredBar = $state<number | null>(null);
 {#snippet failure()}
 	<div class="mb-[var(--analytics-gap)] flex items-center justify-between gap-2 text-[12.5px] text-zinc-500" role="status">
 		<span>Couldn't load {sessionId ?? 'sessions'}.</span>
-		<ToolbarButton
-			onclick={() => {
-				void loadPane();
-				void loadDistribution();
-			}}>Retry</ToolbarButton
-		>
+		<ToolbarButton onclick={retryPane}>Retry</ToolbarButton>
 	</div>
 {/snippet}
 

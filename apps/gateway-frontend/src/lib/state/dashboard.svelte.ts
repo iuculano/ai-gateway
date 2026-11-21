@@ -7,153 +7,117 @@ import {
   revokeApiKey,
   type UpdateApiKeyInput,
   updateApiKey,
-} from '$lib/api/api-keys';
-import type { ApiKey, CreatedApiKey, ListMeta } from '$lib/api/types';
+} from '#lib/api/api-keys.ts';
+import type { ApiKey, CreatedApiKey } from '#lib/api/types.ts';
+import { PagedList } from '#lib/state/paged-list.svelte.ts';
 
-// Client-side cache of the dashboard's data, backed by the BFF proxy.
-// Mutations go to the API first; local state only changes on success.
+const PAGE_SIZE = 20;
+const STATUSES: ApiKeyStatus[] = ['all', 'active', 'expired', 'revoked'];
+
+/**
+ * The API keys and how many there are of each status, with the search the top
+ * bar shares between pages. Changes go to the API first, and what is held here
+ * only changes once they have succeeded.
+ */
 class DashboardState {
-  keys: ApiKey[] = $state([]);
-  loading = $state(false);
-  error: string | null = $state(null);
+  /**
+   * What is typed into the top bar's search box. Whichever page is open
+   * filters its own rows by it.
+   */
   search = $state('');
+
+  readonly keys = new PagedList<ApiKey>(
+    (after) => listApiKeys(this.#status, { limit: PAGE_SIZE, after_id: after }),
+    'Failed to load API keys.',
+  );
 
   counts: Partial<Record<ApiKeyStatus, Awaited<ReturnType<typeof countApiKeys>>>> = $state({});
   countErrors: Partial<Record<ApiKeyStatus, string>> = $state({});
-  #countRequests: Partial<Record<ApiKeyStatus, number>> = {};
 
-  async refreshCounts(statuses: ApiKeyStatus[] = ['all', 'active', 'expired', 'revoked']): Promise<void> {
-    await Promise.all(
-      statuses.map(async (status) => {
-        const request = (this.#countRequests[status] ?? 0) + 1;
-        this.#countRequests[status] = request;
-        this.countErrors[status] = undefined;
-        try {
-          const result = await countApiKeys(status);
-          if (request === this.#countRequests[status]) this.counts[status] = result;
-        } catch (error) {
-          if (request !== this.#countRequests[status]) return;
-          this.counts[status] = undefined;
-          this.countErrors[status] = error instanceof Error ? error.message : 'Failed to load key counts.';
-        }
-      }),
-    );
+  #status: ApiKeyStatus = 'all';
+  #countRequests: Partial<Record<ApiKeyStatus, number>> = {};
+  #countsLoaded = false;
+
+  /**
+   * Counts the keys of each status again.
+   */
+  async refreshCounts(statuses: ApiKeyStatus[] = STATUSES): Promise<void> {
+    await Promise.all(statuses.map((status) => this.#refreshCount(status)));
+
+    this.#countsLoaded = true;
   }
 
-  #loaded = false;
-  #request = 0;
-  #cursors: string[] = [];
-  #status: 'all' | 'active' | 'expired' | 'revoked' = 'all';
-  pageIndex = $state(0);
-  meta: ListMeta | null = $state(null);
+  async #refreshCount(status: ApiKeyStatus): Promise<void> {
+    // The newest request for a status wins, as with the list itself.
+    const request = (this.#countRequests[status] ?? 0) + 1;
 
-  /** Fetches the key list once; later calls are no-ops. Use refresh() to force. */
-  async ensureLoaded(): Promise<void> {
-    if (!this.#loaded && !this.loading) {
-      await this.refresh();
+    this.#countRequests[status] = request;
+    this.countErrors[status] = undefined;
+
+    try {
+      const result = await countApiKeys(status);
+
+      if (request === this.#countRequests[status]) {
+        this.counts[status] = result;
+      }
+    } catch (error) {
+      if (request === this.#countRequests[status]) {
+        this.counts[status] = undefined;
+        this.countErrors[status] = error instanceof Error ? error.message : 'Failed to load key counts.';
+      }
     }
   }
 
-  async filterByStatus(status: 'all' | 'active' | 'expired' | 'revoked'): Promise<void> {
+  /**
+   * Narrows the list to one status, starting from its first page.
+   */
+  async filterByStatus(status: ApiKeyStatus): Promise<void> {
     this.#status = status;
-    this.#cursors = [];
-    this.pageIndex = 0;
-    this.keys = [];
-    this.meta = null;
-    // A filter change supersedes any in-flight page request.
-    this.loading = false;
-    await Promise.all([this.loadPage(0), this.refreshCounts(this.#loaded ? [status] : undefined)]);
+
+    // Every count is wanted the first time, and afterwards only the one for
+    // the status being looked at.
+    const counted = this.#countsLoaded ? [status] : STATUSES;
+
+    await Promise.all([this.keys.restart(), this.refreshCounts(counted)]);
   }
 
   async refresh(): Promise<void> {
-    await Promise.all([this.loadPage(this.pageIndex), this.refreshCounts()]);
+    await Promise.all([this.keys.load(), this.refreshCounts()]);
   }
 
-  async nextPage(): Promise<void> {
-    if (this.loading || !this.meta?.more_data || !this.meta.oldest_id) return;
-    this.#cursors = [...this.#cursors.slice(0, this.pageIndex), this.meta.oldest_id];
-    await this.loadPage(this.pageIndex + 1);
-  }
-
-  async previousPage(): Promise<void> {
-    if (this.loading || this.pageIndex === 0) return;
-    await this.loadPage(this.pageIndex - 1);
-  }
-
-  private async loadPage(index: number, silent = false): Promise<void> {
-    if (this.loading) return;
-    const request = ++this.#request;
-    if (!silent) {
-      this.loading = true;
-      this.error = null;
-    }
-    try {
-      const result = await listApiKeys(this.#status, {
-        limit: 20,
-        after_id: index === 0 ? undefined : this.#cursors[index - 1],
-      });
-      if (request !== this.#request) return;
-      this.keys = result.data;
-      this.meta = result.meta;
-      this.pageIndex = index;
-      this.#loaded = true;
-      this.error = null;
-    } catch (error) {
-      if (request !== this.#request) return;
-      if (silent) throw error;
-      this.error = error instanceof Error ? error.message : 'Failed to load API keys.';
-    } finally {
-      if (request === this.#request) this.loading = false;
-    }
-  }
-
-  /** Auto-refresh follows only the newest page and leaves the table visible. */
-  async refreshQuietly(): Promise<void> {
-    if (this.pageIndex === 0) await this.loadPage(0, true);
-  }
-
-  /** Creates a key and returns it including the plaintext (shown once). */
+  /**
+   * Makes a key and returns it with its secret, which is shown the one time.
+   */
   async create(input: CreateApiKeyInput): Promise<CreatedApiKey> {
     const created = await createApiKey(input);
 
-    await Promise.all([this.loadPage(0), this.refreshCounts()]);
+    await Promise.all([this.keys.restart(), this.refreshCounts()]);
 
     return created;
   }
 
   async revoke(id: string): Promise<void> {
     await revokeApiKey(id);
-    this.keys = this.keys.map((k) => (k.id === id ? { ...k, revoked_at: new Date().toISOString() } : k));
-    // Fetch the server's revocation timestamp and accountable user.
+
+    // Marked revoked at once, and then read again for the server's own time of
+    // revocation and who is accountable for it.
+    const revokedAt = new Date().toISOString();
+
+    this.keys.rows = this.keys.rows.map((key) => (key.id === id ? { ...key, revoked_at: revokedAt } : key));
+
     await this.refresh();
   }
 
-  /**
-   * Permanently deletes a key.
-   *
-   * TODO: the backend is revoke-only (soft delete) by design - there is no
-   * hard-delete endpoint yet. Wire this to it once the contract is decided;
-   * until then it reports that the action is unavailable.
-   */
-  async remove(_id: string): Promise<void> {
-    throw new Error('Deleting keys is not available yet — revoke the key instead.');
-  }
-
-  /** Applies edits while preserving the list-only usage count. */
   async update(id: string, input: UpdateApiKeyInput): Promise<void> {
     const updated = await updateApiKey(id, input);
-    this.keys = this.keys.map((k) => (k.id === id ? { ...updated, total_requests: k.total_requests } : k));
+
+    // The request count is carried over. Only the list endpoint fills it in,
+    // so putting the bare updated row in would blank the Requests cell.
+    this.keys.rows = this.keys.rows.map((key) =>
+      key.id === id ? { ...updated, total_requests: key.total_requests } : key,
+    );
+
     await this.refreshCounts();
-  }
-
-  /** Replaces a key's scopes; takes the UI's array form, stores space-delimited. */
-  async setScopes(id: string, scopes: string[]): Promise<void> {
-    const updated = await updateApiKey(id, { scopes: scopes.join(' ') });
-
-    // total_requests is carried over rather than taken from the response: only
-    // the list endpoint hydrates it, so swapping in the bare updated row would
-    // blank the Requests cell every time a scope is toggled.
-    this.keys = this.keys.map((k) => (k.id === id ? { ...updated, total_requests: k.total_requests } : k));
   }
 }
 

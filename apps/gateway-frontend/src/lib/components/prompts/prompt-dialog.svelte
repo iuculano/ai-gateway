@@ -1,40 +1,43 @@
 <script lang="ts">
 import { toast } from 'svelte-sonner';
-import type { Prompt } from '$lib/api/types';
-import type { Pair } from '$lib/components/app/key-value-editor.svelte';
-import KeyValueEditor, { toPairs, toRecord } from '$lib/components/app/key-value-editor.svelte';
-import * as Dialog from '$lib/components/ui/dialog';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import { prompts } from '$lib/state/prompts.svelte';
+import type { Prompt } from '#lib/api/types.ts';
+import { FIELD_BASE } from '#lib/components/app/field.ts';
+import KeyValueEditor from '#lib/components/app/key-value-editor.svelte';
+import * as Dialog from '#lib/components/ui/dialog/index.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { Label } from '#lib/components/ui/label/index.ts';
+import { type Pair, toPairs, toRecord } from '#lib/data/pairs.ts';
+import { prompts } from '#lib/state/prompts.svelte.ts';
 
-/**
- * Create and edit are the same form over the same three fields, so they are one
- * component: `prompt` set means edit, and the title, the submit verb and the
- * request are the only things that differ.
- *
- * The template text is deliberately not here. A prompt owns a name and its
- * labels; the text belongs to a version, and editing it through this form would
- * hide the fact that it is versioned at all.
- */
-let {
-  open = $bindable(false),
-  prompt = null,
-}: {
+// One form for making a prompt and for editing one, since both are the same
+// three fields. With `prompt` set it edits.
+//
+// The template text is not here on purpose. A prompt owns a name and its
+// labels, and the text belongs to a version. Editing it through this form would
+// hide that it is versioned at all.
+
+interface Props {
   open?: boolean;
-  /** The prompt being edited, or null to create a new one. */
-  prompt?: Prompt | null;
-} = $props();
 
-const editing = $derived(prompt !== null);
+  /**
+   * The prompt being edited, or null to make a new one.
+   */
+  prompt?: Prompt | null;
+}
+
+let { open = $bindable(false), prompt = null }: Props = $props();
+
+const FIELD_CLASS = `h-10 px-[13px] text-[13.5px] tracking-[-0.01em] ${FIELD_BASE}`;
 
 let name = $state('');
 let description = $state('');
 let tagPairs: Pair[] = $state([]);
 let saving = $state(false);
 
-// Reset on open rather than on close, so the form is never seen re-populating
-// as the dialog animates away.
+const editing = $derived(prompt !== null);
+
+// Reset on opening and not on closing, so that the form is never seen filling
+// back in as the dialog animates away.
 $effect(() => {
   if (open) {
     name = prompt?.name ?? '';
@@ -44,12 +47,10 @@ $effect(() => {
   }
 });
 
-const FIELD_CLASS =
-  'h-10 rounded-lg border-line-strong bg-surface-3 px-[13px] text-[13.5px] tracking-[-0.01em] focus-visible:border-emerald-500 focus-visible:ring-[3px] focus-visible:ring-emerald-500/12 dark:bg-surface-3';
-
-async function save() {
+async function save(): Promise<void> {
   if (!name.trim()) {
     toast.error('Give the prompt a name first.');
+
     return;
   }
 
@@ -59,9 +60,9 @@ async function save() {
 
   try {
     if (prompt) {
-      // null rather than undefined for a description the user cleared: drizzle
-      // skips undefined columns on an update, so undefined would silently keep
-      // the old text. `{}` for tags, for the same reason.
+      // A cleared description is sent as null and cleared tags as an empty map.
+      // The backend skips a field that is undefined on an update, which would
+      // quietly keep the old value.
       await prompts.update(prompt.id, {
         name: name.trim(),
         description: description.trim() || null,
@@ -73,7 +74,7 @@ async function save() {
       await prompts.create({
         name: name.trim(),
         description: description.trim() || undefined,
-        tags,
+        tags: tags,
       });
 
       toast.success('Prompt created');

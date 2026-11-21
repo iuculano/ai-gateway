@@ -1,61 +1,59 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
-import { resolveActorNames } from '$lib/api/actors';
-import { getLogRequest, getLogResponse } from '$lib/api/logs';
-import type { Log, LogPayload } from '$lib/api/types';
-import { copyToClipboard } from '$lib/clipboard';
-import type { DetailItem } from '$lib/components/app/detail-grid.svelte';
-import DetailGrid from '$lib/components/app/detail-grid.svelte';
-import ExpandableRow from '$lib/components/app/expandable-row.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import JsonView from '$lib/components/logs/json-view.svelte';
-import MessageList from '$lib/components/logs/message-list.svelte';
-import OperationPayload from '$lib/components/logs/operation-payload.svelte';
-import type { Turn } from '$lib/data/conversation';
-import { requestTurns, responseTurns, turnsToText } from '$lib/data/conversation';
-import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone, traceTone } from '$lib/data/format';
+import { resolveActorNames } from '#lib/api/actors.ts';
+import { getLogRequest, getLogResponse } from '#lib/api/logs.ts';
+import type { Log, LogPayload } from '#lib/api/types.ts';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import DetailGrid, { type DetailItem } from '#lib/components/app/detail-grid.svelte';
+import ExpandableRow from '#lib/components/app/expandable-row.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import JsonView from '#lib/components/logs/json-view.svelte';
+import MessageList from '#lib/components/logs/message-list.svelte';
+import OperationPayload from '#lib/components/logs/operation-payload.svelte';
+import { requestTurns, responseTurns, type Turn, turnsToText } from '#lib/data/conversation.ts';
+import { fmtCost, fmtLatency, fmtThroughput, fmtTokens, fmtTs, providerTone, traceTone } from '#lib/data/format.ts';
+import { finishReason, logCost } from '#lib/data/log-payloads.ts';
 
 export type PayloadView = 'simple' | 'json';
 
-let {
-  log,
-  cols,
-  expanded,
-  ontoggle,
-  view = 'simple',
-}: {
+type PayloadKind = 'request' | 'response';
+
+interface PayloadState {
+  data: LogPayload | undefined;
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+}
+
+interface PayloadPanel {
+  title: string;
+  kind: PayloadKind;
+  state: PayloadState;
+  json: string;
+  turns: Turn[];
+  present: boolean;
+}
+
+interface Props {
   log: Log;
   cols: string;
   expanded: boolean;
   ontoggle: () => void;
-  /**
-   * Which rendering the payload panels use. Read-only here: the control lives
-   * in the table's toolbar, so the page owns the value and every row follows it.
-   */
   view?: PayloadView;
-} = $props();
+}
 
-const ts = $derived(fmtTs(log.created_at));
-const tone = $derived(providerTone(log.provider));
-const throughput = $derived(log.gateway_cache_hit ? '—' : fmtThroughput(log.output_tokens, log.response_time_ms));
-// Coerced: postgres hands `numeric` back as a string, and a stray one here
-// would turn this addition into string concatenation.
-// Null when the cost isn't known, which must not read as free.
-const totalCost = $derived(
-  log.input_cost == null || log.output_cost == null ? null : Number(log.input_cost) + Number(log.output_cost),
-);
+let { log, cols, expanded, ontoggle, view = 'simple' }: Props = $props();
 
 const STATUS = {
   complete: { label: 'Success', color: '#10b981' },
   failed: { label: 'Failed', color: '#f87171' },
-  // Written before the provider is called and never resolved - the request
-  // died in flight. Not the same as a failure the gateway actually observed.
+
+  // Written before the provider is called and never resolved, so the request
+  // died in flight. That is not the same as a failure the gateway saw.
   incomplete: { label: 'Incomplete', color: '#f59e0b' },
 } as const;
-
-const status = $derived(STATUS[log.status] ?? { label: log.status, color: '#71717a' });
 
 const ENDPOINTS = {
   chat: '/v1/chat/completions',
@@ -65,29 +63,38 @@ const ENDPOINTS = {
 
 // Embeddings have no playground to replay into.
 const REPLAY_PATHS = { chat: '/playground', decision: '/playground/decisions', embedding: null } as const;
+
+const ts = $derived(fmtTs(log.created_at));
+const tone = $derived(providerTone(log.provider));
+const throughput = $derived(log.gateway_cache_hit ? '—' : fmtThroughput(log.output_tokens, log.response_time_ms));
+const totalCost = $derived(logCost(log));
+const status = $derived(STATUS[log.status] ?? { label: log.status, color: '#71717a' });
 const replayPath = $derived(REPLAY_PATHS[log.operation]);
 
-// Payloads live in object storage behind their own endpoints, so they are
-// fetched on first expand rather than with the page. A list of 50 rows would
-// otherwise pull 100 objects nobody has asked to see.
-type PayloadKind = 'request' | 'response';
-interface PayloadState {
-  data: LogPayload | undefined;
-  loading: boolean;
-  loaded: boolean;
-  error: string | null;
-}
+// Stored as a string map, which the generated API type only knows as JSON.
+const tags = $derived((log.tags ?? {}) as Record<string, string>);
 
+// Payloads live in object storage behind their own endpoints, so they are
+// fetched when a row is first opened and not with the page. A list of 50 rows
+// would otherwise pull 100 objects nobody has asked to see.
 const payloads = $state<Record<PayloadKind, PayloadState>>({
   request: { data: undefined, loading: false, loaded: false, error: null },
   response: { data: undefined, loading: false, loaded: false, error: null },
 });
+
 const request = $derived(payloads.request.data);
 const response = $derived(payloads.response.data);
 
-async function loadPayload(kind: PayloadKind) {
+let creatorName: string | null = $state(null);
+
+async function loadPayload(kind: PayloadKind): Promise<void> {
   const state = payloads[kind];
-  if (!log[kind === 'request' ? 'has_request' : 'has_response'] || state.loaded || state.loading) return;
+  const isStored = kind === 'request' ? log.has_request : log.has_response;
+
+  if (!isStored || state.loaded || state.loading) {
+    return;
+  }
+
   state.loading = true;
   state.error = null;
 
@@ -102,125 +109,126 @@ async function loadPayload(kind: PayloadKind) {
 }
 
 $effect(() => {
-  if (expanded) {
-    // Loader state must not trigger automatic retries after a failure.
-    untrack(() => {
-      for (const kind of ['request', 'response'] as const) {
-        if (!payloads[kind].error) void loadPayload(kind);
-      }
-    });
+  if (!expanded) {
+    return;
   }
+
+  // Opening the row is the only thing that loads. A failure waits for its
+  // retry button, so nothing in here is tracked.
+  untrack(() => {
+    for (const kind of ['request', 'response'] as const) {
+      if (!payloads[kind].error) {
+        void loadPayload(kind);
+      }
+    }
+  });
 });
 
-const requestJson = $derived(request === undefined ? '' : JSON.stringify(request, null, 2));
-const responseJson = $derived(response === undefined ? '' : JSON.stringify(response, null, 2));
-
-// Finish reason arrives with the stored response payload.
-const asRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-
-const finishReason = $derived.by(() => {
-  const choices = asRecord(response).choices;
-  if (!Array.isArray(choices) || choices.length === 0) return '—';
-  const reason = asRecord(choices[0]).finish_reason;
-  return typeof reason === 'string' ? reason : '—';
-});
-
-let creatorName: string | null = $state(null);
-
+// The name behind the actor id, looked up once the row is opened. When it
+// cannot be resolved, the id stays on show.
 $effect(() => {
   const actor = { actor_type: log.actor_type, actor_id: log.actor_id };
-  if (!expanded) return;
+
+  if (!expanded) {
+    return;
+  }
+
   let cancelled = false;
+
   creatorName = null;
+
   resolveActorNames([actor])
     .then((name) => {
-      if (!cancelled) creatorName = name(actor);
+      if (!cancelled) {
+        creatorName = name(actor);
+      }
     })
-    .catch(() => {
-      // Keep the actor ID visible if name resolution is unavailable.
-    });
+    .catch(() => {});
+
   return () => {
     cancelled = true;
   };
 });
 
-// Stored as a string map; the generated API type only knows it's JSON.
-const tags = $derived((log.tags ?? {}) as Record<string, string>);
+/**
+ * A cell for one of the well-known tags, which opens on its analytics tab.
+ */
+function tagItem(label: string, value: string, tab: string, parameter: string): DetailItem {
+  return {
+    label: label,
+    value: value,
+    title: `See ${value} in analytics`,
+    href: `/analytics/${tab}?${parameter}=${encodeURIComponent(value)}`,
+    copyable: true,
+  };
+}
 
-const detailItems: DetailItem[] = $derived([
-  { label: 'Log ID', value: log.id, title: log.id, copyable: true },
-  { label: 'Created at', value: fmtTs(new Date(log.created_at).toISOString()).full, mono: false },
-  { label: 'Created by', value: creatorName ?? log.actor_id, title: log.actor_id, mono: false },
-  { label: 'Endpoint', value: ENDPOINTS[log.operation] },
-  { label: 'Throughput', value: throughput },
-  { label: 'Finish reason', value: finishReason },
-  // The well-known tags, when the request carried them. Each opens on its
-  // analytics tab.
-  ...(tags.user_id
-    ? [
-        {
-          label: 'User',
-          value: tags.user_id,
-          title: `See ${tags.user_id} in analytics`,
-          href: `/analytics/users?user=${encodeURIComponent(tags.user_id)}`,
-          copyable: true,
-        },
-      ]
-    : []),
-  ...(tags.session_id
-    ? [
-        {
-          label: 'Session',
-          value: tags.session_id,
-          title: `See ${tags.session_id} in analytics`,
-          href: `/analytics/sessions?session=${encodeURIComponent(tags.session_id)}`,
-          copyable: true,
-        },
-      ]
-    : []),
-]);
+const detailItems = $derived.by((): DetailItem[] => {
+  const items: DetailItem[] = [
+    { label: 'Log ID', value: log.id, title: log.id, copyable: true },
+    { label: 'Created at', value: fmtTs(new Date(log.created_at).toISOString()).full, mono: false },
+    { label: 'Created by', value: creatorName ?? log.actor_id, title: log.actor_id, mono: false },
+    { label: 'Endpoint', value: ENDPOINTS[log.operation] },
+    { label: 'Throughput', value: throughput },
 
-const panels = $derived([
+    // The finish reason arrives with the stored response.
+    { label: 'Finish reason', value: finishReason(response) ?? '—' },
+  ];
+
+  if (tags.user_id) {
+    items.push(tagItem('User', tags.user_id, 'users', 'user'));
+  }
+
+  if (tags.session_id) {
+    items.push(tagItem('Session', tags.session_id, 'sessions', 'session'));
+  }
+
+  return items;
+});
+
+const panels = $derived<PayloadPanel[]>([
   {
     title: 'Request',
-    kind: 'request' as const,
+    kind: 'request',
     state: payloads.request,
-    json: requestJson,
+    json: request === undefined ? '' : JSON.stringify(request, null, 2),
     turns: request === undefined ? [] : requestTurns(request),
     present: log.has_request,
   },
   {
     title: 'Response',
-    kind: 'response' as const,
+    kind: 'response',
     state: payloads.response,
-    json: responseJson,
+    json: response === undefined ? '' : JSON.stringify(response, null, 2),
     turns: response === undefined ? [] : responseTurns(response),
     present: log.has_response,
   },
 ]);
 
 /**
- * Copy hands over whatever is on screen.
- *
- * Copying the JSON while the panel shows a transcript would be a small lie, and
- * the transcript is the more useful thing to paste when that is the view you
- * deliberately switched to.
+ * Copies whatever a panel has on screen.
  */
-function copyText(panel: { json: string; turns: Turn[] }): string {
-  // Only chat has a transcript. Other operations copy the JSON in both views.
-  return view === 'json' || log.operation !== 'chat' ? panel.json : turnsToText(panel.turns);
+function copyPanel(event: MouseEvent, panel: PayloadPanel): void {
+  event.stopPropagation();
+
+  // The transcript when that is what is showing, because copying the JSON from
+  // under it would not be what was asked for. Only chat has a transcript.
+  const showsTranscript = view === 'simple' && log.operation === 'chat';
+  const text = showsTranscript ? turnsToText(panel.turns) : panel.json;
+
+  if (!text) {
+    toast.error(`No ${panel.title.toLowerCase()} payload to copy`);
+
+    return;
+  }
+
+  void copyToClipboard(text, `${panel.title} copied`);
 }
 
-function copy(text: string, label: string) {
-  return (event: MouseEvent) => {
-    event.stopPropagation();
-    if (!text) {
-      toast.error(`No ${label.toLowerCase()} payload to copy`);
-      return;
-    }
-    void copyToClipboard(text, `${label} copied`);
-  };
+// The row itself is a button, so a link inside it keeps its clicks and keys
+// from toggling the row as well.
+function keepFromRow(event: Event): void {
+  event.stopPropagation();
 }
 </script>
 
@@ -241,16 +249,15 @@ function copy(text: string, label: string) {
 		</code>
 
 		{#if log.trace_id}
-			<!-- The dot is the correlation cue: every request from one run carries the
-			     same colour, so a trace reads as a group in the table without anyone
-			     comparing hex strings. stopPropagation because the whole row is a
-			     toggle, and following the link should not also expand the payload. -->
+			<!-- Every request from one run carries the same colour of dot, so that a
+			     trace reads as a group in the table without anyone comparing hex
+			     strings. -->
 			<a
 				href="/traces?trace={log.trace_id}"
 				title="Open this trace · {log.trace_id}"
 				aria-label="Open trace {log.trace_id}"
 				class="inline-flex min-w-0 items-center gap-[7px] rounded px-1 py-0.5 -mx-1 hover:bg-surface-5"
-				onclick={(event) => event.stopPropagation()}
+				onclick={keepFromRow}
 			>
 				<span class="size-[7px] flex-none rounded-[2px]" style:background={traceTone(log.trace_id)}></span>
 				<span class="overflow-hidden font-mono text-[11.5px] text-ellipsis whitespace-nowrap text-zinc-400">
@@ -282,8 +289,8 @@ function copy(text: string, label: string) {
 			{#if log.has_request && replayPath}
 				<a
 					href="{replayPath}?from={log.id}"
-          onclick={(event) => event.stopPropagation()}
-          onkeydown={(event) => event.stopPropagation()}
+					onclick={keepFromRow}
+					onkeydown={keepFromRow}
 					class="ml-auto flex h-7 shrink-0 items-center gap-[7px] rounded-lg border border-line-strong bg-surface-3 px-3 text-[12.5px] tracking-[-0.01em] text-zinc-400 hover:bg-surface-4 hover:text-zinc-200"
 				>
 					Replay in Playground
@@ -301,7 +308,7 @@ function copy(text: string, label: string) {
 			{#each panels as panel (panel.title)}
 				<Panel title={panel.title}>
 					{#snippet actions()}
-						<ToolbarButton disabled={!panel.json} onclick={copy(copyText(panel), panel.title)}>Copy</ToolbarButton>
+						<ToolbarButton disabled={!panel.json} onclick={(event) => copyPanel(event, panel)}>Copy</ToolbarButton>
 					{/snippet}
 					{#if panel.state.loading}
 						<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">Loading payload…</div>
@@ -325,9 +332,9 @@ function copy(text: string, label: string) {
 							payload={panel.kind === 'request' ? request : response}
 						/>
 					{:else if view === 'simple'}
-						<!-- A payload with no messages in it is a real case - a failed call
-						     stores the request but never gets a response body - so simple
-						     mode says so rather than rendering an empty box. -->
+						<!-- A payload with no messages in it is a real case, since a failed
+						     call stores the request and never gets a response body. Simple
+						     mode says so and does not render an empty box. -->
 						{#if panel.turns.length === 0}
 							<div class="px-[13px] py-6 text-center text-[12.5px] text-zinc-600">
 								No messages in this payload — switch to JSON to see it.

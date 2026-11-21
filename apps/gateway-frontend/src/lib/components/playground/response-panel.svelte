@@ -1,21 +1,62 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 import { toast } from 'svelte-sonner';
-import { copyToClipboard } from '$lib/clipboard';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import Panel from '$lib/components/app/panel.svelte';
-import ToolbarButton from '$lib/components/app/toolbar-button.svelte';
-import JsonView from '$lib/components/logs/json-view.svelte';
-import MessageList from '$lib/components/logs/message-list.svelte';
-import type { Turn } from '$lib/data/conversation';
-import { turnsToText } from '$lib/data/conversation';
-import { fmtLatency, fmtTokens } from '$lib/data/format';
+import { copyToClipboard } from '#lib/clipboard.ts';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import Panel from '#lib/components/app/panel.svelte';
+import ToolbarButton from '#lib/components/app/toolbar-button.svelte';
+import JsonView from '#lib/components/logs/json-view.svelte';
+import MessageList from '#lib/components/logs/message-list.svelte';
+import { type Turn, turnsToText } from '#lib/data/conversation.ts';
+import { fmtLatency, fmtTokens } from '#lib/data/format.ts';
 
-/**
- * What came back, in the same two renderings the logs page offers - so the
- * answer to "what did the model say" and the answer to "what exactly went over
- * the wire" are one click apart here as well.
- */
+// What came back, in the same two renderings the logs page offers, so that what
+// the model said and what went over the wire are one click apart here too.
+
+interface Props {
+  turns: Turn[];
+
+  /**
+   * The wire form, which is a completion object for a whole response and the
+   * `data:` payloads, one per line and in order, for a streamed one.
+   */
+  json: string;
+  running: boolean;
+  error: string | null;
+  finishReason: string | null;
+
+  /**
+   * The gateway's trace id for the run, which finds its log rows.
+   */
+  traceId: string | null;
+
+  /**
+   * Titles the panel. Compare mode passes the model, so that each column names
+   * itself.
+   */
+  label?: string;
+
+  /**
+   * The run's timing and usage, shown in the footer. Only compare mode passes
+   * them, because single mode has the same two figures in the grid above.
+   */
+  elapsedMs?: number | null;
+  tokens?: number | null;
+
+  /**
+   * Replaces the title bar's caption, for a column that names itself. Compare
+   * mode puts its model selector here. The view controls then move to a row of
+   * their own underneath, because a narrow column has no room for all of them
+   * in one bar.
+   */
+  header?: Snippet;
+
+  /**
+   * Sits to the left of the view controls, and carries the run's credential.
+   */
+  controls?: Snippet;
+}
+
 let {
   turns,
   json,
@@ -28,77 +69,41 @@ let {
   tokens = null,
   header,
   controls,
-}: {
-  turns: Turn[];
-  /**
-   * The wire form. A completion object for a whole response; the `data:`
-   * payloads, one per line and in order, for a streamed one.
-   */
-  json: string;
-  running: boolean;
-  error: string | null;
-  finishReason: string | null;
-  /** The gateway's trace id for the run, which finds its log rows. */
-  traceId: string | null;
-  /** Titles the panel. Compare mode passes the model, so each column names itself. */
-  label?: string;
-  /**
-   * Per-run timing and usage, shown in the footer.
-   *
-   * Only compare mode passes these. Single mode has the StatGrid above it, and
-   * repeating the same two figures directly underneath would be noise.
-   */
-  elapsedMs?: number | null;
-  tokens?: number | null;
-  /**
-   * Replaces the title bar's caption, for a column that names itself - compare
-   * mode puts its model selector here.
-   *
-   * When supplied, the view controls move to a row of their own underneath. In
-   * a 300px column a selector, two tabs and a copy button do not share 48px,
-   * and the alternative was dropping one of them.
-   */
-  header?: Snippet;
-  /** Sits to the left of the view controls. Carries the per-run credential. */
-  controls?: Snippet;
-} = $props();
+}: Props = $props();
 
 const VIEW_TABS = [
   { id: 'simple' as const, label: 'Simple' },
   { id: 'json' as const, label: 'JSON' },
 ];
 
-let view: 'simple' | 'json' = $state('simple');
-
-const empty = $derived(turns.length === 0 && json.length === 0);
-
-/**
- * The transcript in simple mode, the wire form in JSON mode.
- *
- * The same rule the logs page uses: copy what is on screen, because the view
- * you deliberately switched to is the one you meant to paste.
- */
-function copy() {
-  const text = view === 'json' ? json : turnsToText(turns);
-
-  if (!text) {
-    toast.error('Nothing to copy yet.');
-    return;
-  }
-
-  void copyToClipboard(text, 'Response copied');
-}
-
-/**
- * Why the model stopped. Only 'stop' is uneventful, so the rest are tinted -
- * a truncated answer that looks complete is the failure mode worth catching.
- */
+// Why the model stopped. Only 'stop' is uneventful, so the rest are tinted,
+// because a truncated answer that looks complete is the one worth catching.
 const FINISH_TONES: Record<string, string> = {
   stop: '#71717a',
   length: '#f59e0b',
   tool_calls: '#c084fc',
   content_filter: '#f87171',
 };
+
+let view: 'simple' | 'json' = $state('simple');
+
+const empty = $derived(turns.length === 0 && json.length === 0);
+
+/**
+ * Copies whatever is on screen, which is the transcript in simple mode and the
+ * wire form in JSON mode.
+ */
+function copy(): void {
+  const text = view === 'json' ? json : turnsToText(turns);
+
+  if (!text) {
+    toast.error('Nothing to copy yet.');
+
+    return;
+  }
+
+  void copyToClipboard(text, 'Response copied');
+}
 </script>
 
 {#snippet viewControls()}
@@ -126,9 +131,9 @@ const FINISH_TONES: Record<string, string> = {
 			{running ? 'Waiting for the model…' : 'Nothing sent yet. Run a request to see the response here.'}
 		</div>
 	{:else if view === 'simple'}
-		<!-- A response can legitimately carry no message: a run that finished on
-		     tool calls alone, or one cut off before the first token. Saying so
-		     beats an empty box that reads as "the model said nothing". -->
+		<!-- A response can carry no message, as when a run finished on tool calls
+		     alone or was cut off before the first token. Saying so beats an empty
+		     box, which reads as the model having said nothing. -->
 		{#if turns.length === 0}
 			<div class="px-[13px] py-10 text-center text-[12.5px] text-zinc-600">
 				No message in this response — switch to JSON to see what arrived.
@@ -137,9 +142,9 @@ const FINISH_TONES: Record<string, string> = {
 			<MessageList {turns} class="max-h-[420px] min-h-[120px]" autoscroll={running} />
 		{/if}
 	{:else}
-		<!-- Unhighlighted while frames are still landing: see the note on the prop.
-		     Colour returns the moment the run finishes, which is when a reader
-		     actually sits and reads the wire form. -->
+		<!-- Plain while frames are still landing, for the reason given on JsonView's
+		     highlight prop. The colour returns the moment the run finishes, which
+		     is when a reader sits down with the wire form. -->
 		<JsonView {json} highlight={!running} />
 	{/if}
 
@@ -162,8 +167,8 @@ const FINISH_TONES: Record<string, string> = {
 				</span>
 			{/if}
 			{#if traceId}
-				<!-- The gateway's trace id, select-all so it can be pasted straight into
-				     the logs search rather than picked out character by character. -->
+				<!-- The gateway's trace id, with select-all so that it can be pasted
+				     straight into the logs search. -->
 				<span class="ml-auto inline-flex items-center gap-[7px] text-zinc-600">
 					trace
 					<code class="font-mono text-zinc-500 select-all">{traceId}</code>

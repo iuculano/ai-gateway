@@ -31,12 +31,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `bun run build && PORT=${port} bun run start`,
+    // The origin is given because this server is plain HTTP. Left to assume
+    // HTTPS, it takes the sign-out form for one posted from another site.
+    command: `bun run build && ORIGIN=${baseURL} PORT=${port} bun run start`,
     cwd: appDirectory,
-    // The auth hook answers this unknown API route with 401 before the proxy
-    // runs. Playwright treats 401 as ready, so startup needs no test session or
-    // identity-provider request.
-    url: `${baseURL}/api/e2e-ready`,
+    url: `${baseURL}/_app/version.json`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     stdout: 'pipe',

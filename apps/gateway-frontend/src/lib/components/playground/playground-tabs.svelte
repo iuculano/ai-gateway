@@ -1,8 +1,9 @@
 <script lang="ts">
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
 import { goto } from '$app/navigation';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
 
-/** Switches between the playground's endpoints, one route each so a tab can be linked to. */
+// Switches between the playground's endpoints, one route each so that a tab can
+// be linked to.
 let { current }: { current: 'chat' | 'decisions' } = $props();
 
 const TABS = [

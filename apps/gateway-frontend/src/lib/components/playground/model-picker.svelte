@@ -1,150 +1,157 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { listAllProviders } from '$lib/api/models';
-import { Input } from '$lib/components/ui/input';
-import { fmtContext, fmtPricePerMillion, providerTone } from '$lib/data/format';
+import { listAllProviders } from '#lib/api/models.ts';
+import { Input } from '#lib/components/ui/input/index.ts';
+import { type ModelOption, matchingOptions, modelOptions } from '#lib/data/catalog.ts';
+import { fmtContext, fmtPricePerMillion, providerTone } from '#lib/data/format.ts';
 
-/** Suggest catalog models while allowing comma-separated routing lists. */
+// A model field that suggests models from the catalog. It stays a text field,
+// because a request can name several models in a comma-separated routing list.
+
+interface Props {
+  value: string;
+  disabled?: boolean;
+  id?: string;
+  class?: string;
+
+  /**
+   * Which endpoint's models to suggest. The same slug can be sold through
+   * several.
+   */
+  type?: 'chat' | 'embedding' | 'decision';
+}
+
 let {
   value = $bindable(),
   disabled = false,
   id = 'playground-model',
   class: fieldClass = '',
   type = 'chat',
-}: {
-  value: string;
-  disabled?: boolean;
-  id?: string;
-  class?: string;
-  /** Which endpoint's models to suggest. The same slug can be sold through several. */
-  type?: 'chat' | 'embedding' | 'decision';
-} = $props();
+}: Props = $props();
 
-interface Option {
-  /** What goes in the field: the explicit `provider/name` form. */
-  slug: string;
-  provider: string;
-  name: string;
-  cost_input: number | null;
-  context_limit: number | null;
-}
-
-let options: Option[] = $state([]);
+let options: ModelOption[] = $state([]);
 let open = $state(false);
 let highlighted = $state(0);
 let input: HTMLInputElement | null = $state(null);
 
-/**
- * Where to draw the list, in viewport coordinates.
- *
- * The list is positioned `fixed` rather than absolutely, because every place
- * this field is used sits inside something that clips: the settings rail is
- * `overflow-y-auto` and Panel is `overflow-hidden`. An absolutely positioned
- * list is clipped by either one, which cut the suggestions off at the edge of
- * whichever box contained them.
- */
+// Where to draw the list, in viewport coordinates. It is positioned fixed and
+// not absolutely, because everywhere this field is used sits inside something
+// that clips its overflow, which would cut the suggestions off at its edge.
 let anchor = $state<{ top: number; left: number; width: number } | null>(null);
 
-function measure() {
-  if (!input) return;
+const matches = $derived(matchingOptions(options, value));
+
+function measure(): void {
+  if (!input) {
+    return;
+  }
 
   const rect = input.getBoundingClientRect();
+
   anchor = { top: rect.bottom + 4, left: rect.left, width: rect.width };
 }
 
-// Re-measured while open, in the capture phase so it also follows a scroll of
-// an ancestor container rather than only the window.
-$effect(() => {
-  if (!open) return;
+function show(): void {
+  measure();
+  open = true;
+  highlighted = 0;
+}
 
-  const reposition = () => measure();
-  window.addEventListener('scroll', reposition, true);
-  window.addEventListener('resize', reposition);
+function hide(): void {
+  open = false;
+}
 
-  return () => {
-    window.removeEventListener('scroll', reposition, true);
-    window.removeEventListener('resize', reposition);
-  };
-});
-
-onMount(async () => {
-  try {
-    const result = await listAllProviders();
-
-    options = result.data.flatMap((provider) =>
-      provider.models
-        // Redirects are aliases for callers already using an old name, not something to pick.
-        .filter((model) => model.delisted_at === null && model.type === type && model.redirect_to === null)
-        .map((model) => ({
-          slug: `${provider.id}/${model.name}`,
-          provider: provider.id,
-          name: model.name,
-          cost_input: model.cost_input,
-          context_limit: model.context_limit,
-        })),
-    );
-  } catch {
-    // Suggestions are a convenience. Losing them leaves a plain text field,
-    // which is exactly what this was before the catalog existed.
-    options = [];
-  }
-});
-
-const matches = $derived.by(() => {
-  const query = value.trim().toLowerCase();
-  const pool = query.length === 0 ? options : options.filter((o) => o.slug.toLowerCase().includes(query));
-
-  // Cheapest first within the list, so the top of a broad match is the
-  // affordable end rather than whatever the provider happened to publish first.
-  return [...pool].sort((a, b) => (a.cost_input ?? Number.MAX_VALUE) - (b.cost_input ?? Number.MAX_VALUE)).slice(0, 50);
-});
-
-function choose(option: Option) {
+function choose(option: ModelOption): void {
   value = option.slug;
   open = false;
   input?.focus();
 }
 
-function onKeydown(event: KeyboardEvent) {
+function chooseOnPress(event: PointerEvent, option: ModelOption): void {
+  // Ahead of blur, which would close the list before the click landed and make
+  // every suggestion impossible to pick.
+  event.preventDefault();
+  choose(option);
+}
+
+function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     open = false;
+
     return;
   }
 
   if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
     open = true;
+
     return;
   }
 
-  if (!open || matches.length === 0) return;
+  if (!open || matches.length === 0) {
+    return;
+  }
 
   if (event.key === 'ArrowDown') {
     event.preventDefault();
     highlighted = (highlighted + 1) % matches.length;
-  } else if (event.key === 'ArrowUp') {
+
+    return;
+  }
+
+  if (event.key === 'ArrowUp') {
     event.preventDefault();
     highlighted = (highlighted - 1 + matches.length) % matches.length;
-  } else if (event.key === 'Enter') {
-    const option = matches[highlighted];
-    // Only intercept Enter when the reader is actually pointed at a suggestion.
-    // Otherwise it belongs to the form, which runs the request.
-    if (option) {
-      event.preventDefault();
-      choose(option);
-    }
+
+    return;
+  }
+
+  // Enter is taken only when a suggestion is highlighted. Otherwise it belongs
+  // to the form, which runs the request.
+  const option = matches[highlighted];
+
+  if (event.key === 'Enter' && option) {
+    event.preventDefault();
+    choose(option);
   }
 }
+
+// Measured again while the list is open. The scroll listener is in the capture
+// phase, so that it also follows a scrolling ancestor and not only the window.
+$effect(() => {
+  if (!open) {
+    return;
+  }
+
+  window.addEventListener('scroll', measure, true);
+  window.addEventListener('resize', measure);
+
+  return () => {
+    window.removeEventListener('scroll', measure, true);
+    window.removeEventListener('resize', measure);
+  };
+});
+
+onMount(async () => {
+  // Suggestions are a convenience. Losing them leaves a plain text field.
+  try {
+    const result = await listAllProviders();
+
+    options = modelOptions(result.data, type);
+  } catch {
+    options = [];
+  }
+});
 </script>
 
 <div class="relative">
-	<!-- The shared Input, not a bare element: its base classes carry the border,
-	     the focus ring and the disabled treatment, and FIELD_CLASS assumes them.
-	     Everything below reaches the element through restProps.
+	<!-- The shared Input and not a bare element, because its base classes carry
+	     the border, the focus ring and the disabled look that the callers' field
+	     classes assume. Everything below reaches the element through its rest
+	     props.
 
-	     The placeholder is a prompt rather than an example id. An empty compare
-	     column sat beside a filled one, and a placeholder that looked like a
-	     value made the two indistinguishable; the format is explained under the
-	     field, and the list itself teaches it. -->
+	     The placeholder is a prompt and not an example id. An empty compare
+	     column sits beside a filled one, and a placeholder that looked like a
+	     value would make the two hard to tell apart. -->
 	<Input
 		{id}
 		bind:ref={input}
@@ -158,17 +165,9 @@ function onKeydown(event: KeyboardEvent) {
 		placeholder="Choose a model…"
 		{disabled}
 		class="w-full font-mono {fieldClass}"
-		onfocus={() => {
-			measure();
-			open = true;
-			highlighted = 0;
-		}}
-		oninput={() => {
-			measure();
-			open = true;
-			highlighted = 0;
-		}}
-		onblur={() => (open = false)}
+		onfocus={show}
+		oninput={show}
+		onblur={hide}
 		onkeydown={onKeydown}
 	/>
 
@@ -191,16 +190,11 @@ function onKeydown(event: KeyboardEvent) {
 						class="flex w-full items-center gap-2 px-2.5 py-[7px] text-left {index === highlighted
 							? 'bg-surface-5'
 							: 'hover:bg-surface-4'}"
-						onpointerdown={(event) => {
-							// Ahead of blur, which would close the list before the click
-							// landed and make every suggestion unselectable.
-							event.preventDefault();
-							choose(option);
-						}}
+						onpointerdown={(event) => chooseOnPress(event, option)}
 						onmouseenter={() => (highlighted = index)}
 					>
-						<!-- Named, not just coloured: several providers resell the same model,
-						     and a dot alone does not say which one this row would bill. -->
+						<!-- Named and not only coloured. Several providers resell the same
+						     model, and a dot alone does not say which one this row would bill. -->
 						<span class="flex w-[88px] flex-none items-center gap-[7px] text-[11.5px] text-zinc-500">
 							<span class="size-[6px] flex-none rounded-full" style:background={tone.color}></span>
 							<span class="truncate">{tone.label}</span>

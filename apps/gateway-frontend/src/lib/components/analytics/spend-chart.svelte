@@ -1,23 +1,14 @@
 <script lang="ts">
-import type { SeriesPoint } from '$lib/api/analytics';
-import ChartCard from '$lib/components/app/chart-card.svelte';
-import FilterTabs from '$lib/components/app/filter-tabs.svelte';
-import { cumulativeSpend } from '$lib/data/chart-series';
+import type { SeriesPoint } from '#lib/api/analytics.ts';
+import ChartCard from '#lib/components/app/chart-card.svelte';
+import FilterTabs from '#lib/components/app/filter-tabs.svelte';
+import { axisTop, cumulativeSpend, perRequestSpend, type SpendPoint, showsTick } from '#lib/data/chart-series.ts';
+import { fmtMoney } from '#lib/data/format.ts';
 import SpendExplanation from './spend-explanation.svelte';
 
-let {
-  points,
-  height: chartHeight = 160,
-  loading,
-  rangeLabel,
-  bucketLabel,
-  interval,
-  modelPoints,
-  previousModelPoints,
-  comparisonLabel,
-  comparisonUnavailable,
-  onretry,
-}: {
+type View = 'period' | 'cumulative' | 'per-request' | 'explanation';
+
+interface Props {
   height?: number;
   interval: 'hour' | 'day';
   points: SeriesPoint[];
@@ -29,69 +20,74 @@ let {
   comparisonLabel: string;
   comparisonUnavailable: boolean;
   onretry: () => void;
-} = $props();
+}
 
-let view = $state<'period' | 'cumulative' | 'per-request' | 'explanation'>('period');
+let {
+  points,
+  height = 160,
+  loading,
+  rangeLabel,
+  bucketLabel,
+  interval,
+  modelPoints,
+  previousModelPoints,
+  comparisonLabel,
+  comparisonUnavailable,
+  onretry,
+}: Props = $props();
+
+const PAD = { top: 14, right: 10, bottom: 24, left: 76 };
+const INPUT = '#60a5fa';
+const OUTPUT = '#a78bfa';
+
+const HINTS = {
+  period: 'Input and output costs.',
+  cumulative: 'Running total in this window.',
+  'per-request': 'Input and output spend / all requests in each bucket.',
+};
+
+let view = $state<View>('period');
+let width = $state(720);
+let hovered = $state<number | null>(null);
+
 const views = $derived([
   { id: 'period' as const, label: interval === 'hour' ? 'Hourly' : 'Daily' },
   { id: 'cumulative' as const, label: 'Cumulative' },
   { id: 'per-request' as const, label: 'Per request' },
   { id: 'explanation' as const, label: 'Why it changed' },
 ]);
-// Divide each bucket's spend by all requests, matching the model comparison.
-// Empty buckets have no average; preserve that distinction from free requests.
-const displayed = $derived(
-  view === 'cumulative'
-    ? cumulativeSpend(points)
-    : view === 'per-request'
-      ? points.map((point) => ({
-          ...point,
-          cost_input: point.requests > 0 ? point.cost_input / point.requests : null,
-          cost_output: point.requests > 0 ? point.cost_output / point.requests : null,
-          cost_total: point.requests > 0 ? point.cost_total / point.requests : null,
-        }))
-      : points,
-);
-const hint = $derived(
-  view === 'explanation'
-    ? `Compared with ${comparisonLabel}.`
-    : view === 'cumulative'
-      ? 'Running total in this window.'
-      : view === 'per-request'
-        ? 'Input and output spend / all requests in each bucket.'
-        : 'Input and output costs.',
-);
-const HEIGHT = $derived(chartHeight);
-const PAD = { top: 14, right: 10, bottom: 24, left: 76 };
-const INPUT = '#60a5fa';
-const OUTPUT = '#a78bfa';
-const plotHeight = $derived(HEIGHT - PAD.top - PAD.bottom);
-let width = $state(720);
-let hovered = $state<number | null>(null);
 
+const displayed = $derived.by((): SpendPoint[] => {
+  if (view === 'cumulative') {
+    return cumulativeSpend(points);
+  }
+
+  return view === 'per-request' ? perRequestSpend(points) : points;
+});
+
+const hint = $derived(view === 'explanation' ? `Compared with ${comparisonLabel}.` : HINTS[view]);
+const plotHeight = $derived(height - PAD.top - PAD.bottom);
 const plotWidth = $derived(Math.max(1, width - PAD.left - PAD.right));
 const slot = $derived(plotWidth / Math.max(1, displayed.length));
 const barWidth = $derived(Math.min(32, slot * 0.65));
-const maximum = $derived.by(() => {
-  const peak = Math.max(0, ...displayed.map((point) => (point.cost_input ?? 0) + (point.cost_output ?? 0)));
-  if (peak === 0) return 1;
-  const step = 10 ** Math.floor(Math.log10(peak)) / 2;
-  return Math.ceil(peak / step) * step;
-});
+const maximum = $derived(
+  axisTop(Math.max(0, ...displayed.map((point) => (point.cost_input ?? 0) + (point.cost_output ?? 0)))),
+);
 const selected = $derived(hovered === null ? null : displayed[hovered]);
-const x = (index: number) => PAD.left + slot * (index + 0.5);
-const height = (cost: number | null) => ((cost ?? 0) / maximum) * plotHeight;
-const money = (cost: number | null) =>
-  cost === null
-    ? '—'
-    : new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: cost !== 0 && Math.abs(cost) < 0.01 ? 6 : 2,
-      }).format(cost);
 
-// Clear the tooltip when the range changes or a new response arrives.
+function x(index: number): number {
+  return PAD.left + slot * (index + 0.5);
+}
+
+function barHeight(cost: number | null): number {
+  return ((cost ?? 0) / maximum) * plotHeight;
+}
+
+function money(cost: number | null): string {
+  return cost === null ? '—' : fmtMoney(cost);
+}
+
+// The tooltip is cleared when the range changes or a new response arrives.
 $effect(() => {
   void points;
   void view;
@@ -114,26 +110,26 @@ $effect(() => {
 			<span class="flex items-center gap-1.5"><span class="size-2 rounded-sm" style:background={OUTPUT}></span>Output</span>
 		</div>
 		{#if loading}
-			<div class="flex items-center justify-center text-[12.5px] text-zinc-600" style:height="{HEIGHT}px">Loading spend…</div>
+			<div class="flex items-center justify-center text-[12.5px] text-zinc-600" style:height="{height}px">Loading spend…</div>
 		{:else if displayed.length === 0}
-			<div class="flex items-center justify-center text-[12.5px] text-zinc-600" style:height="{HEIGHT}px">No spend data in this window.</div>
+			<div class="flex items-center justify-center text-[12.5px] text-zinc-600" style:height="{height}px">No spend data in this window.</div>
 		{:else}
-			<svg {width} height={HEIGHT} role="img" aria-label="{view === 'cumulative' ? 'Cumulative' : view === 'per-request' ? 'Average per-request' : 'Per-period'} input and output spend over {rangeLabel.toLowerCase()}">
+			<svg {width} height={height} role="img" aria-label="{view === 'cumulative' ? 'Cumulative' : view === 'per-request' ? 'Average per-request' : 'Per-period'} input and output spend over {rangeLabel.toLowerCase()}">
 				{#each [0, 0.25, 0.5, 0.75, 1] as tick (tick)}
 					{@const y = PAD.top + plotHeight * (1 - tick)}
 					<line x1={PAD.left} y1={y} x2={width - PAD.right} y2={y} stroke="#1f1f23" />
 					<text x={PAD.left - 8} y={y + 3.5} text-anchor="end" font-size="10" fill="#52525b" class="tabular-nums">{money(maximum * tick)}</text>
 				{/each}
 				{#each displayed as point, index (point.bucket)}
-					{@const inputHeight = height(point.cost_input)}
-					{@const outputHeight = height(point.cost_output)}
+					{@const inputHeight = barHeight(point.cost_input)}
+					{@const outputHeight = barHeight(point.cost_output)}
 					<g opacity={hovered === null || hovered === index ? 1 : 0.4}>
 						<rect x={x(index) - barWidth / 2} y={PAD.top + plotHeight - inputHeight} width={barWidth} height={inputHeight} fill={INPUT} />
 						<rect x={x(index) - barWidth / 2} y={PAD.top + plotHeight - inputHeight - outputHeight} width={barWidth} height={outputHeight} fill={OUTPUT} />
 					</g>
 					{@const every = Math.max(1, Math.ceil(displayed.length / Math.max(2, Math.floor(plotWidth / 85))))}
-					{#if index === displayed.length - 1 || (index % every === 0 && displayed.length - 1 - index >= every - 1)}
-						<text x={x(index)} y={HEIGHT - 6} text-anchor="middle" font-size="10" fill="#52525b">{bucketLabel(point.bucket)}</text>
+					{#if showsTick(index, every, displayed.length)}
+						<text x={x(index)} y={height - 6} text-anchor="middle" font-size="10" fill="#52525b">{bucketLabel(point.bucket)}</text>
 					{/if}
 				{/each}
 			</svg>
