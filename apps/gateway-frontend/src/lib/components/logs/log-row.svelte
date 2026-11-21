@@ -41,11 +41,6 @@ interface Props {
   cols: string;
   expanded: boolean;
   ontoggle: () => void;
-
-  /**
-   * Which rendering the payload panels use. The control lives in the table's
-   * toolbar, so the page owns the value and every row follows it.
-   */
   view?: PayloadView;
 }
 

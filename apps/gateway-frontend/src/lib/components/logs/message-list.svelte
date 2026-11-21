@@ -2,24 +2,9 @@
 import { ROLE_COLORS, type Turn } from '#lib/data/conversation.ts';
 import MarkdownText from './markdown-text.svelte';
 
-// The Simple rendering of a stored payload, which is the conversation without
-// the parameters wrapped around it. Each role carries its label, and the tint
-// is only there to make the alternation easy to scan.
-
 interface Props {
   turns: Turn[];
-
-  /**
-   * Overrides the height. A log row can only afford the default, where a page
-   * whose whole purpose is the transcript can afford more.
-   */
   class?: string;
-
-  /**
-   * Pins the view to the newest text as it grows, for a response that is still
-   * streaming in. It is off by default, because a stored payload is not going
-   * anywhere and a reader's scroll position should not move under them.
-   */
   autoscroll?: boolean;
   markdown?: boolean;
 }

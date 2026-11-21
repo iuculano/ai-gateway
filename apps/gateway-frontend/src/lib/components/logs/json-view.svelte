@@ -7,14 +7,6 @@ import { HIGHLIGHT_LIMIT, TOKEN_COLORS, tokenizeJson } from '#lib/data/json-high
 
 interface Props {
   json: string;
-
-  /**
-   * Turned off while the payload is still arriving. Highlighting rebuilds one
-   * span per token, and a streamed completion grows once per model token, so
-   * highlighting on every append redoes the whole payload hundreds of times
-   * and holds the main thread until the end. The size limit does not catch
-   * this, because the payload stays well under it.
-   */
   highlight?: boolean;
 }
 

@@ -247,11 +247,7 @@ async function copyGenerated(): Promise<void> {
 			</div>
 			<div class="min-h-0 overflow-y-auto px-6 pt-[18px] pb-1.5">
 				<div class="flex items-center gap-2 rounded-[9px] border border-line-strong bg-surface-3 py-2 pr-1.5 pl-3.5">
-					<!-- One line, scrolled and not wrapped. The key is wider than the
-					     dialog, and wrapped it ran to three ragged lines beside a
-					     fixed-height button. min-w-0 is what lets the flex child shrink
-					     below its content width, and select-all keeps copying by hand
-					     possible with the tail off screen. -->
+					<!-- One line, scrolled and not wrapped. -->
 					<code
 						class="key-value min-w-0 flex-1 overflow-x-auto py-1 font-mono text-[13px] whitespace-nowrap text-emerald-400 select-all"
 					>{generatedKey}</code>
@@ -288,9 +284,7 @@ async function copyGenerated(): Promise<void> {
 <style>
 	/*
 	 * The key scrolls sideways, but the global scrollbar style carries a 3px
-	 * border sized for full-height panes, which swallows most of a 34px row. It
-	 * is hidden here only. The content stays reachable by dragging a selection,
-	 * and the Copy button is the real path.
+	 * border sized for full-height panes.
 	 */
 	.key-value {
 		scrollbar-width: none;

@@ -4,9 +4,6 @@ import DecisionAnswers from '#lib/components/playground/decision-answers.svelte'
 import { QUESTION_TYPE_COLORS } from '#lib/data/decision-questions.ts';
 import { asRecord, embeddingDimensions, embeddingInputs, embeddingsOf } from '#lib/data/log-payloads.ts';
 
-// The Simple view of a decision or embedding payload. Chat payloads use
-// MessageList.
-
 interface Props {
   operation: 'embedding' | 'decision';
   kind: 'request' | 'response';
