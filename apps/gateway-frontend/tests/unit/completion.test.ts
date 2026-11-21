@@ -6,6 +6,7 @@ import {
   type CompletionAssembly,
   emptyAssembly,
   fromCompletion,
+  producesOutput,
   toResponsePayload,
 } from '../../src/lib/data/completion';
 import { responseTurns } from '../../src/lib/data/conversation';
@@ -76,4 +77,16 @@ test('a whole completion with no choices is an empty answer rather than an error
   const assembly = fromCompletion(completion);
 
   expect(assembly).toMatchObject({ content: '', toolCalls: [], finishReason: null });
+});
+
+test('the first token is the first chunk with something in it to read', () => {
+  const toolCall = { tool_calls: [{ index: 0, function: { name: 'get_weather' } }] } as Delta;
+
+  // Providers open with a chunk that only names the role.
+  expect(producesOutput(chunk({ role: 'assistant' } as Delta))).toBe(false);
+  expect(producesOutput(chunk({ content: '' }))).toBe(false);
+
+  expect(producesOutput(chunk({ content: 'Hel' }))).toBe(true);
+  expect(producesOutput(chunk({ refusal: 'I cannot help with that' } as Delta))).toBe(true);
+  expect(producesOutput(chunk(toolCall))).toBe(true);
 });

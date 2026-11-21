@@ -3,9 +3,16 @@ import { isRedirect } from '@sveltejs/kit';
 
 const AUTHORIZATION_URL = 'https://idp.test/oauth/v2/authorize?client_id=test-client';
 
-// Anything that is not a path on this site. The last three are absolute URLs to
-// a browser even though two of them start with a slash.
-const OFF_SITE_RETURN_PATHS = ['keys', 'https://evil.example/keys', '//evil.example/keys', '/\\evil.example/keys'];
+// Other sites. All but the first start with a slash and so look like a path on
+// this one. A browser drops a tab or a newline from an address before reading
+// it, which makes the last two the same as the second.
+const OFF_SITE_RETURN_PATHS = [
+  'https://evil.example/keys',
+  '//evil.example/keys',
+  '/\\evil.example/keys',
+  '/\t/evil.example/keys',
+  '/\n/evil.example/keys',
+];
 
 // Must precede the import below, because the route reads both modules as it
 // loads.
@@ -61,7 +68,7 @@ test('a return path on this site is kept for after sign-in', async () => {
 });
 
 for (const redirectTo of OFF_SITE_RETURN_PATHS) {
-  test(`a return path of ${redirectTo} is replaced with the home page`, async () => {
+  test(`a return path of ${JSON.stringify(redirectTo)} is replaced with the home page`, async () => {
     // Echoing it back would bounce a freshly signed-in user to another site
     // from a link on this one.
     const { returnTo } = await login(redirectTo);

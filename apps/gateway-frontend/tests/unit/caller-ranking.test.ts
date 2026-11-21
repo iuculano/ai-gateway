@@ -13,7 +13,7 @@ function caller(id: string, requests: number, cost_total: number): SeriesPoint {
 
 // rankCallers
 
-test('a leaderboard holds the top six, with shares of every caller and bars scaled to the leader', () => {
+test('a leaderboard holds the top six, with bars scaled to the leader', () => {
   // Seven callers by descending requests. The last one spends nearly
   // everything.
   const points = [
@@ -30,11 +30,12 @@ test('a leaderboard holds the top six, with shares of every caller and bars scal
   const bySpend = rankCallers(points, 'cost_total');
 
   expect(byRequests).toHaveLength(6);
-  expect(byRequests[0]).toMatchObject({ actor_id: '0', share: 25, width: 100 });
+  expect(byRequests[0]).toMatchObject({ actor_id: '0', value: 7, width: 100 });
+  expect(byRequests[5]?.width).toBeCloseTo((2 / 7) * 100);
 
   // Ranked by spend, the caller with the fewest requests leads.
   expect(bySpend).toHaveLength(6);
-  expect(bySpend[0]).toMatchObject({ actor_id: '6', value: 94, share: 94, width: 100 });
+  expect(bySpend[0]).toMatchObject({ actor_id: '6', value: 94, width: 100 });
 });
 
 test('ranking leaves the input order alone', () => {
@@ -45,10 +46,23 @@ test('ranking leaves the input order alone', () => {
   expect(points.map((point) => point.actor_id)).toEqual(['low', 'high']);
 });
 
-test('a window with no spend has no shares and empty bars', () => {
+test('a window with no spend has empty bars', () => {
   const [free] = rankCallers([caller('free', 10, 0)], 'cost_total');
 
-  expect(free).toMatchObject({ value: 0, share: null, width: 0 });
+  expect(free).toMatchObject({ value: 0, width: 0 });
+});
+
+test('a caller is compared with its own figure from the window before, and a new caller with zero', () => {
+  const user = { ...caller('a', 4, 4), actor_type: 'user' } as SeriesPoint;
+  const previous = [caller('a', 3, 9), caller('gone', 50, 50)];
+
+  // The user shares an id with the key and is still a different caller.
+  const ranked = rankCallers([caller('a', 10, 1), user], 'requests', previous);
+
+  expect(ranked.map((row) => [row.actor_type, row.value, row.previous])).toEqual([
+    ['api_key', 10, 3],
+    ['user', 4, 0],
+  ]);
 });
 
 // topCallerReferences

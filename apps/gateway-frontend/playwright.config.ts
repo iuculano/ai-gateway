@@ -31,7 +31,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `bun run build && PORT=${port} bun run start`,
+    // The origin is given because this server is plain HTTP. Left to assume
+    // HTTPS, it takes the sign-out form for one posted from another site.
+    command: `bun run build && ORIGIN=${baseURL} PORT=${port} bun run start`,
     cwd: appDirectory,
     url: `${baseURL}/_app/version.json`,
     reuseExistingServer: !process.env.CI,

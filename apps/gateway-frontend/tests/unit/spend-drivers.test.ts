@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { spendDrivers } from '../../src/lib/data/spend-drivers';
+import { spendDrivers, spendEffects } from '../../src/lib/data/spend-drivers';
 
 type Point = { provider: string; model: string; requests: number; cost_total: number };
 
@@ -80,4 +80,44 @@ test('free requests are a valid baseline and duplicate groups aggregate', () => 
 
   // The inputs are summed without being changed.
   expect(previous).toEqual([point('a', 30, 0), point('a', 70, 0)]);
+});
+
+// spendEffects
+
+test('the contributions shown add up to the change in the totals shown', () => {
+  // The totals shown are $1.00 and $1.03. Rounded one by one, the three steps
+  // would read 0.00, 0.01 and 0.01, which is a cent short of that.
+  const attribution = {
+    previousSpend: 1.004,
+    currentSpend: 1.027,
+    includesNewModels: false,
+    steps: { afterVolume: 1.008, afterMix: 1.016 },
+  };
+
+  const shown = spendEffects(attribution);
+  const cents = shown.effects.map((effect) => Math.round((effect.amount ?? 0) * 100));
+
+  expect(shown.decimals).toBe(2);
+  expect(shown.effects.map((effect) => effect.label)).toEqual(['Request volume', 'Model mix', 'Cost per request']);
+  expect(cents).toEqual([1, 1, 1]);
+});
+
+test('a workload under a cent is shown to six places', () => {
+  const attribution = {
+    previousSpend: 0.000_4,
+    currentSpend: 0.000_9,
+    includesNewModels: false,
+    steps: { afterVolume: 0.000_6, afterMix: 0.000_7 },
+  };
+
+  const shown = spendEffects(attribution);
+
+  expect(shown.decimals).toBe(6);
+  expect(shown.effects[0]?.amount).toBeCloseTo(0.000_2, 10);
+});
+
+test('with no traffic before, no contribution has an amount', () => {
+  const shown = spendEffects({ previousSpend: 0, currentSpend: 5, includesNewModels: true, steps: null });
+
+  expect(shown.effects.map((effect) => effect.amount)).toEqual([null, null, null]);
 });

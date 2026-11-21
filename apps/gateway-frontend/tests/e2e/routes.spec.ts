@@ -31,6 +31,17 @@ for (const route of ROUTES) {
   });
 }
 
+test('the top bar offers a search only where the page filters by it', async ({ page }) => {
+  const search = page.locator('header').getByRole('textbox');
+
+  await page.goto('/keys');
+  await expect(search).toHaveAttribute('placeholder', 'Search keys…');
+
+  // Models has a search box of its own, in the page.
+  await page.goto('/models');
+  await expect(search).toHaveCount(0);
+});
+
 test('the shell shows who is signed in', async ({ page }) => {
   await page.goto('/keys');
 
@@ -47,4 +58,12 @@ test('a session that expires mid-use sends the reader to sign in and back to the
   await page.goto('/keys?status=active');
 
   await expect(page).toHaveURL('/auth/login?redirect_to=%2Fkeys%3Fstatus%3Dactive');
+});
+
+test('pages refuse to be framed, and run no script that is not their own', async ({ page }) => {
+  const response = await page.goto('/keys');
+  const policy = response?.headers()['content-security-policy'] ?? '';
+
+  expect(policy).toContain("frame-ancestors 'none'");
+  expect(policy).toMatch(/script-src 'self' 'nonce-[^' ]+'(;|$)/);
 });

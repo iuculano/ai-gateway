@@ -1,17 +1,12 @@
 import { mock } from 'bun:test';
 
-/**
- * Makes the BFF's server modules importable outside a SvelteKit build.
- *
- * `$app/env/private` and `$app/env` are virtual modules that only
- * exist once Vite has resolved them, so anything importing session.ts or
- * oidc.ts is unloadable in a bare test process. Stubbing them here is what lets
- * these tests exercise the REAL session module rather than a reimplementation
- * of it - which matters, because the behaviour under test is concurrency
- * coordination, and a reimplementation would coordinate its own bugs.
- */
-// One export per variable declared in src/env.ts, because a name a module
-// imports and this stub lacks fails the import outright.
+// Makes the server's modules importable outside a SvelteKit build. `$app/env`
+// and `$app/env/private` are virtual modules that only exist once Vite has
+// resolved them, so stubbing them is what lets these tests run the real session
+// and OIDC modules and not stand-ins for them.
+//
+// There is one export for each variable declared in src/env.ts, because a name
+// that a module imports and this stub lacks fails the import outright.
 mock.module('$app/env/private', () => ({
   BACKEND_URL: undefined,
   ZITADEL_ISSUER: 'https://idp.test',
@@ -31,9 +26,8 @@ if (!process.env.REDIS_FRONTEND_TEST_URL) {
   );
 }
 
-// Its OWN database, not REDIS_TEST_URL's. Turbo runs the packages' integration
-// tasks in parallel and this suite deletes the keys it made, so sharing
-// database 15 with the backend suite would mean deleting keys mid-run out from
-// under it. Same reasoning that put the redis package's own suite on database
-// 14.
+// A database of its own, and not the one REDIS_TEST_URL names. Turbo runs the
+// packages' integration tasks side by side and this suite deletes the keys it
+// made, so sharing one with the backend suite would delete keys out from under
+// it mid-run.
 process.env.REDIS_URL = process.env.REDIS_FRONTEND_TEST_URL;

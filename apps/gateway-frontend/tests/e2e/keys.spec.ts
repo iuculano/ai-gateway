@@ -315,6 +315,15 @@ test('paging asks for the keys after the last one shown', async ({ page, api }) 
   expect(api.matching('GET', KEYS).at(-1)?.query.get('after_id')).toBe(IDS.apiKey);
 });
 
+test('the sidebar counts every key, and not only the page of them on show', async ({ page, api }) => {
+  api.get(KEYS, pagedKeys);
+  api.get(`${KEYS}/count`, { json: { count: 45, estimated: false } });
+
+  await page.goto('/keys');
+
+  await expect(page.getByRole('link', { name: /^API Keys/ })).toContainText('45');
+});
+
 test('changing the status filter starts again from the first page', async ({ page, api }) => {
   api.get(KEYS, pagedKeys);
   const older = page.getByRole('button', { name: 'Older', exact: true });

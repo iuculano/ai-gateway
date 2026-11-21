@@ -40,7 +40,12 @@ function point(fields: Partial<SeriesPoint>): SeriesPoint {
 /**
  * A catalog entry priced per million tokens.
  */
-function price(name: string, cost_input: number | null, cost_output: number | null, type = 'chat'): ModelPrice {
+function price(
+  name: string,
+  cost_input: number | null,
+  cost_output: number | null,
+  type: ModelPrice['type'] = 'chat',
+): ModelPrice {
   return {
     provider: 'openai',
     name: name,

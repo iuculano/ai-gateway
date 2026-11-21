@@ -9,6 +9,9 @@ const SESSION: Session = {
   user: {},
 };
 
+// The address the browser's connection came from.
+const CLIENT_ADDRESS = '198.51.100.20';
+
 const refreshSession = mock(async (): Promise<Session | null> => ({ ...SESSION, accessToken: 'renewed-token' }));
 
 // Must precede the import below, because the proxy reads both modules as it
@@ -29,8 +32,18 @@ afterEach(() => {
   fetchSpy.mockRestore();
 });
 
-async function send(session: Session | null = SESSION, headers: Record<string, string> = {}): Promise<Response> {
-  const url = new URL('http://frontend.test/api/chat/completions?verbose=true');
+interface Sent {
+  session?: Session | null;
+  headers?: Record<string, string>;
+  path?: string;
+}
+
+async function send({
+  session = SESSION,
+  headers = {},
+  path = '/api/chat/completions?verbose=true',
+}: Sent = {}): Promise<Response> {
+  const url = new URL(path, 'http://frontend.test');
   const request = new Request(url, {
     method: 'POST',
     body: JSON.stringify({ messages: [] }),
@@ -38,11 +51,13 @@ async function send(session: Session | null = SESSION, headers: Record<string, s
   });
 
   const event = {
-    params: { path: 'chat/completions' },
+    // Decoded, which is how SvelteKit hands a route parameter over.
+    params: { path: decodeURIComponent(url.pathname.slice('/api/'.length)) },
     request: request,
     url: url,
     locals: { session: session },
     cookies: {},
+    getClientAddress: () => CLIENT_ADDRESS,
   };
 
   return POST(event as unknown as Parameters<typeof POST>[0]);
@@ -55,7 +70,7 @@ function forwardedHeaders(call: number): Headers {
 // Forwarding
 
 test('a request without a session is refused before it reaches the backend', async () => {
-  const response = await send(null);
+  const response = await send({ session: null });
 
   expect(response.status).toBe(401);
   expect(fetchSpy).not.toHaveBeenCalled();
@@ -71,14 +86,27 @@ test('a request is forwarded under /v1 with the session token and its query', as
   expect(forwardedHeaders(0).get('authorization')).toBe('Bearer session-token');
 });
 
-test('only gateway and trace headers are forwarded to the backend', async () => {
+test('a path that tries to climb out of /v1 is forwarded as it was asked for', async () => {
   fetchSpy.mockResolvedValue(Response.json({ ok: true }));
 
-  await send(SESSION, {
-    'ai-api-key': 'provider-key',
-    traceparent: '00-trace-span-01',
-    cookie: 'relay_session=secret',
-    'x-forwarded-for': '203.0.113.7',
+  // Decoded, this is ../metrics, which the backend serves outside its API and
+  // without asking who is calling.
+  await send({ path: '/api/..%2Fmetrics' });
+
+  expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://backend.test/v1/..%2Fmetrics');
+});
+
+test('the gateway, trace and user agent headers are forwarded, and nothing else', async () => {
+  fetchSpy.mockResolvedValue(Response.json({ ok: true }));
+
+  await send({
+    headers: {
+      'ai-api-key': 'provider-key',
+      traceparent: '00-trace-span-01',
+      'user-agent': 'Browser/1.0',
+      cookie: 'relay_session=secret',
+      'x-custom': 'anything',
+    },
   });
 
   const headers = forwardedHeaders(0);
@@ -86,10 +114,21 @@ test('only gateway and trace headers are forwarded to the backend', async () => 
   expect(headers.get('traceparent')).toBe('00-trace-span-01');
   expect(headers.get('content-type')).toBe('application/json');
 
+  // What the backend's audit log shows for who did something.
+  expect(headers.get('user-agent')).toBe('Browser/1.0');
+
   // The session cookie stays with the BFF. The backend only ever sees the
   // token.
   expect(headers.has('cookie')).toBe(false);
-  expect(headers.has('x-forwarded-for')).toBe(false);
+  expect(headers.has('x-custom')).toBe(false);
+});
+
+test('the backend is told the address the browser connected from, whatever the request claims', async () => {
+  fetchSpy.mockResolvedValue(Response.json({ ok: true }));
+
+  await send({ headers: { 'x-forwarded-for': '203.0.113.7' } });
+
+  expect(forwardedHeaders(0).get('x-forwarded-for')).toBe(CLIENT_ADDRESS);
 });
 
 test('only gateway headers come back from the backend', async () => {

@@ -161,6 +161,17 @@ export class ApiMock {
 }
 
 export const test = base.extend<{ api: ApiMock }>({
+  page: async ({ page }, use) => {
+    const goto = page.goto.bind(page);
+
+    // A click that lands on the server-rendered page before it hydrates is
+    // lost. A quiet network means the client has loaded and started, so every
+    // navigation waits for that before a test acts.
+    page.goto = (url, options) => goto(url, { waitUntil: 'networkidle', ...options });
+
+    await use(page);
+  },
+
   // Automatic, so every page is mocked whether or not the test asks for `api`.
   api: [
     async ({ page }, use) => {
